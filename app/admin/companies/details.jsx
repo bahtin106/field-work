@@ -394,20 +394,21 @@ export default function AdminCompanyDetailsScreen() {
       });
       if (invokeError) {
         const context = invokeError?.context;
+        let errorMessage = String(invokeError?.message || t('admin_unknown_error'));
         if (context && typeof context.clone === 'function') {
           try {
             const txt = await context.clone().text();
             if (txt) {
               try {
                 const parsed = JSON.parse(txt);
-                throw new Error(String(parsed?.message || invokeError?.message || t('admin_unknown_error')));
+                errorMessage = String(parsed?.message || errorMessage);
               } catch {
-                throw new Error(txt);
+                errorMessage = String(txt);
               }
             }
           } catch {}
         }
-        throw new Error(String(invokeError?.message || t('admin_unknown_error')));
+        throw new Error(errorMessage);
       }
       if (body?.success !== true) {
         throw new Error(String(body?.message || t('admin_unknown_error')));

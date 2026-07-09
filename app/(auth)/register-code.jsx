@@ -18,6 +18,36 @@ import { LEGAL_LINKS } from '../../config/externalUrls';
 const REGISTER_PENDING_KEY = 'register_pending_v1';
 const REGISTER_FINGERPRINT_KEY = 'register_client_fingerprint_v1';
 const REGISTER_CODE_COOLDOWN_PREFIX = 'register_code_cooldown_until:';
+const REGISTER_CODE_EXPIRES_PREFIX = 'register_code_expires_until:';
+const REGISTER_CODE_TTL_PREFIX = 'register_code_ttl_seconds:';
+const FALLBACK_REGISTER_CODE_TTL_SECONDS = 10 * 60;
+
+function resolvePositiveSeconds(value, fallbackSeconds) {
+  const seconds = Math.floor(Number(value || 0));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : fallbackSeconds;
+}
+
+function formatCountdown(totalSeconds) {
+  const seconds = Math.max(0, Math.ceil(Number(totalSeconds || 0)));
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function formatDuration(totalSeconds, locale = 'ru') {
+  const minutes = Math.max(1, Math.ceil(Number(totalSeconds || 0) / 60));
+  if (String(locale || '').toLowerCase().startsWith('en')) {
+    return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+  }
+  const mod10 = minutes % 10;
+  const mod100 = minutes % 100;
+  const unit = mod10 === 1 && mod100 !== 11
+    ? 'минута'
+    : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+      ? 'минуты'
+      : 'минут';
+  return `${minutes} ${unit}`;
+}
 const resolveDeviceTimeZone = () => {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -90,7 +120,7 @@ async function parseInvokeErrorDetails(invokeError) {
 
 export default function RegisterCodeScreen() {
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const router = useRouter();
   const { showBanner, clearBanner, showSuccessToast } = useFeedback();
   const params = useLocalSearchParams();
@@ -99,6 +129,8 @@ export default function RegisterCodeScreen() {
   const [email, setEmail] = useState(initialEmail);
   const [otp, setOtp] = useState(Array(6).fill(''));
   const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [expiresUntil, setExpiresUntil] = useState(0);
+  const [expiresInSeconds, setExpiresInSeconds] = useState(FALLBACK_REGISTER_CODE_TTL_SECONDS);
   const [nowTs, setNowTs] = useState(Date.now());
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -207,8 +239,19 @@ export default function RegisterCodeScreen() {
   );
 
   const timer = Math.max(0, Math.ceil((Number(cooldownUntil || 0) - Number(nowTs || 0)) / 1000));
+  const expiryTimer = Math.max(0, Math.ceil((Number(expiresUntil || 0) - Number(nowTs || 0)) / 1000));
+  const hasExpiryTimer = Number(expiresUntil || 0) > 0;
+  const codeExpired = hasExpiryTimer && expiryTimer <= 0;
+  const displayedExpiryTimer = hasExpiryTimer ? expiryTimer : expiresInSeconds;
+  const expiresHint = useMemo(
+    () =>
+      t('register_code_screen_expire_hint')
+        .replace('{duration}', formatDuration(expiresInSeconds, locale))
+        .replace('{remaining}', formatCountdown(displayedExpiryTimer)),
+    [displayedExpiryTimer, expiresInSeconds, locale, t],
+  );
   const code = otp.join('');
-  const canSubmit = code.length === 6 && !!email && !submitting;
+  const canSubmit = code.length === 6 && !!email && !submitting && !codeExpired;
 
   const saveCooldown = useCallback(async (emailValue, untilTs) => {
     try {
@@ -218,6 +261,23 @@ export default function RegisterCodeScreen() {
         `${REGISTER_CODE_COOLDOWN_PREFIX}${normalizedEmail}`,
         String(Math.max(0, Number(untilTs || 0))),
       );
+    } catch {}
+  }, []);
+
+  const saveExpiry = useCallback(async (emailValue, untilTs, ttlSeconds) => {
+    try {
+      const normalizedEmail = String(emailValue || '').trim().toLowerCase();
+      if (!normalizedEmail) return;
+      await AsyncStorage.multiSet([
+        [
+          `${REGISTER_CODE_EXPIRES_PREFIX}${normalizedEmail}`,
+          String(Math.max(0, Number(untilTs || 0))),
+        ],
+        [
+          `${REGISTER_CODE_TTL_PREFIX}${normalizedEmail}`,
+          String(Math.max(1, Number(ttlSeconds || FALLBACK_REGISTER_CODE_TTL_SECONDS))),
+        ],
+      ]);
     } catch {}
   }, []);
 
@@ -234,7 +294,18 @@ export default function RegisterCodeScreen() {
         const savedCooldown = Number(
           (await AsyncStorage.getItem(`${REGISTER_CODE_COOLDOWN_PREFIX}${resolvedEmail}`)) || 0,
         );
-        if (mounted) setCooldownUntil(savedCooldown);
+        const savedExpiresUntil = Number(
+          (await AsyncStorage.getItem(`${REGISTER_CODE_EXPIRES_PREFIX}${resolvedEmail}`)) || 0,
+        );
+        const savedTtlSeconds = resolvePositiveSeconds(
+          await AsyncStorage.getItem(`${REGISTER_CODE_TTL_PREFIX}${resolvedEmail}`),
+          FALLBACK_REGISTER_CODE_TTL_SECONDS,
+        );
+        if (mounted) {
+          setCooldownUntil(savedCooldown);
+          setExpiresUntil(savedExpiresUntil);
+          setExpiresInSeconds(savedTtlSeconds);
+        }
       } catch {}
     };
     void loadInitial();
@@ -364,10 +435,19 @@ export default function RegisterCodeScreen() {
         throw new Error(t('register_code_send_failed'));
       }
 
+      const requestedAt = Date.now();
       const cooldownSeconds = Number(data?.cooldown_seconds || 60);
-      const nextUntil = Date.now() + Math.max(1, cooldownSeconds) * 1000;
+      const nextUntil = requestedAt + Math.max(1, cooldownSeconds) * 1000;
+      const nextExpiresInSeconds = resolvePositiveSeconds(
+        data?.expires_in_seconds,
+        FALLBACK_REGISTER_CODE_TTL_SECONDS,
+      );
+      const nextExpiresUntil = requestedAt + nextExpiresInSeconds * 1000;
       setCooldownUntil(nextUntil);
+      setExpiresUntil(nextExpiresUntil);
+      setExpiresInSeconds(nextExpiresInSeconds);
       await saveCooldown(email, nextUntil);
+      await saveExpiry(email, nextExpiresUntil, nextExpiresInSeconds);
       showSuccessToast(t('auth_verify_resend_sent'));
       inputRefs.current[0]?.focus?.();
       setOtp(Array(6).fill(''));
@@ -381,7 +461,7 @@ export default function RegisterCodeScreen() {
     } finally {
       setResending(false);
     }
-  }, [email, timer, resending, clearBanner, t, saveCooldown, showSuccessToast, showBanner]);
+  }, [email, timer, resending, clearBanner, t, saveCooldown, saveExpiry, showSuccessToast, showBanner]);
 
   const handleVerifyAndRegister = useCallback(async (codeToSubmit, options = {}) => {
     const manual = Boolean(options?.manual);
@@ -466,6 +546,8 @@ export default function RegisterCodeScreen() {
 
       await AsyncStorage.removeItem(REGISTER_PENDING_KEY);
       await AsyncStorage.removeItem(`${REGISTER_CODE_COOLDOWN_PREFIX}${normalizedEmail}`);
+      await AsyncStorage.removeItem(`${REGISTER_CODE_EXPIRES_PREFIX}${normalizedEmail}`);
+      await AsyncStorage.removeItem(`${REGISTER_CODE_TTL_PREFIX}${normalizedEmail}`);
       showSuccessToast(t('register_success'));
     } catch (e) {
       logClientError(e, { source: 'register_code_submit' });
@@ -515,7 +597,7 @@ export default function RegisterCodeScreen() {
           <Text style={styles.subtitle}>
             {t('register_code_screen_sent_to')} <Text style={styles.email}>{email || '-'}</Text>
           </Text>
-          <Text style={styles.subtitle}>{t('register_code_screen_expire_hint')}</Text>
+          <Text style={styles.subtitle}>{expiresHint}</Text>
 
           <View style={styles.row}>
             {otp.map((digit, index) => (

@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
+import CalendarScreen from '../../screens/orders/CalendarScreen';
 
-export default function CalendarRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../screens/orders/CalendarScreen')}
-      titleKey="routes.orders/calendar"
-    />
-  );
-}
+export default CalendarScreen;

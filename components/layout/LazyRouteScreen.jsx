@@ -56,7 +56,7 @@ export default function LazyRouteScreen({
   const retryNonceRef = React.useRef(0);
   const title = titleKey ? t(titleKey) : titleFallback || t('toast_loading_info');
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     loadRef.current = load;
   }, [load]);
 
@@ -88,7 +88,7 @@ export default function LazyRouteScreen({
       });
   }, [resolvedCacheKey]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (LoadedScreen) return undefined;
     startLoad();
     return undefined;

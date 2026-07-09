@@ -29,7 +29,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F2F2F7"
       },
-      "runtimeVersion": "1.0.0"
+      "runtimeVersion": "1.0.1"
     },
     "jsEngine": "hermes",
     "assetBundlePatterns": [
@@ -85,9 +85,8 @@
       "url": "https://u.expo.dev/3c645715-1637-4502-979c-d4690c6cf1e2"
     },
     "ios": {
-      "runtimeVersion": {
-        "policy": "appVersion"
-      }
+      "bundleIdentifier": "com.monitorapp.monitor",
+      "runtimeVersion": "1.0.1"
     }
   }
 }

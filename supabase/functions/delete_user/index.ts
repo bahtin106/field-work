@@ -1,13 +1,20 @@
 // supabase/functions/delete_user/index.ts
-// Полное удаление сотрудника (hard delete) с обязательным переназначением заявок.
-// ВНИМАНИЕ: удаляет запись из auth и profiles.
+// Hard delete for employee profiles with explicit company-admin transfer rules.
 
 import { serve } from 'https://deno.land/std@0.210.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { cleanupProfileMediaEntity } from '../profile-media-storage/index.ts';
 
 type ReqBody = {
+  action?: 'inspect' | 'delete';
   user_id: string;
   reassign_to?: string | null;
+};
+
+type PublicDeleteError = {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
 };
 
 const cors = {
@@ -16,56 +23,221 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const PUBLIC_DELETE_ERROR_CODES: Record<string, string> = {
-  'user_id is required': 'USER_ID_REQUIRED',
-  'Missing auth token': 'MISSING_AUTH_TOKEN',
-  'Auth failed': 'AUTH_FAILED',
-  'Profile not found': 'PROFILE_NOT_FOUND',
-  'Access denied': 'ACCESS_DENIED',
-  'Cannot delete yourself': 'CANNOT_DELETE_SELF',
-  'User not found': 'USER_NOT_FOUND',
-  SUCCESSOR_REQUIRED: 'SUCCESSOR_REQUIRED',
-  'Successor is required for delete': 'SUCCESSOR_REQUIRED',
-  'Successor not found': 'SUCCESSOR_NOT_FOUND',
-  'Successor is blocked': 'SUCCESSOR_BLOCKED',
-};
-
 const PUBLIC_DELETE_ERROR_MESSAGES: Record<string, string> = {
-  USER_ID_REQUIRED: 'Не указан пользователь',
-  MISSING_AUTH_TOKEN: 'Нет авторизации. Войдите снова',
-  AUTH_FAILED: 'Нет авторизации. Войдите снова',
-  PROFILE_NOT_FOUND: 'Профиль не найден',
-  ACCESS_DENIED: 'Недостаточно прав',
-  CANNOT_DELETE_SELF: 'Нельзя удалить свою учетную запись',
-  USER_NOT_FOUND: 'Пользователь не найден',
-  SUCCESSOR_REQUIRED: 'Выберите сотрудника для переназначения заявок',
-  SUCCESSOR_NOT_FOUND: 'Выбранный сотрудник недоступен. Выберите другого сотрудника',
-  SUCCESSOR_BLOCKED: 'Выбранный сотрудник заблокирован. Выберите другого сотрудника',
-  DELETE_USER_FAILED: 'Ошибка удаления',
+  USER_ID_REQUIRED: 'User id is required',
+  MISSING_AUTH_TOKEN: 'Missing auth token',
+  AUTH_FAILED: 'Auth failed',
+  PROFILE_NOT_FOUND: 'Profile not found',
+  ACCESS_DENIED: 'Access denied',
+  CANNOT_DELETE_SELF: 'Cannot delete yourself',
+  CANNOT_DELETE_SUPER_ADMIN: 'Cannot delete an active super admin',
+  USER_NOT_FOUND: 'User not found',
+  SUCCESSOR_REQUIRED: 'Successor is required for delete',
+  SUCCESSOR_NOT_FOUND: 'Successor not found',
+  SUCCESSOR_BLOCKED: 'Successor is blocked',
+  COMPANY_ADMIN_TRANSFER_REQUIRED: 'Company admin transfer is required',
+  COMPANY_ADMIN_DELETE_COMPANY_REQUIRED: 'Company deletion is required',
+  DELETE_USER_FAILED: 'Delete user failed',
 };
 
-function toPublicDeleteError(error: unknown): { code: string; message: string } {
-  const message = String((error as Error)?.message || 'Unknown error');
-  const code = PUBLIC_DELETE_ERROR_CODES[message];
-  if (code) {
-    return { code, message: PUBLIC_DELETE_ERROR_MESSAGES[code] || code };
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    headers: { 'Content-Type': 'application/json', ...cors },
+    status,
+  });
+}
+
+function publicError(code: string, details?: Record<string, unknown>): PublicDeleteError {
+  return {
+    code,
+    message: PUBLIC_DELETE_ERROR_MESSAGES[code] || PUBLIC_DELETE_ERROR_MESSAGES.DELETE_USER_FAILED,
+    ...(details ? { details } : {}),
+  };
+}
+
+function toPublicDeleteError(error: unknown): PublicDeleteError {
+  const raw = String((error as Error)?.message || error || 'DELETE_USER_FAILED');
+  let code = PUBLIC_DELETE_ERROR_MESSAGES[raw] ? raw : '';
+  if (!code && /missing auth token/i.test(raw)) code = 'MISSING_AUTH_TOKEN';
+  if (!code && /auth failed/i.test(raw)) code = 'AUTH_FAILED';
+  if (!code && /profile not found/i.test(raw)) code = 'PROFILE_NOT_FOUND';
+  if (!code && /access denied|недостаточно прав/i.test(raw)) code = 'ACCESS_DENIED';
+  if (!code && /cannot delete yourself/i.test(raw)) code = 'CANNOT_DELETE_SELF';
+  if (!code && /user not found/i.test(raw)) code = 'USER_NOT_FOUND';
+  if (!code && /successor.*required/i.test(raw)) code = 'SUCCESSOR_REQUIRED';
+  if (!code && /successor.*not found/i.test(raw)) code = 'SUCCESSOR_NOT_FOUND';
+  if (!code && /successor.*blocked|successor.*suspended/i.test(raw)) code = 'SUCCESSOR_BLOCKED';
+  if (!code) code = 'DELETE_USER_FAILED';
+  if (code === 'DELETE_USER_FAILED') {
+    console.error('[delete_user]', raw);
   }
-  console.error('[delete_user]', message);
-  return { code: 'DELETE_USER_FAILED', message: PUBLIC_DELETE_ERROR_MESSAGES.DELETE_USER_FAILED };
+  return publicError(code);
+}
+
+function displayName(profile: any): string {
+  return (
+    String(profile?.full_name || '').trim() ||
+    [profile?.first_name, profile?.middle_name, profile?.last_name]
+      .map((part) => String(part || '').trim())
+      .filter(Boolean)
+      .join(' ') ||
+    String(profile?.email || '').trim() ||
+    String(profile?.id || '').trim()
+  );
+}
+
+function mapCandidate(profile: any): Record<string, unknown> {
+  return {
+    id: profile.id,
+    email: profile.email || null,
+    first_name: profile.first_name || null,
+    middle_name: profile.middle_name || null,
+    last_name: profile.last_name || null,
+    full_name: profile.full_name || displayName(profile),
+    role: profile.role || 'worker',
+    license_state: profile.license_state || 'active',
+  };
+}
+
+async function getActorContext(admin: any, actorUserId: string) {
+  const { data: actorProfile } = await admin
+    .from('profiles')
+    .select('id, email, role, company_id')
+    .eq('id', actorUserId)
+    .maybeSingle();
+
+  const { data: superAdminRows, error: superAdminError } = await admin
+    .from('super_admins')
+    .select('id')
+    .eq('is_active', true)
+    .or(`user_id.eq.${actorUserId},profile_id.eq.${actorUserId}`)
+    .limit(1);
+
+  if (superAdminError) throw superAdminError;
+
+  const isSuperAdmin =
+    Array.isArray(superAdminRows) && superAdminRows.length > 0 ||
+    String(actorProfile?.role || '').toLowerCase() === 'super_admin';
+
+  if (!actorProfile && !isSuperAdmin) throw new Error('PROFILE_NOT_FOUND');
+
+  return { actorProfile, isSuperAdmin };
+}
+
+async function isActiveSuperAdmin(admin: any, profileId: string): Promise<boolean> {
+  const { data, error } = await admin
+    .from('super_admins')
+    .select('id')
+    .eq('is_active', true)
+    .or(`user_id.eq.${profileId},profile_id.eq.${profileId}`)
+    .limit(1);
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function buildDeleteContext(admin: any, target: any) {
+  const companyId = target?.company_id || null;
+  const company = companyId
+    ? await admin
+        .from('companies')
+        .select('id, name, owner_id')
+        .eq('id', companyId)
+        .maybeSingle()
+        .then(({ data, error }: any) => {
+          if (error) throw error;
+          return data || null;
+        })
+    : null;
+
+  const { count: totalOrdersCount, error: totalCountError } = await admin
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('assigned_to', target.id);
+  if (totalCountError) throw totalCountError;
+
+  const { count: activeOrdersCount, error: activeCountError } = await admin
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('assigned_to', target.id)
+    .not('status', 'in', '("completed","cancelled")');
+  if (activeCountError) throw activeCountError;
+
+  const { data: candidatesRaw, error: candidatesError } = companyId
+    ? await admin
+        .from('profiles')
+        .select('id, email, first_name, middle_name, last_name, full_name, role, is_admin_blocked, license_state')
+        .eq('company_id', companyId)
+        .neq('id', target.id)
+        .eq('is_admin_blocked', false)
+        .in('role', ['admin', 'dispatcher', 'worker'])
+        .order('full_name', { ascending: true, nullsFirst: false })
+    : { data: [], error: null };
+
+  if (candidatesError) throw candidatesError;
+
+  const candidates = Array.isArray(candidatesRaw) ? candidatesRaw.map(mapCandidate) : [];
+  const isCompanyAdmin =
+    String(target?.role || '').toLowerCase() === 'admin' ||
+    (!!company?.owner_id && String(company.owner_id) === String(target.id));
+  const requiresAdminTransfer = isCompanyAdmin && candidates.length > 0;
+  const companyDeleteRequired = isCompanyAdmin && candidates.length === 0;
+  const hasOrders = Number(totalOrdersCount || 0) > 0;
+
+  return {
+    user: {
+      id: target.id,
+      email: target.email || null,
+      full_name: displayName(target),
+      role: target.role || null,
+      company_id: companyId,
+    },
+    company: company
+      ? {
+          id: company.id,
+          name: company.name || null,
+          owner_id: company.owner_id || null,
+        }
+      : null,
+    orders: {
+      total_count: Number(totalOrdersCount || 0),
+      active_count: Number(activeOrdersCount || 0),
+    },
+    candidates,
+    is_company_admin: isCompanyAdmin,
+    requires_admin_transfer: requiresAdminTransfer,
+    company_delete_required: companyDeleteRequired,
+    requires_successor: hasOrders || requiresAdminTransfer,
+  };
+}
+
+async function validateSuccessor(admin: any, successorId: string, companyId: string) {
+  const { data: successor, error: successorError } = await admin
+    .from('profiles')
+    .select('id, company_id, role, is_admin_blocked')
+    .eq('id', successorId)
+    .maybeSingle();
+
+  if (successorError || !successor) throw new Error('SUCCESSOR_NOT_FOUND');
+  if (String(successor.company_id || '') !== String(companyId || '')) {
+    throw new Error('SUCCESSOR_NOT_FOUND');
+  }
+  if (successor.is_admin_blocked) throw new Error('SUCCESSOR_BLOCKED');
+  return successor;
 }
 
 export async function handleDeleteUserRequest(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ ok: false, message: 'Method not allowed' }), {
-      headers: { 'Content-Type': 'application/json', ...cors },
-      status: 200,
-    });
+    return jsonResponse({ ok: false, ...publicError('DELETE_USER_FAILED') });
   }
 
   try {
     const body = (await req.json()) as ReqBody;
-    if (!body?.user_id) throw new Error('user_id is required');
+    const action = body?.action === 'inspect' ? 'inspect' : 'delete';
+    const targetProfileId = String(body?.user_id || '').trim();
+    const successorId = String(body?.reassign_to || '').trim() || null;
+
+    if (!targetProfileId) throw new Error('USER_ID_REQUIRED');
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -78,102 +250,149 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
       global: { headers: { 'x-application': 'edge-delete-user' } },
     });
 
-    // Авторизация: только admin
     const authHeader = req.headers.get('Authorization') || '';
     const token = authHeader.replace('Bearer ', '').trim();
-    if (!token) throw new Error('Missing auth token');
+    if (!token) throw new Error('MISSING_AUTH_TOKEN');
 
-    const { data: authData, error: authErr } = await admin.auth.getUser(token);
-    if (authErr || !authData?.user) throw new Error('Auth failed');
+    const { data: authData, error: authError } = await admin.auth.getUser(token);
+    const actorUserId = authData?.user?.id || null;
+    if (authError || !actorUserId) throw new Error('AUTH_FAILED');
 
-    const { data: meProfile, error: meErr } = await admin
+    if (targetProfileId === actorUserId) throw new Error('CANNOT_DELETE_SELF');
+
+    const { actorProfile, isSuperAdmin } = await getActorContext(admin, actorUserId);
+
+    const { data: target, error: targetError } = await admin
       .from('profiles')
-      .select('id, role, company_id')
-      .eq('id', authData.user.id)
-      .single();
-    if (meErr || !meProfile) throw new Error('Profile not found');
-    if (meProfile.role !== 'admin') throw new Error('Access denied');
+      .select('id, email, first_name, middle_name, last_name, full_name, company_id, role, is_admin_blocked, license_state')
+      .eq('id', targetProfileId)
+      .maybeSingle();
+    if (targetError || !target) throw new Error('USER_NOT_FOUND');
 
-    const { user_id, reassign_to } = body;
+    const actorIsCompanyAdmin =
+      String(actorProfile?.role || '').toLowerCase() === 'admin' &&
+      !!actorProfile?.company_id &&
+      String(actorProfile.company_id) === String(target.company_id || '');
 
-    if (user_id === authData.user.id) throw new Error('Cannot delete yourself');
+    if (!isSuperAdmin && !actorIsCompanyAdmin) throw new Error('ACCESS_DENIED');
 
-    // Проверяем, что пользователь существует
-    const { data: target, error: targetErr } = await admin
-      .from('profiles')
-      .select('id, email, company_id, role')
-      .eq('id', user_id)
-      .single();
-    if (targetErr || !target) throw new Error('User not found');
-    if (!meProfile.company_id || target.company_id !== meProfile.company_id) {
-      throw new Error('Access denied');
+    if (await isActiveSuperAdmin(admin, target.id)) {
+      throw new Error('CANNOT_DELETE_SUPER_ADMIN');
     }
 
-    // Подсчитываем все заявки сотрудника
-    const { count: totalCount, error: totalCountError } = await admin
-      .from('orders')
-      .select('id', { count: 'exact', head: true })
-      .eq('assigned_to', user_id);
-    if (totalCountError) throw new Error('Orders count failed: ' + totalCountError.message);
+    const context = await buildDeleteContext(admin, target);
 
-    // При наличии заявок обязателен преемник
-    if ((totalCount ?? 0) > 0 && !reassign_to) {
-      throw new Error('SUCCESSOR_REQUIRED');
+    if (action === 'inspect') {
+      return jsonResponse({ ok: true, action: 'inspect', ...context });
     }
 
-    // Проверяем преемника (если указан)
-    if (reassign_to) {
-      const { data: successor, error: succErr } = await admin
-        .from('profiles')
-        .select('id, is_admin_blocked, company_id')
-        .eq('id', reassign_to)
-        .single();
-      if (succErr || !successor) throw new Error('Successor not found');
-      if (successor.company_id !== meProfile.company_id) throw new Error('Successor not found');
-      if (successor.is_admin_blocked) throw new Error('Successor is blocked');
+    if (context.company_delete_required) {
+      return jsonResponse({
+        ok: false,
+        ...publicError('COMPANY_ADMIN_DELETE_COMPANY_REQUIRED', {
+          company_id: context.company?.id || null,
+        }),
+        context,
+      });
+    }
 
-      // Переназначаем все заявки (любого статуса), чтобы не терять связность
-      const { error: reassignErr } = await admin
+    if (context.requires_admin_transfer && !successorId) {
+      return jsonResponse({
+        ok: false,
+        ...publicError('COMPANY_ADMIN_TRANSFER_REQUIRED', {
+          company_id: context.company?.id || null,
+        }),
+        context,
+      });
+    }
+
+    if (context.orders.total_count > 0 && !successorId) {
+      return jsonResponse({
+        ok: false,
+        ...publicError('SUCCESSOR_REQUIRED'),
+        context,
+      });
+    }
+
+    let successor = null;
+    if (successorId) {
+      if (!context.user.company_id) throw new Error('SUCCESSOR_NOT_FOUND');
+      successor = await validateSuccessor(admin, successorId, context.user.company_id);
+    }
+
+    if (context.is_company_admin && successor) {
+      const { error: companyOwnerError } = await admin
+        .from('companies')
+        .update({
+          owner_id: successor.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', context.user.company_id)
+        .eq('owner_id', target.id);
+      if (companyOwnerError) throw companyOwnerError;
+
+      if (String(successor.role || '').toLowerCase() !== 'admin') {
+        const { error: promoteError } = await admin
+          .from('profiles')
+          .update({ role: 'admin', updated_at: new Date().toISOString() })
+          .eq('id', successor.id);
+        if (promoteError) throw promoteError;
+      }
+    }
+
+    if (successor) {
+      const { error: reassignError } = await admin
         .from('orders')
-        .update({ assigned_to: reassign_to })
-        .eq('assigned_to', user_id);
-      if (reassignErr) throw new Error('Orders reassign failed: ' + reassignErr.message);
+        .update({ assigned_to: successor.id })
+        .eq('assigned_to', target.id);
+      if (reassignError) throw reassignError;
     }
 
-    const { error: messengerErr } = await admin
+    const { error: messengerError } = await admin
       .from('messenger_integrations')
       .update({
         is_enabled: false,
         destination_type: 'feed',
         destination_user_id: null,
       })
-      .eq('destination_user_id', user_id);
-    if (messengerErr) throw new Error('Messenger integration detach failed: ' + messengerErr.message);
+      .eq('destination_user_id', target.id);
+    if (messengerError) throw messengerError;
 
-    // Удаляем профиль
-    const { error: deleteProfileErr } = await admin.from('profiles').delete().eq('id', user_id);
-    if (deleteProfileErr) throw new Error('Profile delete failed: ' + deleteProfileErr.message);
+    if (context.user.company_id) {
+      try {
+        await cleanupProfileMediaEntity(admin, {
+          companyId: String(context.user.company_id),
+          entityType: 'employee',
+          entityId: target.id,
+        });
+      } catch (cleanupError) {
+        console.error('[delete_user] profile media cleanup failed', cleanupError);
+      }
+    }
 
-    // Удаляем пользователя из auth
-    const { error: deleteAuthErr } = await admin.auth.admin.deleteUser(user_id);
-    if (deleteAuthErr) throw new Error('Auth delete failed: ' + deleteAuthErr.message);
+    const { error: deleteProfileError } = await admin
+      .from('profiles')
+      .delete()
+      .eq('id', target.id);
+    if (deleteProfileError) throw deleteProfileError;
 
-    const targetEmail = String((target as any)?.email || '').trim().toLowerCase();
+    const { error: deleteAuthError } = await admin.auth.admin.deleteUser(target.id);
+    if (deleteAuthError) throw deleteAuthError;
+
+    const targetEmail = String(target.email || '').trim().toLowerCase();
     await admin.rpc('cleanup_auth_identity_orphans', {
       p_email: targetEmail || null,
-      p_user_id: user_id,
+      p_user_id: target.id,
     });
 
-    return new Response(JSON.stringify({ ok: true }), {
-      headers: { 'Content-Type': 'application/json', ...cors },
-      status: 200,
+    return jsonResponse({
+      ok: true,
+      deleted_user_id: target.id,
+      transferred_admin_to: context.is_company_admin && successor ? successor.id : null,
+      reassigned_to: successor ? successor.id : null,
     });
-  } catch (e: any) {
-    const publicError = toPublicDeleteError(e);
-    return new Response(JSON.stringify({ ok: false, ...publicError }), {
-      headers: { 'Content-Type': 'application/json', ...cors },
-      status: 200,
-    });
+  } catch (error) {
+    return jsonResponse({ ok: false, ...toPublicDeleteError(error) });
   }
 }
 

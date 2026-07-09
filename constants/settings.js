@@ -7,11 +7,6 @@ export const SETTINGS_SECTIONS = {
     items: [
       { key: 'timezone', label: T('company_settings_sections_company_items_timezone'), type: 'tz' },
       {
-        key: 'telegram_bot',
-        label: T('company_settings_sections_company_items_telegram_bot'),
-        route: '/company_settings/sections/telegram-bot',
-      },
-      {
         key: 'billing',
         label: T('company_settings_sections_company_items_billing'),
         route: '/billing',
@@ -96,6 +91,16 @@ export const SETTINGS_SECTIONS = {
       {
         key: 'crm_systems',
         label: T('company_settings_sections_integrations_items_crm_systems'),
+      },
+      {
+        key: 'telegram_bot',
+        label: T('settings_integrations_telegram_bot'),
+        route: '/company_settings/sections/telegram-bot',
+      },
+      {
+        key: 'max_bot',
+        label: T('settings_integrations_max_bot'),
+        route: '/company_settings/sections/max-bot',
       },
       {
         key: 'yandex_disk',

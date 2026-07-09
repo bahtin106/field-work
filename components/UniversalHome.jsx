@@ -10,7 +10,12 @@ import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../lib/companySettingsQuery';
-import { inspectProfileMedia } from '../src/features/profileMedia/api';
+import {
+  getCachedProfileMediaResolution,
+  inspectProfileMedia,
+  isRenderableProfileMediaUrl,
+  primeProfileMediaResolution,
+} from '../src/features/profileMedia/api';
 import { listRequests } from '../src/features/requests/api';
 import { prefetchExecutorNames, seedExecutorNames } from '../src/features/requests/executorNameCache';
 import { useTranslation } from '../src/i18n/useTranslation';
@@ -109,30 +114,18 @@ function buildHomeMyOrdersRecentQueryKey(scopeKey) {
   return ['orders', 'my', 'recent', String(scopeKey || 'anonymous')];
 }
 
-function isLikelyYandexAvatarUrl(url) {
-  const raw = String(url || '').trim();
-  if (!raw) return false;
-  if (raw.toLowerCase().startsWith('yadisk://')) return true;
-  try {
-    const parsed = new URL(raw);
-    const host = parsed.hostname.toLowerCase();
-    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host === 'disk.yandex.ru';
-  } catch {
-    const lower = raw.toLowerCase();
-    return (
-      lower.includes('yadi.sk') ||
-      lower.startsWith('disk.yandex.ru') ||
-      /^https?:\/\/disk\.yandex\.ru(?:[/:?#]|$)/i.test(lower)
-    );
-  }
+function isRenderableAvatarUrl(url) {
+  return isRenderableProfileMediaUrl(String(url || ''));
 }
 
-function isRenderableAvatarUrl(url) {
-  const raw = String(url || '').trim();
-  if (!raw) return false;
-  if (/^(file|content|asset|ph|assets-library):\/\//i.test(raw) || /^data:image\//i.test(raw)) return true;
-  if (!/^https?:\/\//i.test(raw)) return false;
-  return !isLikelyYandexAvatarUrl(raw);
+function buildAvatarCacheKey(uid, sourceUrl) {
+  const source = String(sourceUrl || '').trim();
+  if (!source) return undefined;
+  let hash = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    hash = (hash * 31 + source.charCodeAt(i)) >>> 0;
+  }
+  return `profile-avatar-${String(uid || 'anon')}-${hash.toString(36)}`;
 }
 
 function buildResolvedAvatarSnapshot(sourceUrl, inspection) {
@@ -146,21 +139,20 @@ function buildResolvedAvatarSnapshot(sourceUrl, inspection) {
   return { avatar_url: source, avatar_display_url: resolved };
 }
 
-async function resolveProfileAvatarDisplay(profile) {
+function resolveProfileAvatarDisplay(profile) {
   if (!profile || typeof profile !== 'object') return profile || null;
 
   const avatarUrl = String(profile.avatar_url || '').trim();
   const avatarDisplayUrl = String(profile.avatar_display_url || profile.avatarDisplayUrl || '').trim();
   if (!avatarUrl) return { ...profile, avatar_url: null, avatar_display_url: null };
+  const cachedAvatar = getCachedProfileMediaResolution(avatarUrl);
+  if (cachedAvatar?.cleaned) return { ...profile, avatar_url: null, avatar_display_url: null };
+  if (isRenderableAvatarUrl(cachedAvatar?.resolvedUrl)) {
+    return { ...profile, avatar_display_url: cachedAvatar.resolvedUrl };
+  }
   if (isRenderableAvatarUrl(avatarDisplayUrl)) return { ...profile, avatar_display_url: avatarDisplayUrl };
   if (isRenderableAvatarUrl(avatarUrl)) return { ...profile, avatar_display_url: avatarUrl };
-
-  try {
-    const snapshot = buildResolvedAvatarSnapshot(avatarUrl, await inspectProfileMedia([avatarUrl]));
-    return snapshot ? { ...profile, ...snapshot } : profile;
-  } catch {
-    return profile;
-  }
+  return profile;
 }
 
 // --- data fetchers ---
@@ -178,7 +170,7 @@ async function fetchProfile(uid) {
     .eq('id', uid)
     .maybeSingle();
   if (!byId) return null;
-  const profile = await resolveProfileAvatarDisplay(byId);
+  const profile = resolveProfileAvatarDisplay(byId);
   const cached =
     appQueryClient.getQueryData(['profile', uid]) ||
     appQueryClient.getQueryData(queryKeys.profile.me());
@@ -395,11 +387,22 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
     enabled: !!uid,
-    initialData: providedProfile || undefined,
-    initialDataUpdatedAt: providedProfile ? 0 : undefined,
+    initialData: () =>
+      (uid
+        ? appQueryClient.getQueryData(['profile', uid]) ||
+          appQueryClient.getQueryData(queryKeys.profile.me())
+        : null) ||
+      providedProfile ||
+      undefined,
+    initialDataUpdatedAt: () =>
+      (uid
+        ? appQueryClient.getQueryState(['profile', uid])?.dataUpdatedAt ||
+          appQueryClient.getQueryState(queryKeys.profile.me())?.dataUpdatedAt
+        : undefined) ||
+      (providedProfile ? Date.now() : undefined),
     staleTime: HOME_PROFILE_STALE_MS,
     gcTime: HOME_DURABLE_GC_MS,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
@@ -428,13 +431,26 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const firstName = currentProfile?.first_name || '';
   const lastName = currentProfile?.last_name || '';
   const rawAvatarUrl = String(currentProfile?.avatar_url || '').trim();
-  const avatarDisplayUrl = String(currentProfile?.avatar_display_url || '').trim();
-  const avatarUrl = isRenderableAvatarUrl(avatarDisplayUrl)
-    ? avatarDisplayUrl
-    : isRenderableAvatarUrl(rawAvatarUrl)
-      ? rawAvatarUrl
-      : null;
-  const avatarCacheKey = rawAvatarUrl ? `profile-avatar:${uid || 'anon'}:${rawAvatarUrl}` : undefined;
+  const storedAvatarDisplayUrl = String(currentProfile?.avatar_display_url || '').trim();
+  const cachedAvatarResolution = getCachedProfileMediaResolution(rawAvatarUrl);
+  const avatarDisplayUrl = isRenderableAvatarUrl(storedAvatarDisplayUrl)
+    ? storedAvatarDisplayUrl
+    : isRenderableAvatarUrl(cachedAvatarResolution?.resolvedUrl)
+      ? cachedAvatarResolution.resolvedUrl
+      : '';
+  const avatarUrl =
+    !cachedAvatarResolution?.cleaned && isRenderableAvatarUrl(avatarDisplayUrl)
+      ? avatarDisplayUrl
+      : !cachedAvatarResolution?.cleaned && isRenderableAvatarUrl(rawAvatarUrl)
+        ? rawAvatarUrl
+        : null;
+  const avatarCacheKey = buildAvatarCacheKey(uid, rawAvatarUrl || avatarUrl);
+  const [avatarLoaded, setAvatarLoaded] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  useEffect(() => {
+    setAvatarLoaded(false);
+    setAvatarLoadFailed(false);
+  }, [avatarUrl]);
   const companyId = currentProfile?.company_id || profileFallback?.company_id || null;
   const {
     settings: companySettings,
@@ -474,12 +490,17 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   useEffect(() => {
     if (!uid || !rawAvatarUrl) return undefined;
     if (isRenderableAvatarUrl(avatarDisplayUrl)) {
+      primeProfileMediaResolution(rawAvatarUrl, avatarDisplayUrl);
       ExpoImage.prefetch(avatarDisplayUrl, 'memory-disk').catch(() => {});
+      if (storedAvatarDisplayUrl !== avatarDisplayUrl) {
+        applyAvatarSnapshot({ avatar_url: rawAvatarUrl, avatar_display_url: avatarDisplayUrl });
+      }
       return undefined;
     }
     if (isRenderableAvatarUrl(rawAvatarUrl)) {
+      primeProfileMediaResolution(rawAvatarUrl, rawAvatarUrl);
       ExpoImage.prefetch(rawAvatarUrl, 'memory-disk').catch(() => {});
-      if (avatarDisplayUrl !== rawAvatarUrl) {
+      if (storedAvatarDisplayUrl !== rawAvatarUrl) {
         applyAvatarSnapshot({ avatar_url: rawAvatarUrl, avatar_display_url: rawAvatarUrl });
       }
       return undefined;
@@ -500,11 +521,18 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       cancelled = true;
     };
-  }, [applyAvatarSnapshot, avatarDisplayUrl, rawAvatarUrl, uid]);
+  }, [applyAvatarSnapshot, avatarDisplayUrl, rawAvatarUrl, storedAvatarDisplayUrl, uid]);
+
+  const handleAvatarLoad = useCallback(() => {
+    setAvatarLoaded(true);
+    setAvatarLoadFailed(false);
+  }, []);
 
   const handleAvatarLoadError = useCallback(() => {
+    setAvatarLoaded(false);
+    setAvatarLoadFailed(true);
     if (!uid || !rawAvatarUrl) return;
-    inspectProfileMedia([rawAvatarUrl])
+    inspectProfileMedia([rawAvatarUrl], { forceRefresh: true })
       .then((inspection) => {
         const snapshot = buildResolvedAvatarSnapshot(rawAvatarUrl, inspection);
         if (snapshot) applyAvatarSnapshot(snapshot);
@@ -736,6 +764,12 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     };
   }, [currentProfile?.id, qc, secondaryNetworkEnabled, uid]);
 
+  const cachedSelfProfileDetail = useMemo(() => {
+    const selfProfileId = String(currentProfile?.id || uid || '').trim();
+    if (!isUuid(selfProfileId)) return null;
+    return qc.getQueryData(queryKeys.employees.detail(selfProfileId)) || null;
+  }, [currentProfile?.id, qc, uid]);
+
   // Fetch company name if companyId is available
   const { data: companyRow } = useQuery({
     queryKey: ['company', companyId],
@@ -744,13 +778,19 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       const { data } = await supabase.from('companies').select('id, name').eq('id', companyId).maybeSingle();
       return data || null;
     },
-    enabled: secondaryNetworkEnabled && !!companyId,
+    enabled: !!companyId,
+    initialData: () =>
+      appQueryClient.getQueryData(['company', companyId]) ||
+      (companyId && cachedSelfProfileDetail?.companyName
+        ? { id: companyId, name: cachedSelfProfileDetail.companyName }
+        : undefined),
+    initialDataUpdatedAt: () => appQueryClient.getQueryState(['company', companyId])?.dataUpdatedAt,
     staleTime: HOME_COMPANY_STALE_MS,
     refetchOnMount: false,
     refetchOnReconnect: true,
   });
 
-  const companyName = companyRow?.name || null;
+  const companyName = companyRow?.name || cachedSelfProfileDetail?.companyName || null;
 
   // Fetch department name if department id available
   const departmentIdToUse = deptIdFromProfile;
@@ -761,13 +801,19 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       const { data } = await supabase.from('departments').select('id, name').eq('id', departmentIdToUse).maybeSingle();
       return data || null;
     },
-    enabled: secondaryNetworkEnabled && useDepartments && !!departmentIdToUse,
+    enabled: useDepartments && !!departmentIdToUse,
+    initialData: () =>
+      appQueryClient.getQueryData(['department', departmentIdToUse]) ||
+      (departmentIdToUse && cachedSelfProfileDetail?.departmentName
+        ? { id: departmentIdToUse, name: cachedSelfProfileDetail.departmentName }
+        : undefined),
+    initialDataUpdatedAt: () => appQueryClient.getQueryState(['department', departmentIdToUse])?.dataUpdatedAt,
     staleTime: HOME_DEPARTMENT_STALE_MS,
     refetchOnMount: false,
     refetchOnReconnect: true,
   });
 
-  const departmentName = departmentRow?.name || null;
+  const departmentName = departmentRow?.name || cachedSelfProfileDetail?.departmentName || null;
 
   const seedSelfProfileEmployeeDetail = useCallback(() => {
     const selfProfileId = String(currentProfile?.id || uid || '').trim();
@@ -1022,14 +1068,18 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             pressed && styles.rowPressed,
           ]}
         >
-          {avatarUrl ? (
+          {avatarUrl && !avatarLoadFailed ? (
             <View style={styles.avatarWrap}>
+              <View style={styles.avatarImageFallback}>
+                <Text style={styles.avatarText}>{initials}</Text>
+              </View>
               <ExpoImage
                 source={{ uri: avatarUrl, cacheKey: avatarCacheKey }}
-                style={styles.avatarImg}
+                style={[styles.avatarImg, !avatarLoaded && styles.avatarImgHidden]}
                 contentFit="cover"
                 cachePolicy="memory-disk"
                 priority="high"
+                onLoad={handleAvatarLoad}
                 onError={handleAvatarLoadError}
               />
             </View>
@@ -1268,8 +1318,22 @@ const createStyles = (theme) => {
       backgroundColor: colors.surface,
       marginRight: spacing.md,
       alignSelf: 'center',
+      position: 'relative',
     },
-    avatarImg: { width: '100%', height: '100%' },
+    avatarImageFallback: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.inputBg || colors.surface,
+    },
+    avatarImg: {
+      width: '100%',
+      height: '100%',
+      backgroundColor: 'transparent',
+    },
+    avatarImgHidden: {
+      opacity: 0,
+    },
     avatarFallback: {
       width: avatarSize,
       height: avatarSize,

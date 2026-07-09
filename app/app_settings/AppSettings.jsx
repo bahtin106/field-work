@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
+import AppSettingsScreen from '../../screens/app_settings/AppSettingsScreen';
 
-export default function AppSettingsRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../screens/app_settings/AppSettingsScreen')}
-      titleKey="routes.app_settings/AppSettings"
-    />
-  );
-}
+export default AppSettingsScreen;

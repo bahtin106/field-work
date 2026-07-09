@@ -1,5 +1,6 @@
 import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
+import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -10,15 +11,16 @@ import {
   InteractionManager,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
+import StatusSelectModal from '../../components/filters/StatusSelectModal';
 import { useAuth } from '../../components/hooks/useAuth';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
@@ -87,6 +89,7 @@ const DEFAULT_MY_ORDERS_PAGE_SIZE = 30;
 const MY_ORDERS_LIST_CACHE_STORAGE_PREFIX = 'orders.my.listCache.v3';
 const MY_ORDERS_CACHE_PERSIST_DEBOUNCE_MS = 350;
 const MY_ORDERS_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const MY_ORDERS_LIST_CACHE_FRESH_MS = 45 * 1000;
 const FEED_SEEN_STORAGE_PREFIX = 'myorders.feedSeen.v2';
 const FEED_LAST_FP_STORAGE_PREFIX = 'myorders.feedLastFp.v2';
 const MY_ORDERS_SCREEN_KEY = 'MyOrders';
@@ -97,12 +100,25 @@ const MY_ORDERS_REFRESH_WAIT_TIMEOUT_MS = 12000;
 const MY_ORDERS_BACKGROUND_REFRESH_DELAY_MS = 1200;
 const MY_ORDERS_FEED_PREVIEW_SIZE = 20;
 const MY_ORDERS_FEED_PREFETCH_DELAY_MS = 2200;
-const MY_ORDERS_FEED_PULSE_DURATION_MS = 700;
+const MY_ORDERS_FEED_PULSE_DURATION_MS = 1200;
+const MY_ORDERS_FEED_INDICATOR_CACHE_KEY = 'feed.indicator.v1';
+const MY_ORDERS_FEED_INDICATOR_FRESH_MS = 30 * 1000;
 const MY_ORDERS_EXECUTOR_PREFETCH_LIMIT = 80;
 const MY_ORDERS_DETAIL_PREFETCH_LIMIT = 5;
 const MY_ORDERS_DETAIL_PREFETCH_TTL_MS = 4000;
 const MY_ORDERS_VIEWABILITY_PREFETCH_LIMIT = 6;
 const MY_ORDERS_VIEWABILITY_PREFETCH_TTL_MS = 2500;
+const MY_ORDERS_STATUS_ALWAYS_VISIBLE = Object.freeze(['feed', 'all']);
+const MY_ORDERS_STATUS_BAR_PADDING = 3;
+const MY_ORDERS_STATUS_CHIP_GAP = 2;
+const MY_ORDERS_STATUS_CHIP_MIN_WIDTH = 38;
+const MY_ORDERS_STATUS_CHIP_MAX_WIDTH = 92;
+const MY_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH = 148;
+const MY_ORDERS_STATUS_CHIP_STRETCH_MAX_WIDTH = 168;
+const MY_ORDERS_STATUS_MORE_MIN_WIDTH = 70;
+const MY_ORDERS_STATUS_MORE_MAX_WIDTH = 84;
+const MY_ORDERS_STATUS_USAGE_STORAGE_PREFIX = 'orders.my.statusUsage.v1';
+const MY_ORDERS_STATUS_USAGE_MAX_ENTRIES = 32;
 const MY_ORDERS_LIST = Object.freeze({
   initialNumToRender: 8,
   maxToRenderPerBatch: 6,
@@ -111,6 +127,70 @@ const MY_ORDERS_LIST = Object.freeze({
   itemVisiblePercentThreshold: 45,
   onEndReachedThreshold: 0.65,
 });
+
+function normalizeMyOrdersStatusFilter(value) {
+  const key = String(value || '').trim();
+  if (!key) return 'all';
+  if (key === 'in_progress') return 'progress';
+  return key;
+}
+
+function estimateStatusChipWidth(label, { hasLeadingDot = false, maxWidth = MY_ORDERS_STATUS_CHIP_MAX_WIDTH } = {}) {
+  const text = String(label || '');
+  const textWidth = Math.ceil(Array.from(text).length * 7.7);
+  const leadWidth = hasLeadingDot ? 13 : 0;
+  return Math.max(
+    MY_ORDERS_STATUS_CHIP_MIN_WIDTH,
+    Math.min(maxWidth, textWidth + leadWidth + 22),
+  );
+}
+
+function normalizeStatusUsagePayload(raw, allowedIds = []) {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const source = parsed?.items && typeof parsed.items === 'object' ? parsed.items : parsed;
+    if (!source || typeof source !== 'object') return {};
+    const allowed = new Set((allowedIds || []).map(normalizeMyOrdersStatusFilter).filter(Boolean));
+    const entries = Object.entries(source)
+      .map(([rawKey, rawValue]) => {
+        const key = normalizeMyOrdersStatusFilter(rawKey);
+        if (!key || !allowed.has(key)) return null;
+        const value = rawValue && typeof rawValue === 'object' ? rawValue : { count: rawValue };
+        const count = Math.max(0, Math.floor(Number(value?.count || 0)));
+        const lastUsedAt = Math.max(0, Math.floor(Number(value?.lastUsedAt || 0)));
+        if (!count && !lastUsedAt) return null;
+        return [key, { count, lastUsedAt }];
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const countDelta = (b[1]?.count || 0) - (a[1]?.count || 0);
+        if (countDelta) return countDelta;
+        return (b[1]?.lastUsedAt || 0) - (a[1]?.lastUsedAt || 0);
+      })
+      .slice(0, MY_ORDERS_STATUS_USAGE_MAX_ENTRIES);
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+function rankStatusFilterOptions(options = [], usage = {}) {
+  return options
+    .map((option, index) => ({ option, index }))
+    .sort((a, b) => {
+      const aKey = normalizeMyOrdersStatusFilter(a.option?.id);
+      const bKey = normalizeMyOrdersStatusFilter(b.option?.id);
+      const aUsage = usage?.[aKey] || {};
+      const bUsage = usage?.[bKey] || {};
+      const countDelta = (Number(bUsage.count) || 0) - (Number(aUsage.count) || 0);
+      if (countDelta) return countDelta;
+      const recencyDelta = (Number(bUsage.lastUsedAt) || 0) - (Number(aUsage.lastUsedAt) || 0);
+      if (recencyDelta) return recencyDelta;
+      return a.index - b.index;
+    })
+    .map(({ option }) => option);
+}
+
 const FiltersPanel = lazy(() => import('../../components/filters/FiltersPanel'));
 const SortSelectModal = lazy(() => import('../../components/filters/SortSelectModal'));
 
@@ -139,7 +219,8 @@ function readPersistedListCachePayload(raw) {
     if (!Number.isFinite(savedAt) || Date.now() - savedAt > MY_ORDERS_CACHE_MAX_AGE_MS) return null;
     const entries = parsed.entries && typeof parsed.entries === 'object' ? parsed.entries : null;
     if (!entries) return null;
-    return entries;
+    const fetchedAt = parsed.fetchedAt && typeof parsed.fetchedAt === 'object' ? parsed.fetchedAt : {};
+    return { entries, fetchedAt, savedAt };
   } catch {
     return null;
   }
@@ -160,6 +241,7 @@ function excludeFeedStatuses(query) {
 function MyOrdersContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const { width: windowWidth } = useWindowDimensions();
   const queryClient = useQueryClient();
   trackRender(MY_ORDERS_SCREEN_KEY, MY_ORDERS_RENDER_WARN_THRESHOLD);
 
@@ -177,21 +259,39 @@ function MyOrdersContent() {
     () =>
       StyleSheet.create({
         filterBar: {
-          marginBottom: 16,
+          marginBottom: 14,
         },
-        filterScrollContent: {
+        statusFilterRow: {
           flexDirection: 'row',
-          gap: 8,
-          paddingRight: 4,
+          alignItems: 'center',
+          alignSelf: 'stretch',
+          width: '100%',
+          gap: MY_ORDERS_STATUS_CHIP_GAP,
+          padding: MY_ORDERS_STATUS_BAR_PADDING,
+          borderRadius: theme.radii?.lg ?? 12,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.inputBg || theme.colors.surface,
         },
         chip: {
-          paddingVertical: 8,
-          paddingHorizontal: 14,
-          backgroundColor: theme.colors.inputBg || theme.colors.surface,
-          borderRadius: 20,
+          minHeight: 30,
+          paddingVertical: 5,
+          paddingHorizontal: 7,
+          backgroundColor: 'transparent',
+          borderRadius: theme.radii?.md ?? 10,
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 1,
+          overflow: 'hidden',
         },
         chipActive: { backgroundColor: theme.colors.primary },
-        chipText: { fontSize: 14, color: theme.colors.text },
+        chipText: {
+          flexShrink: 1,
+          fontSize: Math.max(theme.typography.sizes.xs ?? 12, (theme.typography.sizes.sm ?? 14) - 1),
+          color: theme.colors.text,
+          textAlign: 'center',
+          includeFontPadding: false,
+        },
         chipTextActive: {
           color: theme.colors.onPrimary || theme.colors.primaryTextOn,
           fontWeight: '600',
@@ -199,12 +299,23 @@ function MyOrdersContent() {
         chipContent: {
           flexDirection: 'row',
           alignItems: 'center',
+          minWidth: 0,
+        },
+        statusMoreChip: {
+          width: MY_ORDERS_STATUS_MORE_MIN_WIDTH,
+          flexShrink: 0,
+        },
+        statusMoreText: {
+          flexShrink: 0,
+        },
+        feedChipPulseOverlay: {
+          backgroundColor: theme.colors.danger,
         },
         feedDotBase: {
-          width: 6,
-          height: 6,
-          borderRadius: 3,
-          marginRight: 6,
+          width: 7,
+          height: 7,
+          borderRadius: 3.5,
+          marginRight: 4,
         },
         feedDotNew: {
           backgroundColor: theme.colors.danger,
@@ -358,6 +469,39 @@ function MyOrdersContent() {
           ],
     [isSoloAdmin, t],
   );
+  const statusFilterLabels = useMemo(() => {
+    const labels = {
+      feed: t('order_status_in_feed'),
+      all: t('common_all'),
+    };
+    orderStatusOptions.forEach((option) => {
+      const key = normalizeMyOrdersStatusFilter(option?.id);
+      if (key) labels[key] = option?.label || key;
+    });
+    labels.progress = labels.progress || t('order_status_in_progress');
+    return labels;
+  }, [orderStatusOptions, t]);
+  const statusFilterOptions = useMemo(() => {
+    const seen = new Set();
+    const addOption = (id, label) => {
+      const key = normalizeMyOrdersStatusFilter(id);
+      if (!key || seen.has(key)) return null;
+      seen.add(key);
+      return { id: key, label: label || statusFilterLabels[key] || key };
+    };
+    return [
+      addOption('feed', statusFilterLabels.feed),
+      addOption('all', statusFilterLabels.all),
+      ...orderStatusOptions.map((option) => addOption(option?.id, option?.label)),
+    ].filter(Boolean);
+  }, [orderStatusOptions, statusFilterLabels]);
+  const statusChipLabels = useMemo(
+    () => ({
+      ...statusFilterLabels,
+      feed: t('order_status_in_feed_short'),
+    }),
+    [statusFilterLabels, t],
+  );
   const statusAliasToFilterKey = useMemo(() => {
     const aliasMap = new Map();
     orderStatusOptions.forEach((opt) => {
@@ -416,6 +560,7 @@ function MyOrdersContent() {
   );
   const [useWorkTypesFlag, setUseWorkTypesFlag] = useState(false);
   const [workTypeOptions, setWorkTypeOptions] = useState([]);
+  const [statusSelectVisible, setStatusSelectVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState('date_desc');
   const hasSelectedWorkTypeFilters =
@@ -576,6 +721,34 @@ function MyOrdersContent() {
     () => buildScopedStorageKey(FEED_LAST_FP_STORAGE_PREFIX, cacheScopeKey),
     [cacheScopeKey],
   );
+  const statusUsageStorageKey = useMemo(
+    () => buildScopedStorageKey(MY_ORDERS_STATUS_USAGE_STORAGE_PREFIX, cacheScopeKey),
+    [cacheScopeKey],
+  );
+  const statusUsageAllowedIds = useMemo(
+    () => statusFilterOptions.map((option) => normalizeMyOrdersStatusFilter(option?.id)).filter(Boolean),
+    [statusFilterOptions],
+  );
+  const [statusUsage, setStatusUsage] = useState({});
+  const statusUsageRef = useRef({});
+  useEffect(() => {
+    let alive = true;
+    AsyncStorage.getItem(statusUsageStorageKey)
+      .then((raw) => {
+        if (!alive) return;
+        const normalized = normalizeStatusUsagePayload(raw, statusUsageAllowedIds);
+        statusUsageRef.current = normalized;
+        setStatusUsage(normalized);
+      })
+      .catch(() => {
+        if (!alive) return;
+        statusUsageRef.current = {};
+        setStatusUsage({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [statusUsageAllowedIds, statusUsageStorageKey]);
   const recentOrdersQueryKey = useMemo(
     () => buildOrdersRecentQueryKey(cacheScopeKey),
     [cacheScopeKey],
@@ -588,6 +761,8 @@ function MyOrdersContent() {
   const listCacheMy = LIST_CACHE.myByScope[cacheScopeKey];
   const PAGE_SIZE = DEFAULT_MY_ORDERS_PAGE_SIZE;
   const persistListCacheTimerRef = useRef(null);
+  const listCacheFetchedAtRef = useRef({});
+  const recentOrdersCacheKeyRef = useRef('');
   const persistListCache = useCallback(() => {
     if (persistListCacheTimerRef.current) {
       clearTimeout(persistListCacheTimerRef.current);
@@ -600,15 +775,19 @@ function MyOrdersContent() {
           JSON.stringify({
             savedAt: Date.now(),
             entries: listCacheMy,
+            fetchedAt: listCacheFetchedAtRef.current,
           }),
         ).catch(() => {});
       } catch {}
     }, MY_ORDERS_CACHE_PERSIST_DEBOUNCE_MS);
   }, [listCacheMy, listCacheStorageKey]);
   const setListCacheEntry = useCallback(
-    (cacheKey, value) => {
+    (cacheKey, value, options = {}) => {
       if (!cacheKey) return;
       listCacheMy[cacheKey] = value;
+      if (options?.fetchedAt) {
+        listCacheFetchedAtRef.current[cacheKey] = Number(options.fetchedAt) || Date.now();
+      }
       pruneObjectCache(listCacheMy, LIST_CACHE_MAX_ENTRIES);
       persistListCache();
     },
@@ -637,8 +816,151 @@ function MyOrdersContent() {
     return [];
   });
   const [filter, setFilter] = useState('all');
+  const activeStatusFilter = normalizeMyOrdersStatusFilter(filter);
   const isFeedFeatureEnabled = !isSoloAdmin;
-  const effectiveFilter = isSoloAdmin ? 'all' : filter;
+  const effectiveFilter = isSoloAdmin ? 'all' : activeStatusFilter;
+  const recordStatusFilterUsage = useCallback(
+    (nextFilter) => {
+      const key = normalizeMyOrdersStatusFilter(nextFilter);
+      if (!key || MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key)) return;
+      if (!statusUsageAllowedIds.includes(key)) return;
+      const now = Date.now();
+      const currentUsage = statusUsageRef.current || {};
+      const current = currentUsage[key] || {};
+      const next = {
+        ...currentUsage,
+        [key]: {
+          count: Math.min(999999, (Number(current.count) || 0) + 1),
+          lastUsedAt: now,
+        },
+      };
+      const normalized = normalizeStatusUsagePayload({ items: next }, statusUsageAllowedIds);
+      statusUsageRef.current = normalized;
+      try {
+        AsyncStorage.setItem(
+          statusUsageStorageKey,
+          JSON.stringify({ savedAt: now, items: normalized }),
+        ).catch(() => {});
+      } catch {}
+    },
+    [statusUsageAllowedIds, statusUsageStorageKey],
+  );
+  const statusSelectOptions = useMemo(
+    () => rankStatusFilterOptions(statusFilterOptions, statusUsage),
+    [statusFilterOptions, statusUsage],
+  );
+  const orderedStatusQuickKeys = useMemo(() => {
+    const rankedStatuses = rankStatusFilterOptions(
+      statusFilterOptions.filter(
+        (option) => !MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(normalizeMyOrdersStatusFilter(option?.id)),
+      ),
+      statusUsage,
+    ).map((option) => normalizeMyOrdersStatusFilter(option?.id));
+
+    return [
+      ...MY_ORDERS_STATUS_ALWAYS_VISIBLE,
+      ...rankedStatuses.filter(Boolean),
+    ];
+  }, [statusFilterOptions, statusUsage]);
+  const statusQuickLayout = useMemo(() => {
+    const availableWidth = Math.max(0, Number(windowWidth || 0) - 32 - MY_ORDERS_STATUS_BAR_PADDING * 2);
+    const reservedMoreWidth = MY_ORDERS_STATUS_MORE_MIN_WIDTH;
+    const selected = [];
+    const widths = {};
+    let used = 0;
+
+    const addChip = (key, { force = false, active = false } = {}) => {
+      if (!key || selected.includes(key)) return false;
+      const label = statusChipLabels[key] || statusFilterLabels[key] || key;
+      const nextWidth = estimateStatusChipWidth(label, {
+        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        maxWidth: active ? MY_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH : MY_ORDERS_STATUS_CHIP_MAX_WIDTH,
+      });
+      const nextGap = selected.length > 0 ? MY_ORDERS_STATUS_CHIP_GAP : 0;
+      const projected = used + nextGap + nextWidth;
+      const remainingGap = MY_ORDERS_STATUS_CHIP_GAP;
+      const requiredWidth = projected + remainingGap + reservedMoreWidth;
+
+      if (force || requiredWidth <= availableWidth) {
+        selected.push(key);
+        widths[key] = nextWidth;
+        used = projected;
+        return true;
+      }
+      return false;
+    };
+
+    orderedStatusQuickKeys.forEach((key) => {
+      addChip(key, {
+        active: activeStatusFilter === key,
+        force: MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key),
+      });
+    });
+
+    let moreWidth = reservedMoreWidth;
+    const totalWidth =
+      selected.reduce((sum, key) => sum + (widths[key] || 0), 0) +
+      moreWidth +
+      MY_ORDERS_STATUS_CHIP_GAP * selected.length;
+    let extra = Math.max(0, availableWidth - totalWidth);
+
+    const getStretchMax = (key) => {
+      const label = statusChipLabels[key] || statusFilterLabels[key] || key;
+      const fullWidth = estimateStatusChipWidth(label, {
+        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        maxWidth:
+          activeStatusFilter === key
+            ? MY_ORDERS_STATUS_CHIP_STRETCH_MAX_WIDTH
+            : MY_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH,
+      });
+      if (MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key)) {
+        return Math.max(widths[key] || 0, fullWidth);
+      }
+      return Math.max(widths[key] || 0, fullWidth + (activeStatusFilter === key ? 8 : 4));
+    };
+
+    const stretchOrder = [
+      activeStatusFilter,
+      ...selected.filter((key) => !MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key) && key !== activeStatusFilter),
+      ...selected.filter((key) => MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key) && key !== activeStatusFilter),
+    ].filter((key, index, arr) => key && selected.includes(key) && arr.indexOf(key) === index);
+
+    stretchOrder.forEach((key, index) => {
+      if (extra <= 0) return;
+      const remaining = stretchOrder.length - index;
+      const currentWidth = widths[key] || 0;
+      const maxWidth = getStretchMax(key);
+      const add = Math.min(maxWidth - currentWidth, Math.ceil(extra / remaining));
+      if (add > 0) {
+        widths[key] = currentWidth + add;
+        extra -= add;
+      }
+    });
+
+    if (extra > 0) {
+      const addToMore = Math.min(MY_ORDERS_STATUS_MORE_MAX_WIDTH - moreWidth, extra);
+      if (addToMore > 0) {
+        moreWidth += addToMore;
+        extra -= addToMore;
+      }
+    }
+
+    if (extra > 0 && selected.length) {
+      const perChip = Math.floor(extra / selected.length);
+      let rest = extra - perChip * selected.length;
+      selected.forEach((key) => {
+        widths[key] += perChip + (rest > 0 ? 1 : 0);
+        if (rest > 0) rest -= 1;
+      });
+    }
+
+    return { keys: selected, moreWidth, widths };
+  }, [activeStatusFilter, feedState, orderedStatusQuickKeys, statusChipLabels, statusFilterLabels, windowWidth]);
+  const visibleQuickStatusKeys = statusQuickLayout.keys;
+  const statusChipWidths = statusQuickLayout.widths;
+  const statusMoreWidth = statusQuickLayout.moreWidth || MY_ORDERS_STATUS_MORE_MIN_WIDTH;
+  const isOverflowStatusActive = !visibleQuickStatusKeys.includes(activeStatusFilter);
+  const statusMoreLabel = t('viewer_more');
   const [loading, setLoading] = useState(() => {
     const prefetchData = queryClient.getQueryData(recentOrdersQueryKey);
     if (Array.isArray(prefetchData)) {
@@ -647,6 +969,10 @@ function MyOrdersContent() {
     return !Array.isArray(listCacheMy[defaultListCacheKey]);
   });
   const [loadError, setLoadError] = useState('');
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreOrders, setHasMoreOrders] = useState(false);
+  const [totalOrdersCount, setTotalOrdersCount] = useState(0);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const hydratedRef = useRef(Array.isArray(orders) && orders.length > 0);
@@ -664,6 +990,114 @@ function MyOrdersContent() {
   useEffect(() => {
     ordersCountRef.current = Array.isArray(orders) ? orders.length : 0;
   }, [orders]);
+  const getCachedOrdersSnapshot = useCallback(
+    (nextFilter) => {
+      const key = normalizeMyOrdersStatusFilter(nextFilter || 'all');
+      const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
+      const exactRows = listCacheMy[cacheKey];
+      if (Array.isArray(exactRows)) {
+        return {
+          cacheKey,
+          fetchedAt: Number(listCacheFetchedAtRef.current[cacheKey] || 0),
+          exact: true,
+          rows: exactRows,
+        };
+      }
+
+      if (key === 'all') {
+        const recentRows = queryClient.getQueryData(recentOrdersQueryKey);
+        if (Array.isArray(recentRows) && recentOrdersCacheKeyRef.current === cacheKey) {
+          return {
+            cacheKey,
+            fetchedAt: Number(listCacheFetchedAtRef.current[cacheKey] || 0),
+            exact: true,
+            rows: recentRows,
+          };
+        }
+      }
+
+      if (key && key !== 'all' && key !== 'feed') {
+        const allCacheKey = makeCacheKey('all', filtersFingerprint, relationFingerprint);
+        const allRows = Array.isArray(listCacheMy[allCacheKey])
+          ? listCacheMy[allCacheKey]
+          : recentOrdersCacheKeyRef.current === allCacheKey
+            ? queryClient.getQueryData(recentOrdersQueryKey)
+            : null;
+        if (Array.isArray(allRows)) {
+          const normalizedStatusKey = normalizeOrderStatusFilterKey(key);
+          const rows = allRows.filter((order) => {
+            const rawStatus = String(order?.status || '').trim();
+            const mappedStatus = statusAliasToFilterKey.get(rawStatus) || normalizeOrderStatusFilterKey(rawStatus);
+            return mappedStatus === normalizedStatusKey;
+          });
+          return {
+            cacheKey,
+            fetchedAt: Number(listCacheFetchedAtRef.current[allCacheKey] || 0),
+            exact: false,
+            rows,
+          };
+        }
+      }
+
+      return null;
+    },
+    [
+      filtersFingerprint,
+      listCacheMy,
+      makeCacheKey,
+      queryClient,
+      recentOrdersQueryKey,
+      relationFingerprint,
+      statusAliasToFilterKey,
+    ],
+  );
+  const applyOrdersSnapshot = useCallback(
+    (snapshot) => {
+      if (!snapshot || !Array.isArray(snapshot.rows)) return false;
+      setOrders(snapshot.rows);
+      setTotalOrdersCount(snapshot.rows.length);
+      setHasMoreOrders(Boolean(snapshot.exact && snapshot.rows.length >= PAGE_SIZE));
+      setLoadingMore(false);
+      setLoadError('');
+      setLoading(false);
+      hydratedRef.current = true;
+      if (snapshot.cacheKey) {
+        seenFilterRef.current.add(snapshot.cacheKey);
+      }
+      return true;
+    },
+    [PAGE_SIZE],
+  );
+  const primeOrdersFromCache = useCallback(
+    (nextFilter) => {
+      const snapshot = getCachedOrdersSnapshot(nextFilter);
+      if (snapshot && (snapshot.exact || snapshot.rows.length > 0)) {
+        applyOrdersSnapshot(snapshot);
+        return snapshot;
+      }
+
+      setOrders([]);
+      setTotalOrdersCount(0);
+      setHasMoreOrders(false);
+      setLoadingMore(false);
+      setLoadError('');
+      setLoading(true);
+      return null;
+    },
+    [applyOrdersSnapshot, getCachedOrdersSnapshot],
+  );
+  const selectStatusFilter = useCallback(
+    (nextFilter, options = {}) => {
+      const normalized = normalizeMyOrdersStatusFilter(nextFilter);
+      setFilter(normalized);
+      primeOrdersFromCache(normalized);
+      setStatusSelectVisible(false);
+      if (options?.recordUsage !== false) {
+        recordStatusFilterUsage(normalized);
+      }
+    },
+    [primeOrdersFromCache, recordStatusFilterUsage],
+  );
   useEffect(() => {
     if (firstContentMarkedRef.current) return;
     if (loading && !hydratedRef.current) return;
@@ -680,6 +1114,7 @@ function MyOrdersContent() {
       setOrders(knownEnriched);
       setListCacheEntry(cacheKey, knownEnriched);
       if ((effectiveFilter || 'all') === 'all') {
+        recentOrdersCacheKeyRef.current = cacheKey;
         queryClient.setQueryData(recentOrdersQueryKey, knownEnriched.slice(0, PAGE_SIZE));
       }
       return () => {
@@ -706,6 +1141,7 @@ function MyOrdersContent() {
       setOrders(enriched);
       setListCacheEntry(cacheKey, enriched);
       if ((effectiveFilter || 'all') === 'all') {
+        recentOrdersCacheKeyRef.current = cacheKey;
         queryClient.setQueryData(recentOrdersQueryKey, enriched.slice(0, PAGE_SIZE));
       }
     })().catch(() => {
@@ -735,8 +1171,12 @@ function MyOrdersContent() {
         if (!alive) return;
         const persisted = readPersistedListCachePayload(raw);
         if (!persisted) return;
-        Object.assign(listCacheMy, persisted);
+        Object.assign(listCacheMy, persisted.entries);
         pruneObjectCache(listCacheMy, LIST_CACHE_MAX_ENTRIES);
+        Object.keys(persisted.entries || {}).forEach((key) => {
+          listCacheFetchedAtRef.current[key] =
+            Number(persisted.fetchedAt?.[key] || 0) || persisted.savedAt;
+        });
 
         const currentKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
         const cachedCurrent = listCacheMy[currentKey];
@@ -748,7 +1188,10 @@ function MyOrdersContent() {
             : null;
         if (!best) return;
 
-        queryClient.setQueryData(recentOrdersQueryKey, best.slice(0, PAGE_SIZE));
+        if (Array.isArray(cachedDefault)) {
+          recentOrdersCacheKeyRef.current = defaultListCacheKey;
+          queryClient.setQueryData(recentOrdersQueryKey, cachedDefault.slice(0, PAGE_SIZE));
+        }
         if (ordersCountRef.current === 0) {
           setOrders(best);
           setTotalOrdersCount(best.length);
@@ -787,16 +1230,12 @@ function MyOrdersContent() {
   }, [isSoloAdmin, selectedStatusFilters, setFilterValue]);
   useEffect(() => {
     if (!isSoloAdmin) return;
-    if (filter !== 'all') {
-      setFilter('all');
+    if (activeStatusFilter !== 'all') {
+      selectStatusFilter('all', { recordUsage: false });
     }
-  }, [filter, isSoloAdmin]);
+  }, [activeStatusFilter, isSoloAdmin, selectStatusFilter]);
 
   // Full dataset loading (batch streaming)
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMoreOrders, setHasMoreOrders] = useState(false);
-  const [totalOrdersCount, setTotalOrdersCount] = useState(0);
-  const [refreshNonce, setRefreshNonce] = useState(0);
   // Feed indicator state (cached preview of feed), scoped with the same account cache key.
   const feedStateCache = (globalThis.__MYORDERS_FEED_STATE ||= {});
   feedStateCache[cacheScopeKey] ||= {};
@@ -809,8 +1248,10 @@ function MyOrdersContent() {
   const listPrefetchRef = useRef({ key: '', ts: 0 });
   const fetchNextOrdersPageRef = useRef(null);
   const viewabilityPrefetchRef = useRef({ key: '', ts: 0 });
+  const feedMetaRequestSeqRef = useRef(0);
   const activeCacheScopeRef = useRef(cacheScopeKey);
   const refreshWaitersRef = useRef([]);
+  const forceNetworkRefreshRef = useRef(false);
   const resolveRefreshWaiters = useCallback(() => {
     const waiters = refreshWaitersRef.current.splice(0);
     waiters.forEach((resolve) => {
@@ -824,6 +1265,7 @@ function MyOrdersContent() {
   useEffect(() => {
     if (activeCacheScopeRef.current === cacheScopeKey) return;
     activeCacheScopeRef.current = cacheScopeKey;
+    feedMetaRequestSeqRef.current += 1;
     const cacheKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
     const scopedCachedList = listCacheMy[cacheKey];
 
@@ -886,7 +1328,9 @@ function MyOrdersContent() {
         }
         if (typeof lastFp === 'string' && lastFp.length) {
           scopedFeedState.fp = lastFp;
+          scopedFeedState.hasAny = true;
           setFeedFingerprint(lastFp);
+          setFeedHasAny(true);
         }
       } catch {}
     };
@@ -933,6 +1377,7 @@ function MyOrdersContent() {
     }
     const fp = Array.isArray(arr)
       ? arr
+          .slice(0, MY_ORDERS_FEED_PREVIEW_SIZE)
           .map((o) => o?.id)
           .filter(Boolean)
           .join(',')
@@ -958,10 +1403,15 @@ function MyOrdersContent() {
     if (!isFocused) return;
     if (loading && orders.length === 0) return;
     const prefetchFeed = async () => {
-      const cached = listCacheMy.feed;
-      if (Array.isArray(cached) && cached.length) {
+      const cached = listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY];
+      const cachedFetchedAt = Number(
+        listCacheFetchedAtRef.current[MY_ORDERS_FEED_INDICATOR_CACHE_KEY] || 0,
+      );
+      if (Array.isArray(cached)) {
         updateFeedMeta(cached);
-        return;
+        if (cachedFetchedAt > 0 && Date.now() - cachedFetchedAt < MY_ORDERS_FEED_INDICATOR_FRESH_MS) {
+          return;
+        }
       }
 
       let uid = String(auth.user?.id || auth.profile?.id || '').trim();
@@ -971,6 +1421,8 @@ function MyOrdersContent() {
       }
       if (!uid) return;
 
+      const requestSeq = feedMetaRequestSeqRef.current + 1;
+      feedMetaRequestSeqRef.current = requestSeq;
       try {
         const data = await listRequests({
           scope: 'all',
@@ -979,7 +1431,8 @@ function MyOrdersContent() {
           page: 1,
           pageSize: MY_ORDERS_FEED_PREVIEW_SIZE,
         });
-        setListCacheEntry('feed', data);
+        if (feedMetaRequestSeqRef.current !== requestSeq) return;
+        setListCacheEntry(MY_ORDERS_FEED_INDICATOR_CACHE_KEY, data, { fetchedAt: Date.now() });
         updateFeedMeta(data);
       } catch {}
     };
@@ -1001,7 +1454,7 @@ function MyOrdersContent() {
   // Mark feed as seen after opening the feed tab
   useEffect(() => {
     if (!isFeedFeatureEnabled) return;
-    if (filter !== 'feed') return;
+    if (activeStatusFilter !== 'feed') return;
     if (!feedHasAny || !feedFingerprint) return;
     if (feedSeenFingerprint === feedFingerprint) return;
 
@@ -1011,7 +1464,7 @@ function MyOrdersContent() {
     try {
       AsyncStorage.setItem(feedSeenStorageKey, feedFingerprint);
     } catch {}
-  }, [feedSeenStorageKey, filter, feedHasAny, feedFingerprint, feedSeenFingerprint, isFeedFeatureEnabled, scopedFeedState]);
+  }, [activeStatusFilter, feedSeenStorageKey, feedHasAny, feedFingerprint, feedSeenFingerprint, isFeedFeatureEnabled, scopedFeedState]);
   // Hydrate the all-orders tab from prefetch cache once
   useEffect(() => {
     if (effectiveFilter === 'all' && !hydratedRef.current) {
@@ -1032,34 +1485,49 @@ function MyOrdersContent() {
     const k = isSoloAdmin
       ? 'all'
       : typeof seedFilter === 'string' && seedFilter.length
-        ? seedFilter
-        : filter || 'all';
+        ? normalizeMyOrdersStatusFilter(seedFilter)
+        : activeStatusFilter || 'all';
     const listKey = makeCacheKey(k, filtersFingerprint, relationFingerprint);
     if (listCacheMy[listKey]) {
       setOrders(listCacheMy[listKey]);
       hydratedRef.current = true;
     }
-    if (!isSoloAdmin && typeof seedFilter === 'string' && seedFilter.length) setFilter(seedFilter);
+    if (!isSoloAdmin && typeof seedFilter === 'string' && seedFilter.length) {
+      selectStatusFilter(seedFilter, { recordUsage: false });
+    }
     if (typeof seedSearch === 'string') setSearchQuery(seedSearch);
-  }, [seedFilter, seedSearch, filter, filtersFingerprint, isSoloAdmin, listCacheMy, makeCacheKey, relationFingerprint]);
+  }, [seedFilter, seedSearch, activeStatusFilter, filtersFingerprint, isSoloAdmin, listCacheMy, makeCacheKey, relationFingerprint, selectStatusFilter]);
 
   useEffect(() => {
     if (!isFocused) return;
     let alive = true;
     let backgroundTimer = null;
 
-    const fetchUserAndOrders = async (isBackground = false) => {
+    const fetchUserAndOrders = async (isBackground = false, options = {}) => {
+      const forceNetwork = !!options?.forceNetwork;
       const key = (typeof effectiveFilter === 'string' ? effectiveFilter : 'all') || 'all';
       const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
-      const cached = listCacheMy[cacheKey];
-      if (Array.isArray(cached)) {
-        setOrders(cached);
-        setTotalOrdersCount(cached.length);
-        hydratedRef.current = true;
-        seenFilterRef.current.add(cacheKey);
-        if (!isBackground) setLoading(false);
+      const cachedSnapshot = getCachedOrdersSnapshot(key);
+      const hasVisibleSnapshot =
+        cachedSnapshot && (cachedSnapshot.exact || cachedSnapshot.rows.length > 0);
+
+      if (hasVisibleSnapshot) {
+        applyOrdersSnapshot(cachedSnapshot);
       } else if (!seenFilterRef.current.has(cacheKey) && !isBackground) {
+        setOrders([]);
+        setTotalOrdersCount(0);
+        setHasMoreOrders(false);
+        setLoadingMore(false);
         setLoading(true);
+      }
+
+      const cacheFresh =
+        cachedSnapshot?.exact &&
+        cachedSnapshot.fetchedAt > 0 &&
+        Date.now() - cachedSnapshot.fetchedAt < MY_ORDERS_LIST_CACHE_FRESH_MS;
+      if (!forceNetwork && !isBackground && cacheFresh) {
+        resolveRefreshWaiters();
+        return;
       }
 
       let uid = String(auth.user?.id || auth.profile?.id || '').trim();
@@ -1109,8 +1577,11 @@ function MyOrdersContent() {
           setOrders(emptyResult);
           setTotalOrdersCount(0);
           setHasMoreOrders(false);
-          setListCacheEntry(cacheKey, emptyResult);
-          queryClient.setQueryData(recentOrdersQueryKey, emptyResult);
+          setListCacheEntry(cacheKey, emptyResult, { fetchedAt: Date.now() });
+          if (key === 'all') {
+            recentOrdersCacheKeyRef.current = cacheKey;
+            queryClient.setQueryData(recentOrdersQueryKey, emptyResult);
+          }
           if (key === 'feed') updateFeedMeta(emptyResult);
           setLoadingMore(false);
           setLoadError('');
@@ -1201,9 +1672,13 @@ function MyOrdersContent() {
       setOrders(aggregated);
       setTotalOrdersCount(total);
       setHasMoreOrders(aggregated.length >= PAGE_SIZE);
-      setListCacheEntry(cacheKey, aggregated);
+      setListCacheEntry(cacheKey, aggregated, { fetchedAt: Date.now() });
       seenFilterRef.current.add(cacheKey);
       if (key === 'feed') updateFeedMeta(aggregated);
+      if (key === 'all') {
+        recentOrdersCacheKeyRef.current = cacheKey;
+        queryClient.setQueryData(recentOrdersQueryKey, aggregated.slice(0, PAGE_SIZE));
+      }
       hydratedRef.current = true;
       setLoadError('');
       setLoading(false);
@@ -1233,38 +1708,46 @@ function MyOrdersContent() {
           aggregated = [...aggregated, ...chunk];
           total = chunk.length >= PAGE_SIZE ? Math.max(total, aggregated.length + 1) : aggregated.length;
           setOrders(aggregated);
-          setListCacheEntry(cacheKey, aggregated);
+          setListCacheEntry(cacheKey, aggregated, { fetchedAt: Date.now() });
           setTotalOrdersCount(total);
           setHasMoreOrders(chunk.length >= PAGE_SIZE);
           if (key === 'feed') updateFeedMeta(aggregated);
-          if (key === 'all') queryClient.setQueryData(recentOrdersQueryKey, aggregated.slice(0, PAGE_SIZE));
+          if (key === 'all') {
+            recentOrdersCacheKeyRef.current = cacheKey;
+            queryClient.setQueryData(recentOrdersQueryKey, aggregated.slice(0, PAGE_SIZE));
+          }
         } finally {
           nextPageInFlight = false;
           if (alive) setLoadingMore(false);
         }
       };
 
-      setListCacheEntry(cacheKey, aggregated);
-      setTotalOrdersCount(total);
-      setHasMoreOrders(aggregated.length >= PAGE_SIZE);
-      if (key === 'feed') updateFeedMeta(aggregated);
-      if (key === 'all') queryClient.setQueryData(recentOrdersQueryKey, aggregated.slice(0, PAGE_SIZE));
-      setLoadError('');
       setLoadingMore(false);
       resolveRefreshWaiters();
     };
 
-    if (
-      effectiveFilter === 'all' &&
-      hydratedRef.current &&
-      ordersCountRef.current > 0 &&
-      Array.isArray(queryClient.getQueryData(recentOrdersQueryKey))
-    ) {
+    const forceNetwork = forceNetworkRefreshRef.current;
+    forceNetworkRefreshRef.current = false;
+
+    const initialSnapshot = getCachedOrdersSnapshot(effectiveFilter);
+    const hasInitialSnapshot = initialSnapshot && (initialSnapshot.exact || initialSnapshot.rows.length > 0);
+    const initialCacheFresh =
+      initialSnapshot?.exact &&
+      initialSnapshot.fetchedAt > 0 &&
+      Date.now() - initialSnapshot.fetchedAt < MY_ORDERS_LIST_CACHE_FRESH_MS;
+
+    if (hasInitialSnapshot) {
+      applyOrdersSnapshot(initialSnapshot);
+    }
+
+    if (!forceNetwork && initialCacheFresh) {
+      resolveRefreshWaiters();
+    } else if (!forceNetwork && hasInitialSnapshot) {
       backgroundTimer = setTimeout(() => {
         fetchUserAndOrders(true);
       }, MY_ORDERS_BACKGROUND_REFRESH_DELAY_MS);
     } else {
-      fetchUserAndOrders();
+      fetchUserAndOrders(false, { forceNetwork });
     }
 
     return () => {
@@ -1272,7 +1755,30 @@ function MyOrdersContent() {
       fetchNextOrdersPageRef.current = null;
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [auth.profile?.id, auth.user?.id, effectiveFilter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, PAGE_SIZE, queryClient, recentOrdersQueryKey, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, resolveRefreshWaiters, setListCacheEntry, t, updateFeedMeta, useWorkTypesFlag]);
+  }, [
+    applyOrdersSnapshot,
+    auth.profile?.id,
+    auth.user?.id,
+    effectiveFilter,
+    filters.values,
+    filtersFingerprint,
+    getCachedOrdersSnapshot,
+    hasLinkedRelationFilter,
+    isFocused,
+    makeCacheKey,
+    PAGE_SIZE,
+    queryClient,
+    recentOrdersQueryKey,
+    refreshNonce,
+    relationClientId,
+    relationFingerprint,
+    relationObjectIds,
+    resolveRefreshWaiters,
+    setListCacheEntry,
+    t,
+    updateFeedMeta,
+    useWorkTypesFlag,
+  ]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -1537,22 +2043,35 @@ function MyOrdersContent() {
       <View>
         {!isSoloAdmin ? (
           <View style={styles.filterBar}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterScrollContent}
-            >
-              {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
+            <View style={styles.statusFilterRow}>
+              {visibleQuickStatusKeys.map((key) => (
                 <Pressable
                   key={key}
-                  onPress={() => setFilter(key)}
+                  onPress={() => selectStatusFilter(key)}
                   style={({ pressed }) => [
                     styles.chip,
-                    filter === key && styles.chipActive,
+                    statusChipWidths[key] ? { width: statusChipWidths[key] } : null,
+                    activeStatusFilter === key && styles.chipActive,
                     pressed && { opacity: 0.9 },
                   ]}
                   accessibilityRole="button"
+                  accessibilityState={{ selected: activeStatusFilter === key }}
                 >
+                  {key === 'feed' && feedState === 'new' ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.feedChipPulseOverlay,
+                        {
+                          opacity: feedPulse.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0.04, 0.13],
+                          }),
+                        },
+                      ]}
+                    />
+                  ) : null}
                   <View style={styles.chipContent}>
                     {key === 'feed' &&
                       feedState !== 'none' &&
@@ -1566,13 +2085,13 @@ function MyOrdersContent() {
                                 {
                                   scale: feedPulse.interpolate({
                                     inputRange: [0, 1],
-                                    outputRange: [1, 1.7],
+                                    outputRange: [1, 1.25],
                                   }),
                                 },
                               ],
                               opacity: feedPulse.interpolate({
                                 inputRange: [0, 1],
-                                outputRange: [0.55, 1],
+                                outputRange: [0.75, 1],
                               }),
                             },
                           ]}
@@ -1580,19 +2099,53 @@ function MyOrdersContent() {
                       ) : (
                         <View style={[styles.feedDotBase, styles.feedDotSeen]} />
                       ))}
-                    <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
-                      {{
-                        feed: t('order_status_in_feed'),
-                        all: t('common_all'),
-                        new: t('order_status_new'),
-                        progress: t('order_status_in_progress'),
-                        done: t('order_status_completed'),
-                      }[key]}
+                    <Text
+                      style={[styles.chipText, activeStatusFilter === key && styles.chipTextActive]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {statusChipLabels[key] || statusFilterLabels[key] || key}
                     </Text>
                   </View>
                 </Pressable>
               ))}
-            </ScrollView>
+              <Pressable
+                onPress={() => setStatusSelectVisible(true)}
+                style={({ pressed }) => [
+                  styles.chip,
+                  styles.statusMoreChip,
+                  { width: statusMoreWidth },
+                  isOverflowStatusActive && styles.chipActive,
+                  pressed && { opacity: 0.9 },
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isOverflowStatusActive }}
+              >
+                <View style={styles.chipContent}>
+                  <Text
+                    style={[
+                      styles.chipText,
+                      styles.statusMoreText,
+                      isOverflowStatusActive && styles.chipTextActive,
+                    ]}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {statusMoreLabel}
+                  </Text>
+                  <Feather
+                    name="chevron-down"
+                    size={14}
+                    color={
+                      isOverflowStatusActive
+                        ? theme.colors.onPrimary || theme.colors.primaryTextOn
+                        : theme.colors.textSecondary
+                    }
+                    style={{ marginLeft: 3 }}
+                  />
+                </View>
+              </Pressable>
+            </View>
           </View>
         ) : null}
 
@@ -1637,26 +2190,37 @@ function MyOrdersContent() {
       </View>
     ),
     [
-      filter,
+      activeStatusFilter,
       searchQuery,
       styles,
       feedState,
       feedPulse,
       filters,
       filterSummaryData,
+      isOverflowStatusActive,
       orders.length,
+      selectStatusFilter,
       sortedFilteredOrders.length,
+      statusChipWidths,
+      statusChipLabels,
+      statusFilterLabels,
+      statusMoreWidth,
+      statusMoreLabel,
+      theme.colors.onPrimary,
+      theme.colors.primaryTextOn,
+      theme.colors.textSecondary,
       totalOrdersCount,
       hasLinkedRelationFilter,
       isSoloAdmin,
       relationLabel,
       t,
+      visibleQuickStatusKeys,
     ],
   );
 
   const hasSearchQuery = Boolean(deferredSearchQuery.trim());
   const hasActiveFilters = Boolean(filterSummaryData.full || hasLinkedRelationFilter);
-  const hasActiveTabFilter = !isSoloAdmin && filter !== 'all';
+  const hasActiveTabFilter = !isSoloAdmin && activeStatusFilter !== 'all';
 
   // Empty state
   const ListEmptyComponent = useCallback(
@@ -1730,7 +2294,13 @@ function MyOrdersContent() {
     setLoadError('');
     if (!softRefresh) {
       delete listCacheMy[cacheKey];
+      delete listCacheFetchedAtRef.current[cacheKey];
       seenFilterRef.current.delete(cacheKey);
+      forceNetworkRefreshRef.current = true;
+      if (key === 'all') {
+        recentOrdersCacheKeyRef.current = '';
+        queryClient.setQueryData(recentOrdersQueryKey, undefined);
+      }
       await Promise.allSettled([
         queryClient.invalidateQueries({ queryKey: ['requests'] }),
         queryClient.invalidateQueries({ queryKey: ['requests', 'detail'] }),
@@ -1747,7 +2317,15 @@ function MyOrdersContent() {
         resolve();
       });
     });
-  }, [effectiveFilter, filtersFingerprint, listCacheMy, makeCacheKey, queryClient, relationFingerprint]);
+  }, [
+    effectiveFilter,
+    filtersFingerprint,
+    listCacheMy,
+    makeCacheKey,
+    queryClient,
+    recentOrdersQueryKey,
+    relationFingerprint,
+  ]);
 
   const refreshWithIndicator = useCallback(async () => {
     await refreshCurrentList({ reason: 'user-refresh' });
@@ -1824,6 +2402,14 @@ function MyOrdersContent() {
           />
         </Suspense>
       ) : null}
+      <StatusSelectModal
+        visible={statusSelectVisible}
+        onClose={() => setStatusSelectVisible(false)}
+        options={statusSelectOptions}
+        value={activeStatusFilter}
+        onChange={selectStatusFilter}
+        title={t('orders_filter_status')}
+      />
       {sortVisible ? (
         <Suspense fallback={null}>
           <SortSelectModal

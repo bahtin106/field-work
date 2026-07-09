@@ -6,7 +6,7 @@ import { AppState } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 const CACHE_PREFIX = 'company_entitlements_cache_v1:';
-const ENTITLEMENTS_STALE_MS = 60 * 1000;
+const ENTITLEMENTS_STALE_MS = 2 * 60 * 1000;
 const ENTITLEMENTS_GC_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
@@ -97,7 +97,7 @@ export function useCompanyEntitlements(companyId, options = {}) {
     placeholderData: (prev) => prev ?? cached ?? null,
     staleTime: ENTITLEMENTS_STALE_MS,
     gcTime: ENTITLEMENTS_GC_MS,
-    refetchInterval: enabled && companyId ? ENTITLEMENTS_STALE_MS : false,
+    refetchInterval: false,
     refetchIntervalInBackground: false,
     refetchOnMount: false,
   });

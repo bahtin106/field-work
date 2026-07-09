@@ -296,7 +296,7 @@ function UsersIndexContent() {
   );
 
   const goToUser = useCallback(
-    async (id) => {
+    (id) => {
       const normalizedId = String(id || '');
       if (!normalizedId) return;
 
@@ -313,15 +313,25 @@ function UsersIndexContent() {
         inFlight: true,
       };
       const registry = getPrefetchRegistry();
-      try {
-        await registry
-          .run(`employee-detail:${normalizedId}`, () => ensureEmployeePrefetch(queryClient, normalizedId))
-          .catch(() => {});
-        router.push(`/users/${normalizedId}`);
-      } finally {
+      router.push(`/users/${normalizedId}`);
+
+      const releaseGuard = () => {
         const prev = openUserNavGuardRef.current;
-        openUserNavGuardRef.current = { ...prev, inFlight: false };
-      }
+        if (prev.userId === normalizedId && prev.startedAt === now) {
+          openUserNavGuardRef.current = { ...prev, inFlight: false };
+        }
+      };
+
+      const fallbackTimer = setTimeout(releaseGuard, USER_OPEN_GUARD_MS);
+      InteractionManager.runAfterInteractions(() => {
+        registry
+          .run(`employee-detail:${normalizedId}`, () => ensureEmployeePrefetch(queryClient, normalizedId))
+          .catch(() => {})
+          .finally(() => {
+            clearTimeout(fallbackTimer);
+            releaseGuard();
+          });
+      });
     },
     [queryClient, router],
   );
@@ -647,13 +657,7 @@ function UsersIndexContent() {
                   !subscriptionGuard.isLoading &&
                   String(subscriptionGuard.reason || '').startsWith('subscription_')
                 ) {
-                  toast.warning(
-                    t(
-                      'subscription_edit_unavailable_toast',
-      // Show the exact date when relative formatting is no longer useful
-                    ),
-                  );
-                  return;
+                  toast.warning(t('invite_no_license_warning'));
                 }
                 router.push('/users/new');
               },

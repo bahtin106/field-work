@@ -1350,14 +1350,6 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         mapByUrl.set(String(row.db_url || ''), row);
       }
 
-      const needsYandexAccess = urls.some((url) => {
-        const row = mapByUrl.get(url);
-        if (row) return String(row.provider || '').trim() === 'yandex_disk';
-        return isLikelyPublicYandexUrl(url);
-      });
-      const accessToken = needsYandexAccess
-        ? (await getValidAccessToken(admin, caller.companyId)).accessToken
-        : null;
       const cleaned: string[] = [];
       const resolvedUrls: Record<string, string> = {};
 
@@ -1365,17 +1357,10 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         const row = mapByUrl.get(url);
         if (!row) {
           if (!isLikelyPublicYandexUrl(url)) continue;
-          try {
-            const legacyState = await resolvePublicYandexDownloadUrl(url);
-            if (legacyState.state === 'ok') {
-              resolvedUrls[url] = await buildSignedRenderUrl(publicBaseUrl, {
-                mode: 'redirect',
-                target: toBase64Url(new TextEncoder().encode(legacyState.href || url)),
-              });
-            } else if (legacyState.state === 'missing') {
-              cleaned.push(url);
-            }
-          } catch {}
+          resolvedUrls[url] = await buildSignedRenderUrl(publicBaseUrl, {
+            mode: 'render',
+            public_key: toBase64Url(new TextEncoder().encode(url)),
+          });
           continue;
         }
 
@@ -1395,24 +1380,13 @@ export async function handleProfileMediaStorageRequest(req: Request) {
           continue;
         }
 
-        if (!accessToken) continue;
-
-        const displayState = await inspectYandexResourceDisplayUrl(accessToken, String(row.external_path || ''));
-        if (displayState.state === 'ok' && displayState.displayUrl) {
+        if (String(row.provider || '').trim() === 'yandex_disk' && Number(row.id) > 0) {
           resolvedUrls[url] = await buildSignedRenderUrl(publicBaseUrl, {
-            mode: 'redirect',
-            target: toBase64Url(new TextEncoder().encode(displayState.displayUrl)),
+            mode: 'render',
+            map_id: String(row.id),
           });
           continue;
         }
-        if (displayState.state !== 'missing') continue;
-
-        const entityType = String(row.entity_type || '') as EntityType;
-        if (!VALID_ENTITY_TYPES.has(entityType)) continue;
-
-        await updateEntityUrl(admin, entityType, String(row.entity_id || ''), null);
-        await clearYandexMapById(admin, Number(row.id));
-        cleaned.push(url);
       }
 
       return json(200, { success: true, cleaned_urls: cleaned, resolved_urls: resolvedUrls });

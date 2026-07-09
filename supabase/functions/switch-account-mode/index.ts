@@ -37,6 +37,12 @@ function opFail(message: string, code: string, details: Record<string, unknown> 
   return { __operation_failed: true, message, code, details };
 }
 
+function isRpcSignatureMismatch(error: unknown) {
+  const payload = (error || {}) as { code?: string; message?: string; details?: string; hint?: string };
+  const textValue = `${payload.message || ''} ${payload.details || ''} ${payload.hint || ''}`.toLowerCase();
+  return String(payload.code || '') === 'PGRST202' || (textValue.includes('function') && textValue.includes('schema cache'));
+}
+
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !ANON_KEY) {
   throw new Error('SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and SUPABASE_ANON_KEY are required');
 }
@@ -69,7 +75,21 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
   const targetMode = text(body?.target_mode).toLowerCase();
   if (!ACCOUNT_TYPES.has(targetMode)) return fail('target_mode must be solo or company', 'INVALID_TARGET_MODE', 400);
 
-  const currentMode = text(user.user_metadata?.account_type).toLowerCase() === 'solo' ? 'solo' : 'company';
+  const {
+    data: { user: adminUser },
+    error: adminUserError,
+  } = await supabaseAdmin.auth.admin.getUserById(user.id);
+
+  if (adminUserError) {
+    console.warn('[switch-account-mode] LOAD_AUTH_USER_WARNING', {
+      actor_user_id: user.id,
+      error: adminUserError,
+    });
+  }
+
+  const authoritativeUser = adminUser?.id ? adminUser : user;
+  const currentMetadata = authoritativeUser.user_metadata || user.user_metadata || {};
+  const currentMode = text(currentMetadata?.account_type).toLowerCase() === 'solo' ? 'solo' : 'company';
   if (currentMode === targetMode) return json({ success: true, account_type: currentMode, changed: false });
 
   const { data: profile, error: profileError } = await supabaseAdmin
@@ -185,12 +205,12 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
 
       try {
         await supabaseAdmin.from('messenger_integrations').upsert(
-          {
+          ['telegram', 'max'].map((provider) => ({
             company_id: companyId,
-            provider: 'telegram',
+            provider,
             destination_type: 'assignee',
             destination_user_id: user.id,
-          },
+          })),
           { onConflict: 'company_id,provider' },
         );
       } catch {
@@ -204,6 +224,46 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
         released_licenses_count: otherMemberIds.length,
         release_licenses_failed_count: 0,
       };
+    } else if (targetMode === 'company') {
+      const ensureSubscriptionPayloads = [
+        {
+          p_company_id: companyId,
+          p_paid_seats_total: 10,
+          p_owner_seats: 1,
+          p_free_member_seats: 9,
+          p_trial_days: 14,
+        },
+        { p_company_id: companyId },
+      ];
+      let ensureSubscriptionError: unknown = null;
+
+      for (const payload of ensureSubscriptionPayloads) {
+        const { data: subscription, error: subscriptionError } = await supabaseAdmin.rpc(
+          'ensure_company_subscription',
+          payload,
+        );
+        if (!subscriptionError) {
+          const row = Array.isArray(subscription) ? subscription[0] : subscription;
+          switchDetails = {
+            trial_licenses_count: Number(row?.paid_seats_total || 0) || 0,
+          };
+          ensureSubscriptionError = null;
+          break;
+        }
+        ensureSubscriptionError = subscriptionError;
+        if (!isRpcSignatureMismatch(subscriptionError)) break;
+      }
+
+      if (ensureSubscriptionError) {
+        console.error('[switch-account-mode] ENSURE_COMPANY_SUBSCRIPTION_FAILED', {
+          company_id: companyId,
+          actor_user_id: user.id,
+          error: ensureSubscriptionError,
+        });
+        throw opFail('Unable to prepare company trial licenses', 'LICENSE_INIT_FAILED', {
+          db_error: (ensureSubscriptionError as { message?: string })?.message || null,
+        });
+      }
     }
   } catch (error) {
     const opError = (error as { __operation_failed?: boolean; message?: string; code?: string; details?: Record<string, unknown> | null }) || {};
@@ -228,7 +288,7 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
     });
   }
 
-  const metadata = { ...(user.user_metadata || {}), account_type: targetMode };
+  const metadata = { ...currentMetadata, account_type: targetMode };
   const { error: updateUserError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
     user_metadata: metadata,
   });

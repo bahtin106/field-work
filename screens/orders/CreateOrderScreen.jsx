@@ -2,6 +2,7 @@
 // Order creation screen using shared components/styles
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useQueryClient } from '@tanstack/react-query';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -263,6 +264,7 @@ function CreateOrderContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { profile, user } = useAuthContext();
+  const queryClient = useQueryClient();
   const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin =
     String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
@@ -270,7 +272,7 @@ function CreateOrderContent() {
   const subscriptionGuard = useSubscriptionGuard(profile?.company_id || null);
   const { settings: companySettings } = useCompanySettings();
   const formStyles = useEditFormStyles();
-  const { banner, showBanner, clearBanner } = useFeedback();
+  const { banner, showBanner, clearBanner, showSuccessToast } = useFeedback();
 
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -279,6 +281,7 @@ function CreateOrderContent() {
   const dateFieldRef = useRef(null);
   const timeFieldRef = useRef(null);
   const fieldRefs = useRef({});
+  const fieldContainerRefs = useRef({});
 
   const [schema, setSchema] = useState({ context: 'create', fields: [] });
   const [form, setForm] = useState({});
@@ -325,6 +328,7 @@ function CreateOrderContent() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [clientModalVisible, setClientModalVisible] = useState(false);
   const [clientModalSearch, setClientModalSearch] = useState('');
@@ -657,6 +661,7 @@ function CreateOrderContent() {
   ]);
 
   const handleCancelPress = useCallback(() => {
+    if (isSubmitting) return;
     // Show discard confirmation only when there are meaningful edits.
     if (hasChanges()) {
       setCancelVisible(true);
@@ -664,7 +669,7 @@ function CreateOrderContent() {
       intentionalExitRef.current = true;
       router.back();
     }
-  }, [hasChanges]);
+  }, [hasChanges, isSubmitting]);
 
   const confirmCancel = useCallback(() => {
     intentionalExitRef.current = true;
@@ -687,14 +692,30 @@ function CreateOrderContent() {
     );
   }, []);
 
+  const setFieldContainerRef = useCallback((key, node) => {
+    if (!key) return;
+    if (node) {
+      fieldContainerRefs.current[key] = node;
+      return;
+    }
+    delete fieldContainerRefs.current[key];
+  }, []);
+
   const focusField = useCallback(
     (key) => {
+      const containerRef = fieldContainerRefs.current[key];
+      if (containerRef) {
+        scrollToHandle({ current: containerRef });
+      }
       const ref = fieldRefs.current[key];
       if (ref && typeof ref.focus === 'function') {
         ref.focus();
       }
-      if (ref) {
+      if (!containerRef && ref) {
         scrollToHandle({ current: ref });
+        return;
+      }
+      if (containerRef) {
         return;
       }
       if (key === 'time_window_start') {
@@ -706,6 +727,32 @@ function CreateOrderContent() {
       }
     },
     [scrollToHandle],
+  );
+
+  const renderedFieldOrder = useMemo(
+    () => [
+      ...orderedMainFieldKeys,
+      ...orderedCustomerFieldKeys,
+      ...orderedPlanningFieldKeys,
+    ],
+    [orderedCustomerFieldKeys, orderedMainFieldKeys, orderedPlanningFieldKeys],
+  );
+
+  const scrollToFirstFieldError = useCallback(
+    (errors, fallbackKeys = []) => {
+      const errorKeys = Object.keys(errors || {});
+      if (!errorKeys.length) return;
+
+      const errorSet = new Set(errorKeys);
+      const orderedKey =
+        renderedFieldOrder.find((fieldKey) => errorSet.has(fieldKey)) ||
+        fallbackKeys.find((fieldKey) => errorSet.has(fieldKey)) ||
+        errorKeys[0];
+      if (!orderedKey) return;
+
+      setTimeout(() => focusField(orderedKey), 0);
+    },
+    [focusField, renderedFieldOrder],
   );
 
   const normalizePhone = useCallback((val) => toE164MobilePhoneOrNull(val), []);
@@ -723,6 +770,32 @@ function CreateOrderContent() {
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : null;
   }, []);
+
+  useEffect(() => {
+    if (workTypeId) clearFieldError('work_type_id');
+  }, [clearFieldError, workTypeId]);
+
+  useEffect(() => {
+    if (selectedClientId) clearFieldError('client_id');
+  }, [clearFieldError, selectedClientId]);
+
+  useEffect(() => {
+    if (selectedClientObjectId || draftClientObject || withoutAddressSelected) {
+      clearFieldError('object_id');
+    }
+  }, [clearFieldError, draftClientObject, selectedClientObjectId, withoutAddressSelected]);
+
+  useEffect(() => {
+    if (departureDate) clearFieldError('time_window_start');
+  }, [clearFieldError, departureDate]);
+
+  useEffect(() => {
+    if (hasDepartureTimeValue(departureTime)) clearFieldError('departure_time');
+  }, [clearFieldError, departureTime, hasDepartureTimeValue]);
+
+  useEffect(() => {
+    if (effectiveToFeed || effectiveAssigneeId) clearFieldError('assigned_to');
+  }, [clearFieldError, effectiveAssigneeId, effectiveToFeed]);
 
   const getField = useCallback(
     (key) => (schema.fields || []).find((f) => f.field_key === key) || null,
@@ -879,6 +952,8 @@ function CreateOrderContent() {
   }, [draftClientObject, objectEditPermissionSeedDraft, t]);
 
   const handleSubmit = useCallback(async () => {
+    if (isSubmitting) return;
+
     if (!subscriptionGuard.canEdit) {
       showBanner({
         type: 'warning',
@@ -898,7 +973,7 @@ function CreateOrderContent() {
         nextErrors[k] = { message: requiredMsg };
       });
       setFieldErrors(nextErrors);
-      if (reqCheck.missingKeys?.length) focusField(reqCheck.missingKeys[0]);
+      scrollToFirstFieldError(nextErrors, reqCheck.missingKeys || []);
       return;
     }
 
@@ -927,7 +1002,7 @@ function CreateOrderContent() {
     }
     if (Object.keys(nextErrors).length) {
       setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
-      focusField(Object.keys(nextErrors)[0]);
+      scrollToFirstFieldError(nextErrors);
       return;
     }
 
@@ -936,42 +1011,47 @@ function CreateOrderContent() {
     if (phoneField) {
       phoneFormatted = normalizePhone(form.phone);
       if (hasMobilePhoneValue(form.phone) && !phoneFormatted) {
+        const phoneError = { phone: { message: t('order_validation_phone_format') } };
         setFieldErrors((prev) => ({
           ...prev,
-          phone: { message: t('order_validation_phone_format') },
+          ...phoneError,
         }));
-        focusField('phone');
+        scrollToFirstFieldError(phoneError);
         return;
       }
     }
 
+    setIsSubmitting(true);
+    let keepSubmitting = false;
+    try {
     const effectiveCompanyId = companyId || (await getMyCompanyId());
     const normalizedWorkTypeId = useWorkTypes ? String(workTypeId || '').trim() : '';
-    if (useWorkTypes && normalizedWorkTypeId) {
-      const { types: latestWorkTypes = [] } = effectiveCompanyId
-        ? await fetchWorkTypes(effectiveCompanyId, { forceRefresh: true })
-        : { types: [] };
-      setWorkTypes(latestWorkTypes);
-      const hasMatchingWorkType = latestWorkTypes.some(
+    if (useWorkTypes && normalizedWorkTypeId && workTypes.length > 0) {
+      const hasMatchingWorkType = workTypes.some(
         (type) => String(type.id) === normalizedWorkTypeId,
       );
       if (!hasMatchingWorkType) {
+        const workTypeError = {
+          work_type_id: { message: t('order_validation_work_type_required') },
+        };
         setFieldErrors((prev) => ({
           ...prev,
-          work_type_id: { message: t('order_validation_work_type_required') },
+          ...workTypeError,
         }));
         setWorkTypeId(null);
+        scrollToFirstFieldError(workTypeError);
         return;
       }
     }
 
     const normalizedPhone = normalizePhone(form.phone);
     if (isFieldRequired('client_id') && !selectedClientId) {
+      const clientError = { client_id: { message: t('order_validation_client_required') } };
       setFieldErrors((prev) => ({
         ...prev,
-        client_id: { message: t('order_validation_client_required') },
+        ...clientError,
       }));
-      focusField('client_id');
+      scrollToFirstFieldError(clientError);
       return;
     }
 
@@ -981,26 +1061,31 @@ function CreateOrderContent() {
       !draftClientObject &&
       !withoutAddressSelected
     ) {
+      const objectError = { object_id: { message: t('objects_select_required_for_order') } };
       setFieldErrors((prev) => ({
         ...prev,
-        object_id: { message: t('objects_select_required_for_order') },
+        ...objectError,
       }));
-      focusField('object_id');
+      scrollToFirstFieldError(objectError);
       return;
     }
 
     if (draftClientObject && !selectedClientId) {
+      const clientError = {
+        client_id: { message: t('order_validation_client_required_for_contact_details') },
+      };
       setFieldErrors((prev) => ({
         ...prev,
-        client_id: { message: t('order_validation_client_required_for_contact_details') },
+        ...clientError,
       }));
-      focusField('client_id');
+      scrollToFirstFieldError(clientError);
       return;
     }
 
     if (selectedClientId) {
       const shouldSyncClientPrimaryPhone = phoneSourceId === PHONE_SOURCE_IDS.CLIENT_PRIMARY;
-      if (shouldSyncClientPrimaryPhone) {
+      const currentClientPrimaryPhone = normalizePhone(selectedClient?.phone);
+      if (shouldSyncClientPrimaryPhone && currentClientPrimaryPhone !== normalizedPhone) {
         await updateClientMutation.mutateAsync({
           id: String(selectedClientId),
           patch: {
@@ -1029,7 +1114,7 @@ function CreateOrderContent() {
           location_mode: stagedObjectLocationMode,
         },
       });
-      await refetchSelectedClient();
+      refetchSelectedClient().catch(() => {});
       resolvedObject = updated || stagedSelectedObjectDraft;
       setStagedSelectedObjectDraft(null);
     }
@@ -1086,12 +1171,15 @@ function CreateOrderContent() {
     if (error) {
       const rawMessage = String(error?.message || '').toUpperCase();
       if (rawMessage.includes('WORK_TYPE_NOT_FOUND_IN_COMPANY')) {
+        const workTypeError = {
+          work_type_id: { message: t('order_validation_work_type_required') },
+        };
         setWorkTypeId(null);
         setFieldErrors((prev) => ({
           ...prev,
-          work_type_id: { message: t('order_validation_work_type_required') },
+          ...workTypeError,
         }));
-        focusField('work_type_id');
+        scrollToFirstFieldError(workTypeError);
         return;
       }
       const normalized = normalizeError(error, { t });
@@ -1103,14 +1191,32 @@ function CreateOrderContent() {
       }
       return;
     } else {
+      keepSubmitting = true;
       intentionalExitRef.current = true;
-      await deleteDraft();
-      router.replace('/orders/order-success');
+      deleteDraft().catch((e) => {
+        console.warn('[CreateOrder] Delete draft after submit failed:', e);
+      });
+      queryClient.invalidateQueries({ queryKey: ['requests'] }).catch(() => {});
+      showSuccessToast(t('create_order_created_toast'));
+      router.replace('/orders');
+    }
+    } catch (error) {
+      const normalized = normalizeError(error, { t });
+      if (normalized.screenError) {
+        showBanner({
+          ...normalized.screenError,
+          action: { label: t('btn_retry'), onPress: handleSubmit },
+        });
+      }
+    } finally {
+      if (!keepSubmitting) setIsSubmitting(false);
     }
   }, [
+    isSubmitting,
     validateRequiredFields,
     form,
     useWorkTypes,
+    workTypes,
     workTypeId,
     departureDate,
     departureTime,
@@ -1119,6 +1225,7 @@ function CreateOrderContent() {
     effectiveAssigneeId,
     effectiveToFeed,
     selectedClientId,
+    selectedClient,
     selectedClientObjectId,
     withoutAddressSelected,
     selectedClientObject,
@@ -1136,7 +1243,8 @@ function CreateOrderContent() {
     has,
     requiredMsg,
     showBanner,
-    focusField,
+    showSuccessToast,
+    scrollToFirstFieldError,
     t,
     deleteDraft,
     createClientObjectMutation,
@@ -1150,6 +1258,7 @@ function CreateOrderContent() {
     resolveTitleForSave,
     parseDecimalOrNull,
     isOrderFinanceEnabled,
+    queryClient,
   ]);
 
   useFocusEffect(
@@ -2737,21 +2846,27 @@ function CreateOrderContent() {
         </SectionHeader>
         <Card padded={false} style={formStyles.card}>
           {orderedMainFieldKeys.map((fieldKey) => (
-            <View key={fieldKey}>{renderCreateMainField(fieldKey)}</View>
+            <View key={fieldKey} ref={(node) => setFieldContainerRef(fieldKey, node)}>
+              {renderCreateMainField(fieldKey)}
+            </View>
           ))}
         </Card>
 
           <SectionHeader>{t('create_order_section_customer')}</SectionHeader>
           <Card padded={false} style={formStyles.card}>
             {orderedCustomerFieldKeys.map((fieldKey) => (
-              <View key={fieldKey}>{renderCreateCustomerField(fieldKey)}</View>
+              <View key={fieldKey} ref={(node) => setFieldContainerRef(fieldKey, node)}>
+                {renderCreateCustomerField(fieldKey)}
+              </View>
             ))}
           </Card>
 
           <SectionHeader>{t('create_order_section_planning')}</SectionHeader>
           <Card padded={false} style={formStyles.card}>
             {orderedPlanningFieldKeys.map((fieldKey) => (
-              <View key={fieldKey}>{renderCreatePlanningField(fieldKey)}</View>
+              <View key={fieldKey} ref={(node) => setFieldContainerRef(fieldKey, node)}>
+                {renderCreatePlanningField(fieldKey)}
+              </View>
             ))}
           </Card>
 
@@ -2762,7 +2877,8 @@ function CreateOrderContent() {
             <Button
               title={t('create_order_btn_create')}
               onPress={handleSubmit}
-              disabled={!subscriptionGuard.canEdit}
+              loading={isSubmitting}
+              disabled={!subscriptionGuard.canEdit || isSubmitting}
             />
           </View>
           <View style={styles.buttonSpacer}>
@@ -2770,6 +2886,7 @@ function CreateOrderContent() {
               title={t('create_order_btn_cancel')}
               onPress={handleCancelPress}
               variant="secondary"
+              disabled={isSubmitting}
             />
           </View>
       </EditScreenTemplate>

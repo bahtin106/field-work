@@ -260,6 +260,14 @@ export default function NewUserScreen() {
   const { data: companyId } = useMyCompanyIdQuery();
   const { data: entitlements } = useCompanyEntitlements(companyId || null);
   const { useDepartments } = useCompanySettings(companyId || null);
+  const willCreateBlockedByLicense = useMemo(() => {
+    if (!entitlements) return false;
+    if (entitlements.can_edit === false) return true;
+    if (entitlements.features?.can_add_members === false) return true;
+    const allowedSeats = Number(entitlements.allowed_seats);
+    const usedSeats = Number(entitlements.used_seats);
+    return Number.isFinite(allowedSeats) && Number.isFinite(usedSeats) && usedSeats >= allowedSeats;
+  }, [entitlements]);
   const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
     enabled: !!companyId,
   });
@@ -951,17 +959,8 @@ export default function NewUserScreen() {
       return;
     }
 
-    //
-    const canEditBySubscription = entitlements?.can_edit !== false;
-    if (!canEditBySubscription) {
-      showBanner({ message: t('err_subscription_read_only'), severity: 'error' });
-      return;
-    }
-
-    const canAddMembers = entitlements?.features?.can_add_members;
-    if (canAddMembers === false) {
-      showBanner({ message: t('err_seat_limit_exceeded_generic'), severity: 'error' });
-      return;
+    if (willCreateBlockedByLicense) {
+      showBanner({ message: t('invite_no_license_warning'), severity: 'warning' });
     }
 
     setInviteEmail(String(email).trim().toLowerCase());
@@ -979,8 +978,7 @@ export default function NewUserScreen() {
     requiredMsg,
     t,
     useDepartments,
-    entitlements?.can_edit,
-    entitlements?.features?.can_add_members,
+    willCreateBlockedByLicense,
     showBanner,
     scrollToFirstInvalid,
     phone,
@@ -1055,8 +1053,16 @@ export default function NewUserScreen() {
           });
         }
       }
-      showSuccessToast(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
-      await queryClient.invalidateQueries({ queryKey: ['employees'] });
+      if (inviteData?.blocked_by_license || inviteData?.license_state === 'blocked_by_license') {
+        showInfoToast(t('invite_created_blocked_by_license'));
+      } else {
+        showSuccessToast(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
+      }
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: ['employees'] }),
+        queryClient.invalidateQueries({ queryKey: ['companyEntitlements', companyId] }),
+        queryClient.invalidateQueries({ queryKey: ['companyAccessState', companyId] }),
+      ]);
       allowLeaveRef.current = true;
       router.replace('/users');
     } catch (e) {
@@ -1088,8 +1094,10 @@ export default function NewUserScreen() {
     avatarUrl,
     router,
     queryClient,
+    companyId,
     t,
     showSuccessToast,
+    showInfoToast,
     showBanner,
     clearBanner,
     fieldUi,
@@ -1305,6 +1313,8 @@ export default function NewUserScreen() {
             onClose={() => setDeptModalVisible(false)}
             title={t('user_department_title')}
             items={(departments || []).map((d) => ({ id: d.id, label: d.name }))}
+            selectedId={departmentId}
+            isItemSelected={(item, selectedId) => String(item?.id) === String(selectedId)}
             searchable={false}
             onSelect={(it) => {
               setDepartmentId(it.id);
@@ -1318,6 +1328,7 @@ export default function NewUserScreen() {
           onClose={() => setShowRoles(false)}
           title={t('user_role_title')}
           items={roleItems}
+          selectedId={role}
           searchable={false}
           onSelect={(it) => {
             setRole(it.id);
@@ -1361,6 +1372,12 @@ export default function NewUserScreen() {
               </Text>
               {'\n\n'}
               {t('invite_modal_body_suffix')}
+              {willCreateBlockedByLicense ? (
+                <Text style={{ color: theme.colors.warning || theme.colors.danger, fontWeight: '600' }}>
+                  {'\n\n'}
+                  {t('invite_no_license_warning')}
+                </Text>
+              ) : null}
             </Text>
           }
           confirmLabel={t('invite_modal_confirm')}

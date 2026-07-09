@@ -10,6 +10,7 @@ const RATE_LIMIT_EMAIL_WINDOW_MS = 60 * 60 * 1000;
 const RATE_LIMIT_EMAIL_MAX_REQUESTS = 12;
 const RATE_LIMIT_FINGERPRINT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_FINGERPRINT_MAX_REQUESTS = 30;
+const REGISTER_CODE_TTL_FALLBACK_SECONDS = 10 * 60;
 const BOT_PROTECTION_MODE = String(Deno.env.get('REGISTER_BOT_PROTECTION_MODE') || 'off')
   .trim()
   .toLowerCase(); // off | monitor | required | required_web
@@ -238,7 +239,7 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
         return json({
           ok: true,
           cooldown_seconds: 60,
-          expires_in_seconds: 600,
+          expires_in_seconds: REGISTER_CODE_TTL_FALLBACK_SECONDS,
         });
       }
     }
@@ -260,7 +261,7 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
     return json({
       ok: true,
       cooldown_seconds: Number(sendPayload?.cooldown_seconds || 60),
-      expires_in_seconds: Number(sendPayload?.expires_in_seconds || 600),
+      expires_in_seconds: Number(sendPayload?.expires_in_seconds || REGISTER_CODE_TTL_FALLBACK_SECONDS),
     });
   } catch (error) {
     console.error('[register-request-code]', String((error as Error)?.message || error || 'Internal error'));

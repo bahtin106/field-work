@@ -146,6 +146,7 @@ const FALLBACK_TZ = [
   'Pacific/Tongatapu',
 ];
 const IOS_MODAL_TRANSITION_MS = 320;
+const ANDROID_MODAL_TRANSITION_MS = 180;
 
 function isZoneSupported(zone) {
   try {
@@ -279,14 +280,16 @@ export default function CompanySettings() {
       clearTimeout(modalTransitionTimerRef.current);
       modalTransitionTimerRef.current = null;
     }
-    if (Platform.OS !== 'ios') {
-      requestAnimationFrame(() => openNext?.());
+    const transitionDelayMs =
+      Platform.OS === 'ios' ? IOS_MODAL_TRANSITION_MS : Platform.OS === 'android' ? ANDROID_MODAL_TRANSITION_MS : 0;
+    if (!transitionDelayMs) {
+      InteractionManager.runAfterInteractions(() => requestAnimationFrame(() => openNext?.()));
       return;
     }
     modalTransitionTimerRef.current = setTimeout(() => {
       modalTransitionTimerRef.current = null;
-      InteractionManager.runAfterInteractions(() => openNext?.());
-    }, IOS_MODAL_TRANSITION_MS);
+      InteractionManager.runAfterInteractions(() => requestAnimationFrame(() => openNext?.()));
+    }, transitionDelayMs);
   }, []);
 
   const runSingleNavigation = React.useCallback((navigate) => {
@@ -953,6 +956,11 @@ export default function CompanySettings() {
       setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
       return;
     }
+    const isSwitchingCompanyToSolo = currentWorkMode === 'company' && targetMode === 'solo';
+    if (isSwitchingCompanyToSolo && !allWorkModeConsentsAccepted) {
+      toast.show(t('settings_work_mode_consent_required'), 'error');
+      return;
+    }
     setSwitchingWorkMode(true);
     const loadingToast =
       t('settings_work_mode_saving');
@@ -960,7 +968,6 @@ export default function CompanySettings() {
       toast.show(loadingToast, 'info');
     } catch {}
     try {
-      const isSwitchingCompanyToSolo = currentWorkMode === 'company' && targetMode === 'solo';
       const { data, error } = await supabase.functions.invoke(FUNCTIONS.SWITCH_ACCOUNT_MODE, {
         body: {
           target_mode: targetMode,
@@ -975,19 +982,27 @@ export default function CompanySettings() {
         throw new Error(mapped);
       }
       const savedMode = String(data?.account_type || targetMode).toLowerCase() === 'solo' ? 'solo' : 'company';
+      let latestMetadata = user?.user_metadata || {};
       try {
-        await supabase.auth.updateUser({
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        latestMetadata =
+          refreshed?.session?.user?.user_metadata ||
+          refreshed?.user?.user_metadata ||
+          latestMetadata;
+      } catch {}
+      const refreshedMode = String(latestMetadata?.account_type || '').toLowerCase();
+      if (data?.details?.metadata_sync_failed || refreshedMode !== savedMode) {
+        const { error: metadataError } = await supabase.auth.updateUser({
           data: {
-            ...(user?.user_metadata || {}),
+            ...latestMetadata,
             account_type: savedMode,
           },
         });
-      } catch (metadataError) {
-        try {
-          await supabase.auth.refreshSession();
-        } catch {}
-        if (data?.details?.metadata_sync_failed) throw metadataError;
+        if (metadataError) throw metadataError;
       }
+      try {
+        await supabase.auth.refreshSession();
+      } catch {}
       setLocalWorkModeOverride(savedMode);
       toast.show(t('settings_work_mode_saved'), 'success');
       setWorkModeConfirmOpen(false);
@@ -995,7 +1010,12 @@ export default function CompanySettings() {
       setPendingWorkMode(null);
       setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
       try {
-        await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
+        await Promise.allSettled([
+          queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY }),
+          queryClient.invalidateQueries({ queryKey: ['profile'] }),
+          queryClient.invalidateQueries({ queryKey: ['employees'] }),
+          queryClient.invalidateQueries({ queryKey: ['requests'] }),
+        ]);
       } catch {}
     } catch (e) {
       const edgeError = await unwrapEdgeFunctionError(e);
@@ -1005,6 +1025,7 @@ export default function CompanySettings() {
     }
   }, [
     currentWorkMode,
+    allWorkModeConsentsAccepted,
     pendingWorkMode,
     queryClient,
     resolveWorkModeSwitchError,
@@ -1062,7 +1083,6 @@ export default function CompanySettings() {
   }, []);
 
   const billingRoute = React.useMemo(() => findRoute('billing'), [findRoute]);
-  const telegramBotRoute = React.useMemo(() => findRoute('telegram_bot'), [findRoute]);
 
   // Section titles from i18n (do not trust constants' labels)
   const sectionTitles = React.useMemo(
@@ -1146,15 +1166,6 @@ export default function CompanySettings() {
               label={t('settings_company_work_mode')}
               value={currentWorkModeLabel}
               onPress={() => setWorkModeOpen(true)}
-            />
-
-            <View style={s.sep} />
-            <SelectField
-              label={t('company_settings_sections_company_items_telegram_bot')}
-              showValue={false}
-              onPress={telegramBotRoute ? go(telegramBotRoute) : undefined}
-              disabled={!telegramBotRoute}
-              onDisabledPress={!telegramBotRoute ? onSoonPress : undefined}
             />
 
             {isAdmin ? (
@@ -1596,7 +1607,7 @@ export default function CompanySettings() {
                 title: t('btn_apply'),
                 variant: 'primary',
                 loading: switchingWorkMode,
-                disabled: !allWorkModeConsentsAccepted || switchingWorkMode,
+                disabled: switchingWorkMode,
                 onPress: invokeWorkModeSwitch,
               },
             ]}

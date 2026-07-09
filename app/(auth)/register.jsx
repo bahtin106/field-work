@@ -9,7 +9,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,6 +55,14 @@ const resolveDeviceTimeZone = () => {
 const REGISTER_FINGERPRINT_KEY = 'register_client_fingerprint_v1';
 const REGISTER_PENDING_KEY = 'register_pending_v1';
 const REGISTER_CODE_COOLDOWN_PREFIX = 'register_code_cooldown_until:';
+const REGISTER_CODE_EXPIRES_PREFIX = 'register_code_expires_until:';
+const REGISTER_CODE_TTL_PREFIX = 'register_code_ttl_seconds:';
+const FALLBACK_REGISTER_CODE_TTL_SECONDS = 10 * 60;
+
+function resolvePositiveSeconds(value, fallbackSeconds) {
+  const seconds = Math.floor(Number(value || 0));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : fallbackSeconds;
+}
 
 async function getOrCreateRegisterClientFingerprint() {
   try {
@@ -450,6 +457,23 @@ export default function RegisterScreen() {
     } catch {}
   }, []);
 
+  const saveCodeExpiry = useCallback(async (emailValue, expiresUntilTs, ttlSeconds) => {
+    try {
+      const normalizedEmail = String(emailValue || '').trim().toLowerCase();
+      if (!normalizedEmail) return;
+      await AsyncStorage.multiSet([
+        [
+          `${REGISTER_CODE_EXPIRES_PREFIX}${normalizedEmail}`,
+          String(Math.max(0, Number(expiresUntilTs || 0))),
+        ],
+        [
+          `${REGISTER_CODE_TTL_PREFIX}${normalizedEmail}`,
+          String(Math.max(1, Number(ttlSeconds || FALLBACK_REGISTER_CODE_TTL_SECONDS))),
+        ],
+      ]);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     setCodeSent(false);
   }, [email]);
@@ -723,8 +747,14 @@ export default function RegisterScreen() {
         throw new Error(t('register_code_send_failed'));
       }
 
+      const requestedAt = Date.now();
       const cooldownSeconds = Number(requestCodeData?.cooldown_seconds || 60);
-      const cooldownUntil = Date.now() + Math.max(1, cooldownSeconds) * 1000;
+      const expiresInSeconds = resolvePositiveSeconds(
+        requestCodeData?.expires_in_seconds,
+        FALLBACK_REGISTER_CODE_TTL_SECONDS,
+      );
+      const cooldownUntil = requestedAt + Math.max(1, cooldownSeconds) * 1000;
+      const expiresUntil = requestedAt + expiresInSeconds * 1000;
 
       await savePendingRegisterDraft({
         email: normalizedEmail,
@@ -736,6 +766,7 @@ export default function RegisterScreen() {
         company_name: null,
       });
       await saveCodeCooldownUntil(normalizedEmail, cooldownUntil);
+      await saveCodeExpiry(normalizedEmail, expiresUntil, expiresInSeconds);
 
       showSuccessToast(t('register_code_sent'));
       router.push({
@@ -782,29 +813,29 @@ export default function RegisterScreen() {
     clearBanner,
     savePendingRegisterDraft,
     saveCodeCooldownUntil,
+    saveCodeExpiry,
     requiredMsg,
     scrollToFirstInvalid,
   ]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <KeyboardAwareScrollView
-          ref={scrollRef}
-          style={styles.flex}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
-          showsVerticalScrollIndicator={false}
-          bottomOffset={keyboardBottomOffset}
-          extraKeyboardSpace={extraKeyboardSpace}
-          onScroll={(e) => {
-            try {
-              scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
-            } catch {}
-          }}
-          scrollEventThrottle={16}
-        >
+      <KeyboardAwareScrollView
+        ref={scrollRef}
+        style={styles.flex}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="always"
+        keyboardDismissMode="none"
+        showsVerticalScrollIndicator={false}
+        bottomOffset={keyboardBottomOffset}
+        extraKeyboardSpace={extraKeyboardSpace}
+        onScroll={(e) => {
+          try {
+            scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
+          } catch {}
+        }}
+        scrollEventThrottle={16}
+      >
           <Text style={styles.title}>{t('register_title')}</Text>
 
           {banner ? (
@@ -1001,8 +1032,7 @@ export default function RegisterScreen() {
               <Text style={styles.loginLink}>{t('register_back_to_login')}</Text>
             </Text>
           </Pressable>
-        </KeyboardAwareScrollView>
-      </TouchableWithoutFeedback>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }

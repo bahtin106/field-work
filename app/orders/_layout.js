@@ -14,7 +14,7 @@ export default function OrdersLayout() {
         animationTypeForReplace: 'push',
         gestureEnabled: true,
         fullScreenGestureEnabled: true,
-        freezeOnBlur: false,
+        freezeOnBlur: true,
         contentStyle: { backgroundColor: theme.colors.background },
       }}
     >
@@ -24,7 +24,6 @@ export default function OrdersLayout() {
       <Stack.Screen name="my-orders" options={{ headerShown: false, presentation: 'card' }} />
       <Stack.Screen name="[id]" options={{ headerShown: false, presentation: 'card' }} />
       <Stack.Screen name="create-order" options={{ headerShown: false, presentation: 'card' }} />
-      <Stack.Screen name="order-success" options={{ headerShown: false, presentation: 'card' }} />
     </Stack>
   );
 }

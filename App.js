@@ -2,14 +2,18 @@ import Router from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { View } from 'react-native';
 import { useAppLastSeen } from './useAppLastSeen';
+import { shouldSuppressForegroundOrderNotification } from './lib/notificationForegroundState';
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => {
+    const suppress = shouldSuppressForegroundOrderNotification(notification);
+    return {
+      shouldShowBanner: !suppress,
+      shouldShowList: !suppress,
+      shouldPlaySound: !suppress,
+      shouldSetBadge: false,
+    };
+  },
 });
 
 export default function App() {

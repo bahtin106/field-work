@@ -1,7 +1,7 @@
 {
   "name": "field-work",
   "license": "0BSD",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "expo-router/entry",
   "scripts": {
     "postinstall": "npm dedupe --prefer-dedupe",
@@ -17,7 +17,13 @@
     "lint": "eslint App.js index.js useAppLastSeen.js app components hooks lib providers screens src theme",
     "lint:fix": "eslint App.js index.js useAppLastSeen.js app components hooks lib providers screens src theme --fix",
     "typecheck": "tsc --noEmit",
-    "doctor": "npx expo-doctor"
+    "doctor": "npx expo-doctor",
+    "build:android:apk": "node scripts/build-android-release.mjs apk",
+    "build:android:aab": "node scripts/build-android-release.mjs aab",
+    "build:android:clean": "node scripts/build-android-release.mjs clean",
+    "build:eas:android:apk": "eas build --platform android --profile production-apk",
+    "build:eas:android:aab": "eas build --platform android --profile production",
+    "build:eas:ios": "eas build --platform ios --profile production"
   },
   "dependencies": {
     "@expo/metro-runtime": "6.1.2",

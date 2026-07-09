@@ -571,18 +571,18 @@ export async function handleRegisterUserRequest(req: Request) {
       const { error: messengerErr } = await supabaseAdmin
         .from('messenger_integrations')
         .upsert(
-          {
+          ['telegram', 'max'].map((provider) => ({
             company_id: companyId,
-            provider: 'telegram',
+            provider,
             destination_type: 'assignee',
             destination_user_id: userId,
-          },
+          })),
           { onConflict: 'company_id,provider' },
         );
       if (messengerErr) {
         await logServerIssue(supabaseAdmin, {
           userId,
-          name: 'RegisterTelegramDefaultRoutingWarning',
+          name: 'RegisterMessengerDefaultRoutingWarning',
           message: messengerErr.message,
           extra: { code: messengerErr.code || null, companyId },
         });

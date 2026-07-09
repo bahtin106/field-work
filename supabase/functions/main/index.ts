@@ -21,6 +21,8 @@ import { handleRequestPasswordReset } from '../request-password-reset/index.ts';
 import { handlePublicSupportRequest } from '../public-support-request/index.ts';
 import { handleAdminDeleteCompanyRequest } from '../admin-delete-company/index.ts';
 import { handleUpdateUserRequest } from '../update_user/index.ts';
+import { handleTelegramBotRequest } from '../telegram-bot/index.ts';
+import { handleMaxBotRequest } from '../max-bot/index.ts';
 
 function extractFunctionName(req: Request) {
   const url = new URL(req.url);
@@ -59,11 +61,8 @@ Deno.serve(async (req) => {
   if (fn === 'media-cleanup') return handleMediaCleanupRequest(req);
   if (fn === 'backfill-media-sizes') return handleBackfillMediaSizesRequest(req);
   if (fn === 'media-thumbnail') return handleMediaThumbnailRequest(req);
-  if (fn === 'telegram-bot') {
-    const modulePath = '../telegram-bot/index.ts';
-    const { handleTelegramBotRequest } = await import(modulePath);
-    return handleTelegramBotRequest(req);
-  }
+  if (fn === 'telegram-bot') return handleTelegramBotRequest(req);
+  if (fn === 'max-bot') return handleMaxBotRequest(req);
   if (fn === 'switch-account-mode') return handleSwitchAccountModeRequest(req);
   if (fn === 'request-password-reset') return handleRequestPasswordReset(req);
   if (fn === 'public-support-request') return handlePublicSupportRequest(req);

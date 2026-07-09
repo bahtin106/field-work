@@ -2898,10 +2898,10 @@ export async function handleTelegramBotRequest(req: Request) {
     const admin = getAdminClient();
     const body = (await req.clone().json().catch(() => ({}))) as Record<string, unknown>;
     action = normalizeText(body.action);
-    if (!action) return handleWebhook(admin, req);
-    if (action === 'status') return handleStatus(req, admin);
-    if (action === 'save_config') return handleSaveConfig(req, admin, body);
-    if (action === 'regenerate_token') return handleRegenerateToken(req, admin);
+    if (!action) return await handleWebhook(admin, req);
+    if (action === 'status') return await handleStatus(req, admin);
+    if (action === 'save_config') return await handleSaveConfig(req, admin, body);
+    if (action === 'regenerate_token') return await handleRegenerateToken(req, admin);
     if (action === 'ensure_webhook') {
       await getCallerContext(admin, req);
       return json(200, { success: true, webhook_url: await ensureTelegramWebhook() });
@@ -2916,7 +2916,7 @@ export async function handleTelegramBotRequest(req: Request) {
         ? 403
         : 500;
     console.error('[telegram-bot]', status, message);
-    return json(action === 'status' && status >= 500 ? 200 : status, { success: false, message });
+    return json(action === 'status' ? 200 : status, { success: false, message });
   }
 }
 

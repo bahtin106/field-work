@@ -1,11 +1,3 @@
-import LazyRouteScreen from '../../../components/layout/LazyRouteScreen';
+import UserViewScreen from '../../../screens/users/[id]/UserViewScreen';
 
-export default function UserViewRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../../screens/users/[id]/UserViewScreen')}
-      titleKey="profile_title"
-      titleFallback="Profile"
-    />
-  );
-}
+export default UserViewScreen;

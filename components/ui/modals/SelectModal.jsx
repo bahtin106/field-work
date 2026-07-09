@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme';
+import { withAlpha } from '../../../theme/colors';
 import TextField from '../TextField';
 import BaseModal from './BaseModal';
 
@@ -111,6 +112,8 @@ export default function SelectModal({
         delayLongPress={220}
         disabled={disabled}
         android_ripple={{ color: theme.colors.ripple }}
+        accessibilityRole="button"
+        accessibilityState={{ selected: isSelected, disabled }}
         style={({ pressed }) => [
           s.item,
           isSelected && s.itemSelected,
@@ -123,7 +126,12 @@ export default function SelectModal({
           <View style={{ flex: 1 }}>
             <Text
               numberOfLines={itemTitleNumberOfLines}
-              style={[s.itemTitle, multilineItems ? s.itemTitleMultiline : null, { color: theme.colors.text }]}
+              style={[
+                s.itemTitle,
+                multilineItems ? s.itemTitleMultiline : null,
+                isSelected ? s.itemTitleSelected : null,
+                { color: isSelected ? theme.colors.primary : theme.colors.text },
+              ]}
             >
               {String(item.label || '')}
             </Text>
@@ -230,23 +238,24 @@ const styles = (t) => {
     t.components?.radio?.dot ??
     Math.max(t.components?.radio?.dotMin ?? 6, Math.round(radioSize / 2 - 3));
   const radioBorder = t.components?.radio?.borderWidth ?? 1.5;
+  const optionRadius = t.components?.selectModal?.itemRadius ?? t.radii?.lg ?? 12;
+  const optionPaddingY = t.components?.selectModal?.itemPaddingY ?? t.spacing?.sm ?? 8;
   return StyleSheet.create({
     item: {
       minHeight: t.components?.listItem?.height ?? 52,
       paddingHorizontal: t.spacing.lg,
-      paddingVertical: 10,
+      paddingVertical: optionPaddingY,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.surface,
-      borderRadius: 12,
+      borderRadius: optionRadius,
     },
     itemSelected: {
-      backgroundColor: t.colors.surface,
+      backgroundColor: withAlpha(t.colors.primary, t.mode === 'dark' ? 0.16 : 0.08),
       borderColor: t.colors.primary,
-      borderWidth: 2,
     },
     itemLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 8 },
     itemTitle: { fontSize: t.typography.sizes.md, fontWeight: '600' },
@@ -254,7 +263,9 @@ const styles = (t) => {
       lineHeight: Math.round((t.typography.sizes.md ?? 16) * (t.typography.lineHeights?.normal ?? 1.35)),
       flexShrink: 1,
     },
-    itemTitleSelected: { color: t.colors.text },
+    itemTitleSelected: {
+      fontWeight: t.typography?.weight?.bold ?? '700',
+    },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
     itemRight: { marginLeft: t.spacing.sm, alignSelf: 'center' },
     loadingEmpty: {
@@ -274,6 +285,7 @@ const styles = (t) => {
     },
     radioButtonSelected: {
       borderColor: t.colors.primary,
+      backgroundColor: withAlpha(t.colors.primary, t.mode === 'dark' ? 0.2 : 0.12),
       borderWidth: radioBorder,
     },
     radioDot: {

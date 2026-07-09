@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../../components/layout/LazyRouteScreen';
+import ClientEditScreen from '../../../screens/clients/[id]/ClientEditScreen';
 
-export default function ClientEditRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../../screens/clients/[id]/ClientEditScreen')}
-      titleKey="routes.clients/[id]/edit"
-    />
-  );
-}
+export default ClientEditScreen;

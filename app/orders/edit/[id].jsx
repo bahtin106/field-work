@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../../components/layout/LazyRouteScreen';
+import OrderEditScreen from '../../../screens/orders/edit/OrderEditScreen';
 
-export default function OrderEditRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../../screens/orders/edit/OrderEditScreen')}
-      titleKey="routes.orders/edit/[id]"
-    />
-  );
-}
+export default OrderEditScreen;

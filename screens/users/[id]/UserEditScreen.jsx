@@ -287,6 +287,30 @@ function normalizeEmployeeOrdersCheckPayload(data) {
   };
 }
 
+function normalizeDeleteContextPayload(data) {
+  const row = data && typeof data === 'object' ? data : {};
+  const orders = row.orders && typeof row.orders === 'object' ? row.orders : {};
+  const candidates = Array.isArray(row.candidates) ? row.candidates : [];
+  const totalOrdersCount = normalizeOrderCount(
+    orders.total_count ?? orders.totalOrdersCount ?? row.totalOrdersCount ?? row.total_orders_count,
+  );
+  const activeOrdersCount = normalizeOrderCount(
+    orders.active_count ?? orders.activeOrdersCount ?? row.activeOrdersCount ?? row.active_orders_count,
+  );
+
+  return {
+    user: row.user || null,
+    company: row.company || null,
+    activeOrdersCount,
+    totalOrdersCount: Math.max(totalOrdersCount, activeOrdersCount),
+    candidates,
+    isCompanyAdmin: !!(row.is_company_admin ?? row.isCompanyAdmin),
+    requiresAdminTransfer: !!(row.requires_admin_transfer ?? row.requiresAdminTransfer),
+    companyDeleteRequired: !!(row.company_delete_required ?? row.companyDeleteRequired),
+    requiresSuccessor: !!(row.requires_successor ?? row.requiresSuccessor),
+  };
+}
+
 function getDeleteSuccessorErrorKey(error) {
   const raw = String(error?.code || error?.message || error?.error || error || '');
   if (/SUCCESSOR_REQUIRED|Successor is required for delete/i.test(raw)) {
@@ -301,11 +325,27 @@ function getDeleteSuccessorErrorKey(error) {
   return null;
 }
 
+function getDeleteAdminErrorKey(error) {
+  const raw = String(error?.code || error?.message || error?.error || error || '');
+  if (/COMPANY_ADMIN_TRANSFER_REQUIRED|Company admin transfer is required/i.test(raw)) {
+    return 'err_company_admin_transfer_required';
+  }
+  if (/COMPANY_ADMIN_DELETE_COMPANY_REQUIRED|Company deletion is required/i.test(raw)) {
+    return 'err_company_admin_delete_company_required';
+  }
+  if (/CANNOT_DELETE_SUPER_ADMIN|Cannot delete an active super admin/i.test(raw)) {
+    return 'err_delete_super_admin';
+  }
+  return null;
+}
+
 function mapDeleteErrorToMessage(error, t) {
   const raw = String(error?.message || error?.error || error?.code || error || '');
   const successorErrorKey = getDeleteSuccessorErrorKey(error);
   if (successorErrorKey) return t(successorErrorKey);
-  if (/ACCESS_DENIED|Access denied/i.test(raw)) return t('error_no_access');
+  const adminErrorKey = getDeleteAdminErrorKey(error);
+  if (adminErrorKey) return t(adminErrorKey);
+  if (/ACCESS_DENIED|Access denied|Недостаточно прав/i.test(raw)) return t('error_no_access');
   if (/CANNOT_DELETE_SELF|Cannot delete yourself/i.test(raw)) return t('err_delete_self');
   if (/USER_NOT_FOUND|PROFILE_NOT_FOUND|User not found|Profile not found/i.test(raw)) {
     return t('access_settings_error_user_not_found');
@@ -752,6 +792,7 @@ export default function EditUser() {
         : avatarUrl,
     [avatarUrl, employeeData?.avatarDisplayUrl],
   );
+  const avatarImageCachePolicy = /^https?:\/\//i.test(String(avatarDisplayUrl || '')) ? 'memory-disk' : 'none';
   const [avatarSheet, setAvatarSheet] = useState(false);
   const [cropVisible, setCropVisible] = useState(false);
   const [cropSrc, setCropSrc] = useState(null);
@@ -1031,6 +1072,7 @@ export default function EditUser() {
   const [unsuspendVisible, setUnsuspendVisible] = useState(false);
   const [noFreeLicenseVisible, setNoFreeLicenseVisible] = useState(false);
   const [deleteVisible, setDeleteVisible] = useState(false);
+  const [deleteContext, setDeleteContext] = useState(null);
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [totalOrdersCount, setTotalOrdersCount] = useState(0);
   const [deleteRequiresSuccessor, setDeleteRequiresSuccessor] = useState(false);
@@ -2239,14 +2281,18 @@ export default function EditUser() {
       // Загружаем список активных сотрудников для выбора преемника
       const { data, error } = await supabase
         .from(TABLES.profiles)
-        .select('id, first_name, middle_name, last_name, full_name, role')
+        .select('id, first_name, middle_name, last_name, full_name, email, role, company_id')
         .eq('is_admin_blocked', false)
         .neq('id', userId) // исключаем самого сотрудника
         .order('full_name', { ascending: true });
 
       if (error) throw error;
 
-      const employees = Array.isArray(data) ? data : [];
+      const companyIdForPicker =
+        String(employeeData?.companyId || employeeData?.company_id || '').trim() || null;
+      const employees = Array.isArray(data)
+        ? data.filter((item) => !companyIdForPicker || String(item?.company_id || '') === companyIdForPicker)
+        : [];
       setPickerItems(employees);
     } catch (e) {
       console.error(t('users_load_log'), e);
@@ -2371,33 +2417,39 @@ export default function EditUser() {
 
     try {
       setErr('');
+      setDeleteContext(null);
       showInfoToast(t('toast_loading_info'), { sticky: true });
 
 
       const { data, error } = await withTimeout(
-        supabase.rpc('check_employee_orders', {
-          employee_id: userId,
+        supabase.functions.invoke(FUNCTIONS.DELETE_USER, {
+          body: {
+            action: 'inspect',
+            user_id: userId,
+          },
         }),
         15000,
         'check-orders-timeout',
       );
 
       if (error) {
-        throw new Error(error.message || t('users_orders_check_error'));
+        throw new Error(error.message || t('err_check_orders_failed'));
       }
 
-      const {
-        activeOrdersCount,
-        totalOrdersCount,
-        hasOrders,
-        availableEmployees,
-      } = normalizeEmployeeOrdersCheckPayload(data);
+      if (data && data.ok === false) {
+        const inspectError = new Error(data.message || data.error || data.code || t('err_check_orders_failed'));
+        inspectError.code = data.code || data.message || null;
+        throw inspectError;
+      }
+
+      const context = normalizeDeleteContextPayload(data);
 
       // Сохраняем количество заявок и список доступных сотрудников
-      setActiveOrdersCount(activeOrdersCount);
-      setTotalOrdersCount(totalOrdersCount);
-      setDeleteRequiresSuccessor(hasOrders);
-      setPickerItems(availableEmployees);
+      setDeleteContext(context);
+      setActiveOrdersCount(context.activeOrdersCount);
+      setTotalOrdersCount(context.totalOrdersCount);
+      setDeleteRequiresSuccessor(context.requiresSuccessor);
+      setPickerItems(context.candidates);
       setSuccessor(null);
       setSuccessorError('');
       toast.hide();
@@ -2406,7 +2458,7 @@ export default function EditUser() {
       console.error(t('users_orders_check_log'), e);
       const message = e?.message === 'check-orders-timeout'
         ? t('err_check_orders_failed')
-        : e?.message || t('err_check_orders_failed');
+        : mapDeleteErrorToMessage(e, t) || t('err_check_orders_failed');
       setErr(message);
       showError(message);
     }
@@ -2417,8 +2469,17 @@ export default function EditUser() {
     if (meId && userId === meId) return;
 
     // Если есть заявки, но преемник не выбран — показываем ошибку
-    if (deleteHasOrders && !successor?.id) {
-      setSuccessorError(t('err_successor_required_delete'));
+    if (deleteContext?.companyDeleteRequired) {
+      setSuccessorError(t('err_company_admin_delete_company_required'));
+      return;
+    }
+
+    if ((deleteHasOrders || deleteContext?.requiresAdminTransfer) && !successor?.id) {
+      setSuccessorError(
+        deleteContext?.requiresAdminTransfer
+          ? t('err_company_admin_transfer_required')
+          : t('err_successor_required_delete'),
+      );
       return;
     }
 
@@ -2429,6 +2490,7 @@ export default function EditUser() {
 
       const { data, error } = await supabase.functions.invoke(FUNCTIONS.DELETE_USER, {
         body: {
+          action: 'delete',
           user_id: userId,
           reassign_to: successor?.id || null,
         },
@@ -2441,6 +2503,7 @@ export default function EditUser() {
       if (data && data.ok === false) {
         const invokeError = new Error(data.message || data.error || data.code || t('err_delete_failed'));
         invokeError.code = data.code || data.message || null;
+        invokeError.context = data.context || null;
         throw invokeError;
       }
 
@@ -2449,9 +2512,11 @@ export default function EditUser() {
 
       // Refresh employees list and leave the deleted profile screen.
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
+      await queryClient.invalidateQueries({ queryKey: ['adminUsers'] });
       showSuccessToast(t('toast_deleted'));
       setDeleteVisible(false);
-      router.replace('/users');
+      setDeleteContext(null);
+      router.replace(meIsSuperAdmin ? '/admin/users' : '/users');
     } catch (e) {
       console.error(t('user_deactivate_log'), e);
       try {
@@ -2469,6 +2534,21 @@ export default function EditUser() {
         setDeleteVisible(true);
         return;
       }
+      const adminErrorKey = getDeleteAdminErrorKey(e);
+      if (adminErrorKey) {
+        if (e?.context) {
+          const context = normalizeDeleteContextPayload(e.context);
+          setDeleteContext(context);
+          setActiveOrdersCount(context.activeOrdersCount);
+          setTotalOrdersCount(context.totalOrdersCount);
+          setDeleteRequiresSuccessor(context.requiresSuccessor);
+          setPickerItems(context.candidates);
+        }
+        setSuccessorError(t(adminErrorKey));
+        setErr('');
+        setDeleteVisible(true);
+        return;
+      }
       const message = mapDeleteErrorToMessage(e, t);
       setErr(message);
       showError(message);
@@ -2480,8 +2560,25 @@ export default function EditUser() {
     setPickerReturn('delete');
     setDeleteVisible(false);
     setSuccessorError('');
-    loadAvailableEmployees();
+    setPickerItems(Array.isArray(deleteContext?.candidates) ? deleteContext.candidates : pickerItems);
     setPickerVisible(true);
+  };
+  const openCompanyFromDelete = () => {
+    const companyId =
+      deleteContext?.company?.id ||
+      employeeData?.companyId ||
+      employeeData?.company_id ||
+      null;
+    if (!companyId) {
+      showError(t('admin_company_not_found'));
+      return;
+    }
+    allowLeaveRef.current = true;
+    setDeleteVisible(false);
+    router.push({
+      pathname: '/admin/companies/details',
+      params: { companyId },
+    });
   };
   const openSuccessorPickerFromSuspend = () => {
     setPickerReturn('suspend');
@@ -2778,7 +2875,7 @@ export default function EditUser() {
                       source={{ uri: avatarDisplayUrl }}
                       style={styles.avatarImg}
                       contentFit="cover"
-                      cachePolicy="none"
+                      cachePolicy={avatarImageCachePolicy}
                     />
                   ) : (
                     <Text style={styles.avatarText}>{initials || '•'}</Text>
@@ -3148,20 +3245,27 @@ export default function EditUser() {
               visible={deleteVisible}
               totalOrdersCount={deleteOrdersCount}
               requiresSuccessor={deleteHasOrders}
+              deleteContext={deleteContext}
               successor={successor}
               successorError={successorError}
               openSuccessorPicker={openSuccessorPickerFromDelete}
+              onOpenCompany={openCompanyFromDelete}
               onConfirm={onConfirmDelete}
               saving={saving}
               onClose={() => {
                 setDeleteVisible(false);
+                setDeleteContext(null);
                 setSuccessorError('');
               }}
             />
 
             <SelectModal
               visible={pickerVisible}
-              title={t('picker_user_title')}
+              title={
+                pickerReturn === 'delete' && deleteContext?.isCompanyAdmin
+                  ? t('user_delete_transfer_admin_title')
+                  : t('picker_user_title')
+              }
               items={(pickerItems || []).map((it) => {
                 const displayName =
                   it.full_name ||
@@ -3214,6 +3318,7 @@ export default function EditUser() {
                 setPickerReturn(null);
               }}
               searchable={true}
+              selectedId={successor?.id || null}
               maxHeightRatio={0.8}
             />
 
@@ -3246,7 +3351,7 @@ export default function EditUser() {
                       source={{ uri: avatarDisplayUrl }}
                       style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
                       contentFit="contain"
-                      cachePolicy="none"
+                      cachePolicy={avatarImageCachePolicy}
                     />
                   ) : (
                     <Text style={{ color: theme.colors.textSecondary }}>{t('photo_empty')}</Text>
@@ -3658,9 +3763,11 @@ function DeleteEmployeeModal({
   visible,
   totalOrdersCount = 0,
   requiresSuccessor = false,
+  deleteContext = null,
   successor,
   successorError,
   openSuccessorPicker,
+  onOpenCompany,
   onConfirm,
   saving,
   onClose,
@@ -3670,6 +3777,11 @@ function DeleteEmployeeModal({
   const bodyLineHeight = Math.round(
     theme.typography.sizes.sm * (theme.typography.lineHeights?.normal ?? 1.35),
   );
+  const isCompanyAdmin = !!deleteContext?.isCompanyAdmin;
+  const companyDeleteRequired = !!deleteContext?.companyDeleteRequired;
+  const companyName = String(deleteContext?.company?.name || '').trim();
+  const canDeleteEmployee = !companyDeleteRequired && (!requiresSuccessor || !!successor?.id);
+  const showFooterDeleteButton = !isCompanyAdmin || !!successor?.id;
 
   const footer = (
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.md }}>
@@ -3679,12 +3791,14 @@ function DeleteEmployeeModal({
         onPress={onClose}
         disabled={saving}
       />
-      <UIButton
-        title={saving ? t('btn_deleting') : t('btn_delete')}
-        variant="destructive"
-        onPress={onConfirm}
-        disabled={saving || (requiresSuccessor && !successor?.id)}
-      />
+      {showFooterDeleteButton ? (
+        <UIButton
+          title={saving ? t('btn_deleting') : t('btn_delete')}
+          variant="destructive"
+          onPress={onConfirm}
+          disabled={saving || !canDeleteEmployee}
+        />
+      ) : null}
     </View>
   );
 
@@ -3696,7 +3810,61 @@ function DeleteEmployeeModal({
       maxHeightRatio={0.6}
       footer={footer}
     >
-      {!requiresSuccessor ? (
+      {isCompanyAdmin && !successor?.id ? (
+        <View style={{ paddingBottom: theme.spacing.md }}>
+          <Text
+            style={{
+              fontSize: theme.typography.sizes.md,
+              fontWeight: '500',
+              color: theme.colors.text,
+              marginBottom: theme.spacing.md,
+            }}
+          >
+            {t('user_delete_company_admin_title')}
+          </Text>
+          <Text
+            style={{
+              fontSize: theme.typography.sizes.sm,
+              color: theme.colors.textSecondary,
+              lineHeight: bodyLineHeight,
+              marginBottom: theme.spacing.lg,
+            }}
+          >
+            {companyDeleteRequired
+              ? t('user_delete_company_admin_no_successors_desc')
+              : t('user_delete_company_admin_desc').replace('{company}', companyName || t('admin_company_fallback'))}
+          </Text>
+          <View style={{ gap: theme.spacing.sm }}>
+            {!companyDeleteRequired ? (
+              <UIButton
+                title={t('user_delete_transfer_admin_button')}
+                variant="primary"
+                onPress={openSuccessorPicker}
+                disabled={saving}
+                style={{ alignSelf: 'stretch' }}
+              />
+            ) : null}
+            <UIButton
+              title={t('user_delete_open_company_button')}
+              variant="destructive"
+              onPress={onOpenCompany}
+              disabled={saving}
+              style={{ alignSelf: 'stretch' }}
+            />
+          </View>
+          {successorError ? (
+            <Text
+              style={{
+                color: theme.colors.danger,
+                fontSize: theme.typography.sizes.xs,
+                marginTop: theme.spacing.xs,
+              }}
+            >
+              {successorError}
+            </Text>
+          ) : null}
+        </View>
+      ) : !requiresSuccessor ? (
         <View style={{ paddingBottom: theme.spacing.md }}>
           <Text
             style={{
@@ -3772,7 +3940,7 @@ function DeleteEmployeeModal({
                 marginBottom: theme.spacing.md,
               }}
             >
-              {t('user_delete_reassigned_title')}
+              {isCompanyAdmin ? t('user_delete_admin_reassigned_title') : t('user_delete_reassigned_title')}
             </Text>
             <Text
               style={{
@@ -3782,9 +3950,11 @@ function DeleteEmployeeModal({
                 lineHeight: bodyLineHeight,
               }}
             >
-              {totalOrdersCount > 0
-                ? t('user_delete_reassigned_desc').replace('{n}', String(totalOrdersCount))
-                : t('user_delete_reassigned_unknown_desc')}
+              {isCompanyAdmin
+                ? t('user_delete_admin_reassigned_desc')
+                : totalOrdersCount > 0
+                  ? t('user_delete_reassigned_desc').replace('{n}', String(totalOrdersCount))
+                  : t('user_delete_reassigned_unknown_desc')}
             </Text>
           </View>
           <View

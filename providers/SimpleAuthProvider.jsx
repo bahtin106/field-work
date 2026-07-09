@@ -172,6 +172,7 @@ export function SimpleAuthProvider({ children }) {
   const currentUserIdRef = useRef(null);
   const initialSessionHandledRef = useRef(false);
   const logoutInProgressRef = useRef(false);
+  const signedOutSettledRef = useRef(false);
   const recoveryTimerRef = useRef(null);
   const recoveryJobIdRef = useRef(0);
   const profileLoadInFlightRef = useRef(new Map());
@@ -359,13 +360,24 @@ export function SimpleAuthProvider({ children }) {
     authRequestIdRef.current += 1;
     currentUserIdRef.current = null;
     initialSessionHandledRef.current = false;
+    signedOutSettledRef.current = true;
     profileRef.current = null;
-    setState({
-      isInitializing: false,
-      isAuthenticated: false,
-      user: null,
-      profile: null,
-      profileError: null,
+    setState((prev) => {
+      const alreadySignedOut =
+        !prev.isInitializing &&
+        !prev.isAuthenticated &&
+        !prev.user &&
+        !prev.profile &&
+        !prev.profileError;
+      if (alreadySignedOut) return prev;
+
+      return {
+        isInitializing: false,
+        isAuthenticated: false,
+        user: null,
+        profile: null,
+        profileError: null,
+      };
     });
   }, [clearProfileRecovery]);
 
@@ -388,6 +400,7 @@ export function SimpleAuthProvider({ children }) {
 
       if (event === 'SIGNED_IN') {
         logoutInProgressRef.current = false;
+        signedOutSettledRef.current = false;
       }
 
       // During explicit logout, ignore all non-login auth events to prevent transient UI jumps.
@@ -396,6 +409,9 @@ export function SimpleAuthProvider({ children }) {
       }
 
       if (event === 'SIGNED_OUT' || !nextUserId) {
+        if (signedOutSettledRef.current && !hadUser) {
+          return;
+        }
         setSignedOutState();
         if (event === 'SIGNED_OUT' || hadUser) {
           await cleanupSessionRuntime(event === 'SIGNED_OUT' ? 'signed-out' : 'session-missing');
@@ -412,6 +428,7 @@ export function SimpleAuthProvider({ children }) {
         clearProfileRecovery();
         profileLoadInFlightRef.current.clear();
         currentUserIdRef.current = nextUserId;
+        signedOutSettledRef.current = false;
         if (hadUser || cachedUserChanged) {
           await cleanupSessionRuntime(cachedUserChanged ? 'cached-user-changed' : 'user-changed');
           cacheClearedForAuthScope = true;
@@ -611,21 +628,48 @@ export function SimpleAuthProvider({ children }) {
     logoutInProgressRef.current = true;
 
     const currentUserId = state.user?.id || null;
+    const sessionPromise = supabase.auth.getSession().catch(() => null);
     setSignedOutState();
-    await cleanupSessionRuntime('sign-out');
+    let signOutError = null;
+    const signOutPromise = supabase.auth.signOut({ scope: 'local' }).catch((error) => {
+      signOutError = error;
+    });
+
+    let currentAccessToken = '';
+    try {
+      const sessionResult = await Promise.race([
+        sessionPromise,
+        new Promise((resolve) => setTimeout(() => resolve(null), 800)),
+      ]);
+      currentAccessToken = sessionResult?.data?.session?.access_token
+        ? String(sessionResult.data.session.access_token)
+        : '';
+    } catch {}
 
     try {
-      if (currentUserId) {
+      await signOutPromise;
+    } finally {
+      logoutInProgressRef.current = false;
+    }
+    if (signOutError) {
+      log.error('signOut error', signOutError);
+    }
+
+    cleanupSessionRuntime('sign-out').catch(() => {});
+
+    if (currentUserId) {
+      (async () => {
         try {
           const { token } = await readCurrentPushToken();
           if (token) {
-            await deletePushToken(currentUserId, { pushToken: token, disableNotifications: false });
+            await deletePushToken(currentUserId, {
+              pushToken: token,
+              disableNotifications: false,
+              accessToken: currentAccessToken,
+            });
           }
         } catch {}
-      }
-      await supabase.auth.signOut({ scope: 'local' });
-    } catch (error) {
-      log.error('signOut error', error);
+      })();
     }
   }, [setSignedOutState, state.user?.id]);
 

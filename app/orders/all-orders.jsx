@@ -1,16 +1,20 @@
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   FlatList,
   InteractionManager,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -18,6 +22,7 @@ import DynamicOrderCard from '../../components/DynamicOrderCard';
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
+import StatusSelectModal from '../../components/filters/StatusSelectModal';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import {
@@ -40,6 +45,7 @@ import {
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { enrichOrdersWithKnownExecutorRows } from '../../src/features/requests/executorNameCache';
+import { listRequests } from '../../src/features/requests/api';
 import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import { useClients } from '../../src/features/clients/queries';
@@ -62,6 +68,7 @@ import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
 import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 
@@ -77,8 +84,16 @@ const ALL_ORDERS_FPS_PROBE_MS = 3500;
 const ALL_ORDERS_NAV_LOCK_MS = 1200;
 const ALL_ORDERS_DETAIL_PREFETCH_LIMIT = 6;
 const ALL_ORDERS_VIEWABILITY_PREFETCH_TTL_MS = 2500;
+const ALL_ORDERS_FEED_PREVIEW_SIZE = 20;
+const ALL_ORDERS_FEED_PREFETCH_DELAY_MS = 2200;
+const ALL_ORDERS_FEED_PULSE_DURATION_MS = 1200;
+const ALL_ORDERS_FEED_INDICATOR_FRESH_MS = 30 * 1000;
+const ALL_ORDERS_FEED_SEEN_STORAGE_PREFIX = 'myorders.feedSeen.v2';
+const ALL_ORDERS_FEED_LAST_FP_STORAGE_PREFIX = 'myorders.feedLastFp.v2';
 const ALL_ORDERS_SORT_FALLBACK = 0;
 const ALL_ORDERS_PRESSED_OPACITY = 0.9;
+const ALL_ORDERS_LIST_HORIZONTAL_PADDING = 16;
+const ALL_ORDERS_LIST_BOTTOM_PADDING = 40;
 const MINUTES_PER_HOUR = 60;
 const TIME_BOUNDARY = Object.freeze({
   hourMin: 0,
@@ -98,6 +113,7 @@ const TIME_DISPLAY_OPTIONS = Object.freeze({
 const RANGE_SEPARATOR = ' - ';
 const ROUTE_FILTER_PARAM_KEYS = Object.freeze([
   'executor',
+  'statuses',
   'work_type',
   'client_ids',
   'departure_date_from',
@@ -117,6 +133,17 @@ const ALL_ORDERS_LIST = Object.freeze({
 });
 const ALL_ORDER_STATUS_TABS = Object.freeze(['feed', 'all', 'new', 'progress', 'done']);
 const SOLO_ALL_ORDER_STATUS_TABS = Object.freeze(['all', 'new', 'progress', 'done']);
+const ALL_ORDERS_STATUS_ALWAYS_VISIBLE = Object.freeze(['feed', 'all']);
+const ALL_ORDERS_STATUS_BAR_PADDING = 3;
+const ALL_ORDERS_STATUS_CHIP_GAP = 2;
+const ALL_ORDERS_STATUS_CHIP_MIN_WIDTH = 38;
+const ALL_ORDERS_STATUS_CHIP_MAX_WIDTH = 92;
+const ALL_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH = 148;
+const ALL_ORDERS_STATUS_CHIP_STRETCH_MAX_WIDTH = 168;
+const ALL_ORDERS_STATUS_MORE_MIN_WIDTH = 70;
+const ALL_ORDERS_STATUS_MORE_MAX_WIDTH = 84;
+const ALL_ORDERS_STATUS_USAGE_STORAGE_PREFIX = 'orders.all.statusUsage.v1';
+const ALL_ORDERS_STATUS_USAGE_MAX_ENTRIES = 32;
 const ALL_ORDERS_SORT_KEYS = Object.freeze({
   dateDesc: 'date_desc',
   dateAsc: 'date_asc',
@@ -202,6 +229,70 @@ function normalizeStatusFilterParam(value) {
   return LEGACY_STATUS_FILTER_MAP[raw] || raw || 'all';
 }
 
+function normalizeAllOrdersStatusFilter(value) {
+  const key = normalizeStatusFilterParam(value);
+  return key === 'in_progress' ? 'progress' : key;
+}
+
+function estimateAllOrdersStatusChipWidth(
+  label,
+  { hasLeadingDot = false, maxWidth = ALL_ORDERS_STATUS_CHIP_MAX_WIDTH } = {},
+) {
+  const text = String(label || '');
+  const textWidth = Math.ceil(Array.from(text).length * 7.7);
+  const leadWidth = hasLeadingDot ? 13 : 0;
+  return Math.max(
+    ALL_ORDERS_STATUS_CHIP_MIN_WIDTH,
+    Math.min(maxWidth, textWidth + leadWidth + 22),
+  );
+}
+
+function normalizeAllOrdersStatusUsagePayload(raw, allowedIds = []) {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const source = parsed?.items && typeof parsed.items === 'object' ? parsed.items : parsed;
+    if (!source || typeof source !== 'object') return {};
+    const allowed = new Set((allowedIds || []).map(normalizeAllOrdersStatusFilter).filter(Boolean));
+    const entries = Object.entries(source)
+      .map(([rawKey, rawValue]) => {
+        const key = normalizeAllOrdersStatusFilter(rawKey);
+        if (!key || !allowed.has(key)) return null;
+        const value = rawValue && typeof rawValue === 'object' ? rawValue : { count: rawValue };
+        const count = Math.max(0, Math.floor(Number(value?.count || 0)));
+        const lastUsedAt = Math.max(0, Math.floor(Number(value?.lastUsedAt || 0)));
+        if (!count && !lastUsedAt) return null;
+        return [key, { count, lastUsedAt }];
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const countDelta = (b[1]?.count || 0) - (a[1]?.count || 0);
+        if (countDelta) return countDelta;
+        return (b[1]?.lastUsedAt || 0) - (a[1]?.lastUsedAt || 0);
+      })
+      .slice(0, ALL_ORDERS_STATUS_USAGE_MAX_ENTRIES);
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+function rankAllOrdersStatusFilterOptions(options = [], usage = {}) {
+  return options
+    .map((option, index) => ({ option, index }))
+    .sort((a, b) => {
+      const aKey = normalizeAllOrdersStatusFilter(a.option?.id);
+      const bKey = normalizeAllOrdersStatusFilter(b.option?.id);
+      const aUsage = usage?.[aKey] || {};
+      const bUsage = usage?.[bKey] || {};
+      const countDelta = (Number(bUsage.count) || 0) - (Number(aUsage.count) || 0);
+      if (countDelta) return countDelta;
+      const recencyDelta = (Number(bUsage.lastUsedAt) || 0) - (Number(aUsage.lastUsedAt) || 0);
+      if (recencyDelta) return recencyDelta;
+      return a.index - b.index;
+    })
+    .map(({ option }) => option);
+}
+
 function parseDateFilterValue(value) {
   const raw = readRouteParam(value);
   if (!raw) return null;
@@ -270,9 +361,25 @@ function formatRangeFilterLabel(min, max, t) {
   return null;
 }
 
+function toDateBoundaryIso(value, startOfDay) {
+  const parsed = parseDateFilterValue(value);
+  if (!parsed) return null;
+  const date = new Date(parsed);
+  if (startOfDay) {
+    date.setHours(0, 0, 0, 0);
+  } else {
+    date.setHours(23, 59, 59, 999);
+  }
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function buildRouteFilterParams(values = {}) {
   return {
     executor: values.executorId || undefined,
+    statuses:
+      Array.isArray(values.statuses) && values.statuses.length
+        ? values.statuses.join(',')
+        : undefined,
     work_type:
       Array.isArray(values.workTypes) && values.workTypes.length
         ? values.workTypes.join(',')
@@ -302,6 +409,10 @@ function readCachedRequestItems(value) {
   return pages.flatMap((page) => (Array.isArray(page) ? page : []));
 }
 
+function buildScopedStorageKey(prefix, scopeKey) {
+  return `${prefix}:${String(scopeKey || 'anonymous')}`;
+}
+
 function AllOrdersContent() {
   trackRender(ALL_ORDERS_SCREEN_KEY, ALL_ORDERS_RENDER_WARN_THRESHOLD);
 
@@ -326,6 +437,7 @@ function AllOrdersContent() {
   }, []);
 
   const { theme } = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
   const { t, locale } = useTranslation();
   const { has, loading: permLoading } = usePermissions();
   const { profile, user } = useAuthContext();
@@ -366,6 +478,7 @@ function AllOrdersContent() {
 
   const router = useRouter();
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const handleBackPress = useCallback(() => {
     goBackSmart(navigation, router, null, ORDERS_HOME_ROUTE);
   }, [navigation, router]);
@@ -373,6 +486,7 @@ function AllOrdersContent() {
   const {
     filter,
     executor,
+    statuses,
     department,
     search,
     work_type,
@@ -436,6 +550,7 @@ function AllOrdersContent() {
   const [_hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [statusSelectVisible, setStatusSelectVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState(ALL_ORDERS_DEFAULT_SORT);
   const [departmentFilter] = useState(() => {
@@ -446,6 +561,7 @@ function AllOrdersContent() {
   const [orderFilters, setOrderFilters] = useState(() => ({
     ...createOrderFilterDefaults(),
     workTypes: readRouteListParam(work_type),
+    statuses: readRouteListParam(statuses).map(normalizeAllOrdersStatusFilter).filter(Boolean),
     clientIds: readRouteListParam(client_ids),
     executorId: readRouteParam(executor) || null,
     departureDateFrom: readRouteParam(departure_date_from) || null,
@@ -477,6 +593,7 @@ function AllOrdersContent() {
       !loading ||
       Boolean(executorFilter) ||
       hasWorkTypeFilter ||
+      (Array.isArray(orderFilters.statuses) && orderFilters.statuses.length > 0) ||
       (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length > 0));
   const setOrderFilterValue = useCallback((key, value) => {
     setOrderFilters((prev) => ({ ...prev, [key]: value }));
@@ -518,6 +635,19 @@ function AllOrdersContent() {
 
   const { data: companyId } = useMyCompanyIdQuery();
   const { settings: companySettings } = useCompanySettings(companyId);
+  const feedScopeKey = useMemo(() => {
+    const scopedUserId = String(user?.id || profile?.id || '').trim();
+    const scopedCompanyId = String(companyId || profile?.company_id || '').trim();
+    return scopedUserId ? `${scopedUserId}:${scopedCompanyId || 'no-company'}` : 'anonymous';
+  }, [companyId, profile?.company_id, profile?.id, user?.id]);
+  const feedSeenStorageKey = useMemo(
+    () => buildScopedStorageKey(ALL_ORDERS_FEED_SEEN_STORAGE_PREFIX, feedScopeKey),
+    [feedScopeKey],
+  );
+  const feedLastFpStorageKey = useMemo(
+    () => buildScopedStorageKey(ALL_ORDERS_FEED_LAST_FP_STORAGE_PREFIX, feedScopeKey),
+    [feedScopeKey],
+  );
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: !isSoloAdmin && effectiveAllowed === true,
   });
@@ -553,6 +683,10 @@ function AllOrdersContent() {
   const allRequestsParams = useMemo(() => {
     const next = {};
     if (effectiveStatusFilter && effectiveStatusFilter !== 'all') next.status = effectiveStatusFilter;
+    const statusFilters = Array.isArray(orderFilters.statuses)
+      ? orderFilters.statuses.map(normalizeAllOrdersStatusFilter).filter((key) => key && key !== 'all')
+      : [];
+    if (statusFilters.length) next.statuses = statusFilters;
     if (executorFilter) next.executorId = executorFilter;
     if (departmentFilter != null) next.departmentId = departmentFilter;
     if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
@@ -561,6 +695,14 @@ function AllOrdersContent() {
     if (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length) {
       next.clientIds = orderFilters.clientIds.map(String);
     }
+    const dateFrom = toDateBoundaryIso(orderFilters.departureDateFrom, true);
+    const dateTo = toDateBoundaryIso(orderFilters.departureDateTo, false);
+    const sumMinValue = readRouteParam(orderFilters.sumMin);
+    const sumMaxValue = readRouteParam(orderFilters.sumMax);
+    if (dateFrom) next.dateFrom = dateFrom;
+    if (dateTo) next.dateTo = dateTo;
+    if (sumMinValue) next.sumMin = sumMinValue;
+    if (sumMaxValue) next.sumMax = sumMaxValue;
     if (relationClientId) next.relationClientId = relationClientId;
     if (relationObjectIds.length) next.relationObjectIds = relationObjectIds;
     return next;
@@ -569,6 +711,11 @@ function AllOrdersContent() {
     executorFilter,
     effectiveStatusFilter,
     orderFilters.clientIds,
+    orderFilters.departureDateFrom,
+    orderFilters.departureDateTo,
+    orderFilters.sumMax,
+    orderFilters.sumMin,
+    orderFilters.statuses,
     relationClientId,
     relationObjectIds,
     useWorkTypes,
@@ -653,6 +800,230 @@ function AllOrdersContent() {
   const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
+  const feedStateCache = (globalThis.__MYORDERS_FEED_STATE ||= {});
+  feedStateCache[feedScopeKey] ||= {};
+  const scopedFeedState = feedStateCache[feedScopeKey];
+  const feedIndicatorCache = (globalThis.__ALLORDERS_FEED_INDICATOR ||= {});
+  feedIndicatorCache[feedScopeKey] ||= { rows: null, fetchedAt: 0 };
+  const scopedFeedIndicatorCache = feedIndicatorCache[feedScopeKey];
+  const [feedFingerprint, setFeedFingerprint] = useState(() => scopedFeedState.fp || '');
+  const [feedSeenFingerprint, setFeedSeenFingerprint] = useState(() => scopedFeedState.seenFp || '');
+  const [feedHasAny, setFeedHasAny] = useState(() => Boolean(scopedFeedState.hasAny));
+  const feedPulse = useRef(new Animated.Value(0)).current;
+  const feedMetaRequestSeqRef = useRef(0);
+  const activeFeedScopeRef = useRef(feedScopeKey);
+  const isFeedFeatureEnabled = !isSoloAdmin;
+  const feedState = !feedHasAny
+    ? 'none'
+    : feedFingerprint && feedFingerprint === feedSeenFingerprint
+      ? 'seen'
+      : 'new';
+
+  useEffect(() => {
+    if (activeFeedScopeRef.current === feedScopeKey) return;
+    activeFeedScopeRef.current = feedScopeKey;
+    feedMetaRequestSeqRef.current += 1;
+    setFeedFingerprint(scopedFeedState.fp || '');
+    setFeedSeenFingerprint(scopedFeedState.seenFp || '');
+    setFeedHasAny(Boolean(scopedFeedState.hasAny));
+  }, [feedScopeKey, scopedFeedState]);
+
+  useEffect(() => {
+    if (!isFeedFeatureEnabled) {
+      scopedFeedState.fp = '';
+      scopedFeedState.seenFp = '';
+      scopedFeedState.hasAny = false;
+      setFeedFingerprint('');
+      setFeedSeenFingerprint('');
+      setFeedHasAny(false);
+      return undefined;
+    }
+    if (!isFocused) return undefined;
+    let alive = true;
+    const run = async () => {
+      try {
+        const [seenFp, lastFp] = await Promise.all([
+          AsyncStorage.getItem(feedSeenStorageKey),
+          AsyncStorage.getItem(feedLastFpStorageKey),
+        ]);
+        if (!alive) return;
+        if (typeof seenFp === 'string' && seenFp.length) {
+          scopedFeedState.seenFp = seenFp;
+          setFeedSeenFingerprint(seenFp);
+        }
+        if (typeof lastFp === 'string' && lastFp.length) {
+          scopedFeedState.fp = lastFp;
+          scopedFeedState.hasAny = true;
+          setFeedFingerprint(lastFp);
+          setFeedHasAny(true);
+        }
+      } catch {}
+    };
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [
+    feedLastFpStorageKey,
+    feedSeenStorageKey,
+    isFeedFeatureEnabled,
+    isFocused,
+    scopedFeedState,
+  ]);
+
+  useEffect(() => {
+    if (!isFeedFeatureEnabled || feedState !== 'new') {
+      feedPulse.stopAnimation();
+      feedPulse.setValue(0);
+      return undefined;
+    }
+
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(feedPulse, {
+          toValue: 1,
+          duration: ALL_ORDERS_FEED_PULSE_DURATION_MS,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(feedPulse, {
+          toValue: 0,
+          duration: ALL_ORDERS_FEED_PULSE_DURATION_MS,
+          easing: Easing.in(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => {
+      anim.stop();
+    };
+  }, [feedPulse, feedState, isFeedFeatureEnabled]);
+
+  const updateFeedMeta = useCallback(
+    (arr) => {
+      if (!isFeedFeatureEnabled) {
+        scopedFeedState.fp = '';
+        scopedFeedState.hasAny = false;
+        setFeedFingerprint('');
+        setFeedHasAny(false);
+        return;
+      }
+      const fp = Array.isArray(arr)
+        ? arr
+            .slice(0, ALL_ORDERS_FEED_PREVIEW_SIZE)
+            .map((item) => item?.id)
+            .filter(Boolean)
+            .join(',')
+        : '';
+      const hasAny = Boolean(arr && arr.length);
+
+      scopedFeedState.fp = fp;
+      scopedFeedState.hasAny = hasAny;
+      setFeedFingerprint(fp);
+      setFeedHasAny(hasAny);
+
+      try {
+        if (fp) AsyncStorage.setItem(feedLastFpStorageKey, fp).catch(() => {});
+        else AsyncStorage.removeItem(feedLastFpStorageKey).catch(() => {});
+      } catch {}
+    },
+    [feedLastFpStorageKey, isFeedFeatureEnabled, scopedFeedState],
+  );
+
+  useEffect(() => {
+    if (!isFeedFeatureEnabled) return undefined;
+    if (!isFocused) return undefined;
+    if (effectiveAllowed !== true) return undefined;
+    if (loading && orders.length === 0) return undefined;
+
+    const prefetchFeed = async () => {
+      const cachedRows = scopedFeedIndicatorCache.rows;
+      const cachedFetchedAt = Number(scopedFeedIndicatorCache.fetchedAt || 0);
+      if (Array.isArray(cachedRows)) {
+        updateFeedMeta(cachedRows);
+        if (cachedFetchedAt > 0 && Date.now() - cachedFetchedAt < ALL_ORDERS_FEED_INDICATOR_FRESH_MS) {
+          return;
+        }
+      }
+
+      let uid = String(user?.id || profile?.id || '').trim();
+      if (!uid) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        uid = String(sessionData?.session?.user?.id || '').trim();
+      }
+      if (!uid) return;
+
+      const requestSeq = feedMetaRequestSeqRef.current + 1;
+      feedMetaRequestSeqRef.current = requestSeq;
+      try {
+        const data = await listRequests({
+          scope: 'all',
+          status: 'feed',
+          userId: uid,
+          page: 1,
+          pageSize: ALL_ORDERS_FEED_PREVIEW_SIZE,
+        });
+        if (feedMetaRequestSeqRef.current !== requestSeq) return;
+        scopedFeedIndicatorCache.rows = data;
+        scopedFeedIndicatorCache.fetchedAt = Date.now();
+        updateFeedMeta(data);
+      } catch {}
+    };
+
+    let task = null;
+    const timer = setTimeout(() => {
+      task = InteractionManager.runAfterInteractions(() => {
+        prefetchFeed().catch(() => {});
+      });
+    }, ALL_ORDERS_FEED_PREFETCH_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      try {
+        task?.cancel?.();
+      } catch {}
+    };
+  }, [
+    effectiveAllowed,
+    isFeedFeatureEnabled,
+    isFocused,
+    loading,
+    orders.length,
+    profile?.id,
+    scopedFeedIndicatorCache,
+    updateFeedMeta,
+    user?.id,
+  ]);
+
+  useEffect(() => {
+    if (!isFeedFeatureEnabled) return;
+    if (effectiveStatusFilter !== 'feed') return;
+    if (!feedHasAny || !feedFingerprint) return;
+    if (feedSeenFingerprint === feedFingerprint) return;
+
+    setFeedSeenFingerprint(feedFingerprint);
+    scopedFeedState.seenFp = feedFingerprint;
+
+    try {
+      AsyncStorage.setItem(feedSeenStorageKey, feedFingerprint).catch(() => {});
+    } catch {}
+  }, [
+    effectiveStatusFilter,
+    feedFingerprint,
+    feedHasAny,
+    feedSeenFingerprint,
+    feedSeenStorageKey,
+    isFeedFeatureEnabled,
+    scopedFeedState,
+  ]);
+
+  useEffect(() => {
+    if (!isFeedFeatureEnabled) return;
+    if (effectiveStatusFilter !== 'feed') return;
+    if (!Array.isArray(requestItems)) return;
+    updateFeedMeta(requestItems);
+  }, [effectiveStatusFilter, isFeedFeatureEnabled, requestItems, updateFeedMeta]);
+
   const getStatusLabel = useCallback(
     (key) => {
       switch (key) {
@@ -672,6 +1043,221 @@ function AllOrdersContent() {
     },
     [t],
   );
+  const orderStatusOptions = useMemo(
+    () => [
+      { id: 'new', label: t('order_status_new') },
+      { id: 'progress', label: t('order_status_in_progress') },
+      { id: 'done', label: t('order_status_completed') },
+    ],
+    [t],
+  );
+  const statusAlwaysVisibleKeys = useMemo(
+    () => ALL_ORDERS_STATUS_ALWAYS_VISIBLE.filter((key) => statusTabs.includes(key)),
+    [statusTabs],
+  );
+  const statusFilterOptions = useMemo(
+    () =>
+      statusTabs.map((key) => ({
+        id: key,
+        label: getStatusLabel(key),
+      })),
+    [getStatusLabel, statusTabs],
+  );
+  const statusChipLabels = useMemo(() => {
+    const labels = {};
+    statusFilterOptions.forEach((option) => {
+      labels[option.id] = option.id === 'feed' ? t('order_status_in_feed_short') : option.label;
+    });
+    return labels;
+  }, [statusFilterOptions, t]);
+  const statusUsageStorageKey = useMemo(() => {
+    const userId = String(user?.id || profile?.id || 'anonymous').trim() || 'anonymous';
+    const companyScope = String(companyId || 'global').trim() || 'global';
+    return `${ALL_ORDERS_STATUS_USAGE_STORAGE_PREFIX}:${userId}:${companyScope}`;
+  }, [companyId, profile?.id, user?.id]);
+  const statusUsageAllowedIds = useMemo(
+    () => statusFilterOptions.map((option) => normalizeAllOrdersStatusFilter(option?.id)).filter(Boolean),
+    [statusFilterOptions],
+  );
+  const [statusUsage, setStatusUsage] = useState({});
+  const statusUsageRef = useRef({});
+
+  useEffect(() => {
+    let alive = true;
+    AsyncStorage.getItem(statusUsageStorageKey)
+      .then((raw) => {
+        if (!alive) return;
+        const normalized = normalizeAllOrdersStatusUsagePayload(raw, statusUsageAllowedIds);
+        statusUsageRef.current = normalized;
+        setStatusUsage(normalized);
+      })
+      .catch(() => {
+        if (!alive) return;
+        statusUsageRef.current = {};
+        setStatusUsage({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [statusUsageAllowedIds, statusUsageStorageKey]);
+
+  const recordStatusFilterUsage = useCallback(
+    (value) => {
+      const key = normalizeAllOrdersStatusFilter(value);
+      if (!statusUsageAllowedIds.includes(key)) return;
+      const currentUsage = statusUsageRef.current || {};
+      const current = currentUsage[key] || {};
+      const next = {
+        ...currentUsage,
+        [key]: {
+          count: (Number(current.count) || 0) + 1,
+          lastUsedAt: Date.now(),
+        },
+      };
+      const normalized = normalizeAllOrdersStatusUsagePayload({ items: next }, statusUsageAllowedIds);
+      statusUsageRef.current = normalized;
+      AsyncStorage.setItem(statusUsageStorageKey, JSON.stringify({ items: normalized })).catch(() => {});
+    },
+    [statusUsageAllowedIds, statusUsageStorageKey],
+  );
+  const selectStatusFilter = useCallback(
+    (value) => {
+      const key = normalizeAllOrdersStatusFilter(value);
+      if (!statusTabs.includes(key)) return;
+      setStatusFilter(key);
+      router.setParams({ filter: key });
+      recordStatusFilterUsage(key);
+    },
+    [recordStatusFilterUsage, router, statusTabs],
+  );
+  const statusSelectOptions = useMemo(
+    () => rankAllOrdersStatusFilterOptions(statusFilterOptions, statusUsage),
+    [statusFilterOptions, statusUsage],
+  );
+  const orderedStatusQuickKeys = useMemo(() => {
+    const rankedStatuses = rankAllOrdersStatusFilterOptions(
+      statusFilterOptions.filter(
+        (option) => !statusAlwaysVisibleKeys.includes(normalizeAllOrdersStatusFilter(option?.id)),
+      ),
+      statusUsage,
+    ).map((option) => normalizeAllOrdersStatusFilter(option?.id));
+
+    return [
+      ...statusAlwaysVisibleKeys,
+      ...rankedStatuses.filter(Boolean),
+    ];
+  }, [statusAlwaysVisibleKeys, statusFilterOptions, statusUsage]);
+  const statusQuickLayout = useMemo(() => {
+    const availableWidth = Math.max(
+      0,
+      Number(windowWidth || 0) -
+        ALL_ORDERS_LIST_HORIZONTAL_PADDING * 2 -
+        ALL_ORDERS_STATUS_BAR_PADDING * 2,
+    );
+    const reservedMoreWidth = ALL_ORDERS_STATUS_MORE_MIN_WIDTH;
+    const selected = [];
+    const widths = {};
+    let used = 0;
+
+    const addChip = (key, { force = false, active = false } = {}) => {
+      if (!key || selected.includes(key)) return false;
+      const label = statusChipLabels[key] || getStatusLabel(key) || key;
+      const nextWidth = estimateAllOrdersStatusChipWidth(label, {
+        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        maxWidth: active ? ALL_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH : ALL_ORDERS_STATUS_CHIP_MAX_WIDTH,
+      });
+      const nextGap = selected.length > 0 ? ALL_ORDERS_STATUS_CHIP_GAP : 0;
+      const projected = used + nextGap + nextWidth;
+      const requiredWidth = projected + ALL_ORDERS_STATUS_CHIP_GAP + reservedMoreWidth;
+
+      if (force || requiredWidth <= availableWidth) {
+        selected.push(key);
+        widths[key] = nextWidth;
+        used = projected;
+        return true;
+      }
+      return false;
+    };
+
+    orderedStatusQuickKeys.forEach((key) => {
+      addChip(key, {
+        active: effectiveStatusFilter === key,
+        force: statusAlwaysVisibleKeys.includes(key),
+      });
+    });
+
+    let moreWidth = reservedMoreWidth;
+    const totalWidth =
+      selected.reduce((sum, key) => sum + (widths[key] || 0), 0) +
+      moreWidth +
+      ALL_ORDERS_STATUS_CHIP_GAP * selected.length;
+    let extra = Math.max(0, availableWidth - totalWidth);
+
+    const getStretchMax = (key) => {
+      const label = statusChipLabels[key] || getStatusLabel(key) || key;
+      const fullWidth = estimateAllOrdersStatusChipWidth(label, {
+        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        maxWidth:
+          effectiveStatusFilter === key
+            ? ALL_ORDERS_STATUS_CHIP_STRETCH_MAX_WIDTH
+            : ALL_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH,
+      });
+      if (statusAlwaysVisibleKeys.includes(key)) {
+        return Math.max(widths[key] || 0, fullWidth);
+      }
+      return Math.max(widths[key] || 0, fullWidth + (effectiveStatusFilter === key ? 8 : 4));
+    };
+
+    const stretchOrder = [
+      effectiveStatusFilter,
+      ...selected.filter((key) => !statusAlwaysVisibleKeys.includes(key) && key !== effectiveStatusFilter),
+      ...selected.filter((key) => statusAlwaysVisibleKeys.includes(key) && key !== effectiveStatusFilter),
+    ].filter((key, index, arr) => key && selected.includes(key) && arr.indexOf(key) === index);
+
+    stretchOrder.forEach((key, index) => {
+      if (extra <= 0) return;
+      const remaining = stretchOrder.length - index;
+      const currentWidth = widths[key] || 0;
+      const maxWidth = getStretchMax(key);
+      const add = Math.min(maxWidth - currentWidth, Math.ceil(extra / remaining));
+      if (add > 0) {
+        widths[key] = currentWidth + add;
+        extra -= add;
+      }
+    });
+
+    if (extra > 0) {
+      const addToMore = Math.min(ALL_ORDERS_STATUS_MORE_MAX_WIDTH - moreWidth, extra);
+      if (addToMore > 0) {
+        moreWidth += addToMore;
+        extra -= addToMore;
+      }
+    }
+
+    if (extra > 0 && selected.length) {
+      const perChip = Math.floor(extra / selected.length);
+      let rest = extra - perChip * selected.length;
+      selected.forEach((key) => {
+        widths[key] += perChip + (rest > 0 ? 1 : 0);
+        if (rest > 0) rest -= 1;
+      });
+    }
+
+    return { keys: selected, moreWidth, widths };
+  }, [
+    effectiveStatusFilter,
+    feedState,
+    getStatusLabel,
+    orderedStatusQuickKeys,
+    statusAlwaysVisibleKeys,
+    statusChipLabels,
+    windowWidth,
+  ]);
+  const visibleQuickStatusKeys = statusQuickLayout.keys;
+  const statusChipWidths = statusQuickLayout.widths;
+  const statusMoreWidth = statusQuickLayout.moreWidth || ALL_ORDERS_STATUS_MORE_MIN_WIDTH;
+  const isOverflowStatusActive = !visibleQuickStatusKeys.includes(effectiveStatusFilter);
+  const statusMoreLabel = t('viewer_more');
 
   const executorOptions = useMemo(() => {
     let list = executors;
@@ -700,6 +1286,21 @@ function AllOrdersContent() {
   const filterSummaryData = useMemo(() => {
     const fullParts = [];
     const compactParts = [];
+
+    if (Array.isArray(orderFilters.statuses) && orderFilters.statuses.length) {
+      const labels = orderFilters.statuses
+        .map((code) => normalizeAllOrdersStatusFilter(code))
+        .map((code) => orderStatusOptions.find((opt) => opt.id === code)?.label || getStatusLabel(code))
+        .filter(Boolean);
+      if (labels.length) {
+        fullParts.push(
+          summarizeFilterPart({ label: t('orders_filter_status'), values: labels, countWhenMany: false }),
+        );
+        compactParts.push(
+          summarizeFilterPart({ label: t('orders_filter_status'), values: labels, countWhenMany: true }),
+        );
+      }
+    }
 
     if (useWorkTypes && workTypeFilter.length) {
       const workTypeNames = workTypeFilter
@@ -785,6 +1386,7 @@ function AllOrdersContent() {
     executorFilter,
     executorOptions,
     locale,
+    getStatusLabel,
     orderFilters.clientIds,
     orderFilters.departureDateFrom,
     orderFilters.departureDateTo,
@@ -792,6 +1394,8 @@ function AllOrdersContent() {
     orderFilters.departureTimeTo,
     orderFilters.sumMax,
     orderFilters.sumMin,
+    orderFilters.statuses,
+    orderStatusOptions,
     t,
     useWorkTypes,
     workTypeFilter,
@@ -800,7 +1404,17 @@ function AllOrdersContent() {
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
+    const timeFrom = parseTimeToMinutes(orderFilters.departureTimeFrom);
+    const timeTo = parseTimeToMinutes(orderFilters.departureTimeTo);
     return (orders || []).filter((order) => {
+      if (timeFrom != null || timeTo != null) {
+        const dt = order?.time_window_start ? new Date(order.time_window_start) : null;
+        if (dt && !Number.isNaN(dt.getTime())) {
+          const minutes = dt.getHours() * MINUTES_PER_HOUR + dt.getMinutes();
+          if (timeFrom != null && minutes < timeFrom) return false;
+          if (timeTo != null && minutes > timeTo) return false;
+        }
+      }
       if (!q) return true;
       return matchesSearch(
         buildSearchIndex({
@@ -831,7 +1445,15 @@ function AllOrdersContent() {
         q,
       );
     });
-  }, [companySettings, deferredSearchQuery, orders, profile?.role, t]);
+  }, [
+    companySettings,
+    deferredSearchQuery,
+    orderFilters.departureTimeFrom,
+    orderFilters.departureTimeTo,
+    orders,
+    profile?.role,
+    t,
+  ]);
 
   const sortOptions = useMemo(
     () => [
@@ -1016,37 +1638,108 @@ function AllOrdersContent() {
     () => (
       <View style={styles.listHeader}>
         <View style={styles.filterBar}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterScrollContent}
-          >
-            {statusTabs.map((key) => {
+          <View style={styles.statusFilterRow}>
+            {visibleQuickStatusKeys.map((key) => {
               const active = effectiveStatusFilter === key;
               return (
                 <Pressable
                   key={key}
-                  onPress={() => {
-                    setStatusFilter(key);
-                    router.setParams({ filter: key });
-                  }}
+                  onPress={() => selectStatusFilter(key)}
                   style={({ pressed }) => [
                     styles.chip,
+                    statusChipWidths[key] ? { width: statusChipWidths[key] } : null,
                     active && styles.chipActive,
                     pressed && { opacity: ALL_ORDERS_PRESSED_OPACITY },
                   ]}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
+                  {key === 'feed' && feedState === 'new' ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.feedChipPulseOverlay,
+                        {
+                          opacity: feedPulse.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0.04, 0.13],
+                          }),
+                        },
+                      ]}
+                    />
+                  ) : null}
                   <View style={styles.chipContent}>
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                      {getStatusLabel(key)}
+                    {key === 'feed' &&
+                      feedState !== 'none' &&
+                      (feedState === 'new' ? (
+                        <Animated.View
+                          style={[
+                            styles.feedDotBase,
+                            styles.feedDotNew,
+                            {
+                              transform: [
+                                {
+                                  scale: feedPulse.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [1, 1.25],
+                                  }),
+                                },
+                              ],
+                              opacity: feedPulse.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0.75, 1],
+                              }),
+                            },
+                          ]}
+                        />
+                      ) : (
+                        <View style={[styles.feedDotBase, styles.feedDotSeen]} />
+                      ))}
+                    <Text
+                      style={[styles.chipText, active && styles.chipTextActive]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {statusChipLabels[key] || getStatusLabel(key)}
                     </Text>
                   </View>
                 </Pressable>
               );
             })}
-          </ScrollView>
+            <Pressable
+              onPress={() => setStatusSelectVisible(true)}
+              style={({ pressed }) => [
+                styles.chip,
+                styles.statusMoreChip,
+                { width: statusMoreWidth },
+                isOverflowStatusActive && styles.chipActive,
+                pressed && { opacity: ALL_ORDERS_PRESSED_OPACITY },
+              ]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isOverflowStatusActive }}
+            >
+              <View style={styles.chipContent}>
+                <Text
+                  style={[
+                    styles.chipText,
+                    styles.statusMoreText,
+                    isOverflowStatusActive && styles.chipTextActive,
+                  ]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {statusMoreLabel}
+                </Text>
+                <Feather
+                  name="chevron-down"
+                  size={14}
+                  color={isOverflowStatusActive ? theme.colors.onPrimary : theme.colors.textSecondary}
+                  style={styles.statusMoreIcon}
+                />
+              </View>
+            </Pressable>
+          </View>
         </View>
 
         <SearchFiltersBar
@@ -1105,12 +1798,29 @@ function AllOrdersContent() {
       styles.chipContent,
       styles.chipText,
       styles.chipTextActive,
+      styles.feedChipPulseOverlay,
+      styles.feedDotBase,
+      styles.feedDotNew,
+      styles.feedDotSeen,
       styles.filterBar,
-      styles.filterScrollContent,
       styles.listHeader,
       styles.searchBar,
-      statusTabs,
+      styles.statusFilterRow,
+      styles.statusMoreChip,
+      styles.statusMoreIcon,
+      styles.statusMoreText,
+      feedPulse,
+      feedState,
+      visibleQuickStatusKeys,
+      statusChipLabels,
+      statusChipWidths,
+      statusMoreWidth,
+      isOverflowStatusActive,
+      selectStatusFilter,
+      statusMoreLabel,
       t,
+      theme.colors.onPrimary,
+      theme.colors.textSecondary,
     ],
   );
 
@@ -1276,7 +1986,7 @@ function AllOrdersContent() {
         showSearchCategory={false}
         inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
         ordersFilters={{
-          statuses: [],
+          statuses: orderStatusOptions,
           workTypes: useWorkTypes ? workTypes : [],
           clients: clientOptions,
           executors: executorOptions,
@@ -1292,12 +2002,24 @@ function AllOrdersContent() {
           router.setParams(buildClearedRouteFilterParams());
         }}
         onApply={(nextValues) => {
-          setOrderFilters(nextValues);
-          router.setParams(buildRouteFilterParams({
+          const normalizedNextValues = {
             ...nextValues,
+            statuses: Array.isArray(nextValues?.statuses)
+              ? nextValues.statuses.map(normalizeAllOrdersStatusFilter).filter(Boolean)
+              : [],
             workTypes: useWorkTypes ? nextValues?.workTypes : [],
-          }));
+          };
+          setOrderFilters(normalizedNextValues);
+          router.setParams(buildRouteFilterParams(normalizedNextValues));
         }}
+      />
+      <StatusSelectModal
+        visible={statusSelectVisible}
+        onClose={() => setStatusSelectVisible(false)}
+        options={statusSelectOptions}
+        value={effectiveStatusFilter}
+        onChange={selectStatusFilter}
+        title={t('orders_filter_status')}
       />
       <SortSelectModal
         visible={sortVisible}
@@ -1318,9 +2040,8 @@ export default function AllOrdersScreen() {
 
 function createStyles(theme) {
   const mutedColor = theme.colors.textSecondary ?? theme.colors.text;
-  const listHorizontalPadding = theme.spacing.lg;
-  const listBottomPadding =
-    theme.components?.scrollView?.paddingBottom ?? theme.spacing.xxl;
+  const listHorizontalPadding = ALL_ORDERS_LIST_HORIZONTAL_PADDING;
+  const listBottomPadding = ALL_ORDERS_LIST_BOTTOM_PADDING;
   const searchBarOffset = -listHorizontalPadding;
   return StyleSheet.create({
     screenBody: {
@@ -1349,22 +2070,32 @@ function createStyles(theme) {
     containerFill: {
       flexGrow: 1,
     },
-    listHeader: {
-      paddingBottom: theme.spacing.lg,
-    },
+    listHeader: {},
     filterBar: {
-      marginBottom: theme.spacing.lg,
+      marginBottom: 14,
     },
-    filterScrollContent: {
+    statusFilterRow: {
       flexDirection: 'row',
-      gap: theme.spacing.sm,
-      paddingRight: theme.spacing.xs,
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      width: '100%',
+      gap: ALL_ORDERS_STATUS_CHIP_GAP,
+      padding: ALL_ORDERS_STATUS_BAR_PADDING,
+      borderRadius: theme.radii?.lg ?? 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.inputBg || theme.colors.surface,
     },
     chip: {
-      paddingVertical: theme.spacing.sm,
-      paddingHorizontal: theme.spacing.lg,
-      backgroundColor: theme.colors.inputBg || theme.colors.surface,
-      borderRadius: theme.radii.pill,
+      minHeight: 30,
+      paddingVertical: 5,
+      paddingHorizontal: 7,
+      backgroundColor: 'transparent',
+      borderRadius: theme.radii?.md ?? 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 1,
+      overflow: 'hidden',
     },
     chipActive: {
       backgroundColor: theme.colors.primary,
@@ -1372,20 +2103,51 @@ function createStyles(theme) {
     chipContent: {
       flexDirection: 'row',
       alignItems: 'center',
+      minWidth: 0,
     },
     chipText: {
-      fontSize: theme.typography.sizes.sm,
+      flexShrink: 1,
+      fontSize: Math.max(theme.typography.sizes.xs ?? 12, (theme.typography.sizes.sm ?? 14) - 1),
       color: theme.colors.text,
+      textAlign: 'center',
+      includeFontPadding: false,
     },
     chipTextActive: {
-      color: theme.colors.onPrimary,
-      fontWeight: theme.typography.weight.semibold,
+      color: theme.colors.onPrimary || theme.colors.primaryTextOn,
+      fontWeight: theme.typography.weight.semibold || '600',
+    },
+    statusMoreChip: {
+      width: ALL_ORDERS_STATUS_MORE_MIN_WIDTH,
+      flexShrink: 0,
+    },
+    statusMoreText: {
+      flexShrink: 0,
+    },
+    statusMoreIcon: {
+      marginLeft: 3,
+    },
+    feedChipPulseOverlay: {
+      backgroundColor: theme.colors.danger,
+    },
+    feedDotBase: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+      marginRight: 4,
+    },
+    feedDotNew: {
+      backgroundColor: theme.colors.danger,
+    },
+    feedDotSeen: {
+      backgroundColor: withAlpha(theme.colors.danger, 0.22),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.colors.danger, 0.55),
     },
     searchBar: {
       marginHorizontal: searchBarOffset,
     },
     emptyWrap: {
-      paddingVertical: theme.spacing.xxl + theme.spacing.lg,
+      paddingVertical: Number(theme.spacing.xl ?? 24) * 1.5,
       paddingHorizontal: theme.spacing.lg,
       alignItems: 'center',
       gap: theme.spacing.sm,
@@ -1404,20 +2166,20 @@ function createStyles(theme) {
     },
     retryButton: {
       marginTop: theme.spacing.sm,
-      minHeight: theme.components?.button?.height ?? theme.components?.input?.height ?? theme.spacing.xxl,
+      minHeight: 40,
       paddingHorizontal: theme.spacing.lg,
-      borderRadius: theme.radii.pill,
+      borderRadius: theme.radii?.pill ?? 20,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: theme.colors.primary,
     },
     retryText: {
-      color: theme.colors.onPrimary,
+      color: theme.colors.onPrimary || theme.colors.primaryTextOn,
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.semibold,
     },
     paginationFooter: {
-      paddingVertical: theme.spacing.xl,
+      paddingVertical: 20,
     },
   });
 }

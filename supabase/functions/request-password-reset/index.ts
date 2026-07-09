@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const PASSWORD_RESET_COOLDOWN_SECONDS = 60;
+const PASSWORD_RESET_CODE_TTL_SECONDS = 10 * 60;
 const inMemoryCooldownMap = (globalThis as any).__PWD_RESET_COOLDOWN_MAP__ || new Map<string, number>();
 (globalThis as any).__PWD_RESET_COOLDOWN_MAP__ = inMemoryCooldownMap;
 
@@ -240,7 +241,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return json({
         ok: true,
         cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
-        expires_in_seconds: 900,
+        expires_in_seconds: PASSWORD_RESET_CODE_TTL_SECONDS,
         message: 'Код отправлен на email',
       });
     }
@@ -275,7 +276,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
     return json({
       ok: true,
       cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
-      expires_in_seconds: Number(sendPayload?.expires_in_seconds) || 900,
+      expires_in_seconds: Number(sendPayload?.expires_in_seconds) || PASSWORD_RESET_CODE_TTL_SECONDS,
       message: 'Код отправлен на email',
     });
   } catch (error) {

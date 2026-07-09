@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
+import BillingScreen from '../../screens/billing/BillingScreen';
 
-export default function BillingRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../screens/billing/BillingScreen')}
-      titleKey="routes.billing/index"
-    />
-  );
-}
+export default BillingScreen;

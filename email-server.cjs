@@ -458,6 +458,31 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const DEFAULT_TRANSACTIONAL_FROM = '\u041c\u043e\u043d\u0438\u0442\u043e\u0440 <noreply@monitorapp.ru>';
+const DEFAULT_ENVELOPE_FROM = 'noreply@monitorapp.ru';
+const EMAIL_BRAND_NAME = String(process.env.EMAIL_BRAND_NAME || '\u041c\u043e\u043d\u0438\u0442\u043e\u0440').trim();
+
+function getRegistrationFromAddress() {
+  return String(process.env.REGISTRATION_SMTP_FROM || DEFAULT_TRANSACTIONAL_FROM).trim();
+}
+
+function getRegistrationEnvelopeFrom() {
+  const value = normalizeEmail(process.env.REGISTRATION_ENVELOPE_FROM || DEFAULT_ENVELOPE_FROM);
+  return isValidEmail(value) ? value : DEFAULT_ENVELOPE_FROM;
+}
+
+function getRegistrationCodeTtlMinutes() {
+  return Math.max(1, Math.ceil(REG_CODE_TTL_MS / (60 * 1000)));
+}
+
+function buildTransactionalHeaders(type) {
+  return {
+    'Auto-Submitted': 'auto-generated',
+    'X-Auto-Response-Suppress': 'All',
+    'X-MonitorApp-Email-Type': type,
+  };
+}
+
 const SUBSCRIPTION_EMAIL_TEXT = Object.freeze({
   ru: {
     subjects: {
@@ -844,22 +869,34 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
     await savePersistentRegistrationCode(entry);
 
     const isRecoveryPurpose = purpose === 'recovery';
-    const subject = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
+    const codeTtlMinutes = getRegistrationCodeTtlMinutes();
+    const emailType = isRecoveryPurpose ? 'password-recovery-code' : 'registration-code';
+    const subject = isRecoveryPurpose
+      ? `\u041a\u043e\u0434 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f \u0432 ${EMAIL_BRAND_NAME}`
+      : `\u041a\u043e\u0434 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f \u0432 ${EMAIL_BRAND_NAME}`;
     const verifyBaseUrl = String(
       isRecoveryPurpose
         ? (process.env.PASSWORD_RESET_VERIFY_URL || 'https://monitorapp.ru/set-password')
         : (process.env.REGISTRATION_VERIFY_URL || 'https://monitorapp.ru/verify-email'),
     ).trim();
     const verifyUrl = `${verifyBaseUrl}${verifyBaseUrl.includes('?') ? '&' : '?'}email=${encodeURIComponent(email)}`;
-    const heading = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
+    const heading = isRecoveryPurpose
+      ? '\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0434 \u0434\u043b\u044f \u0441\u043c\u0435\u043d\u044b \u043f\u0430\u0440\u043e\u043b\u044f'
+      : '\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0434 \u0434\u043b\u044f \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438';
     const description = isRecoveryPurpose
-      ? 'Чтобы установить новый пароль в сервисе <strong>Монитор</strong>, введите код ниже на странице восстановления.'
-      : 'Чтобы завершить регистрацию в сервисе <strong>Монитор</strong>, введите код ниже на странице подтверждения.';
+      ? `\u0427\u0442\u043e\u0431\u044b \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u043d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0432 \u0441\u0435\u0440\u0432\u0438\u0441\u0435 <strong>${EMAIL_BRAND_NAME}</strong>, \u0432\u0432\u0435\u0434\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u043a\u043e\u0434 \u043d\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f.`
+      : `\u0427\u0442\u043e\u0431\u044b \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044e \u0432 \u0441\u0435\u0440\u0432\u0438\u0441\u0435 <strong>${EMAIL_BRAND_NAME}</strong>, \u0432\u0432\u0435\u0434\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u043a\u043e\u0434 \u0432 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0438.`;
     const hint = isRecoveryPurpose
-      ? 'Код действует 15 минут. Если вы не запрашивали восстановление пароля, просто проигнорируйте это письмо.'
-      : 'Код действует 15 минут. Если вы не регистрировались в Монитор, просто проигнорируйте это письмо.';
-    const textPrefix = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
-    const actionLabel = isRecoveryPurpose ? 'Открыть страницу восстановления' : '';
+      ? `\u041a\u043e\u0434 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 ${codeTtlMinutes} \u043c\u0438\u043d\u0443\u0442. \u0415\u0441\u043b\u0438 \u0432\u044b \u043d\u0435 \u0437\u0430\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b\u0438 \u0441\u043c\u0435\u043d\u0443 \u043f\u0430\u0440\u043e\u043b\u044f, \u043f\u0440\u043e\u0441\u0442\u043e \u043f\u0440\u043e\u0438\u0433\u043d\u043e\u0440\u0438\u0440\u0443\u0439\u0442\u0435 \u044d\u0442\u043e \u043f\u0438\u0441\u044c\u043c\u043e.`
+      : `\u041a\u043e\u0434 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 ${codeTtlMinutes} \u043c\u0438\u043d\u0443\u0442. \u0415\u0441\u043b\u0438 \u0432\u044b \u043d\u0435 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043b\u0438\u0441\u044c \u0432 ${EMAIL_BRAND_NAME}, \u043f\u0440\u043e\u0441\u0442\u043e \u043f\u0440\u043e\u0438\u0433\u043d\u043e\u0440\u0438\u0440\u0443\u0439\u0442\u0435 \u044d\u0442\u043e \u043f\u0438\u0441\u044c\u043c\u043e.`;
+    const footer = `\u041f\u0438\u0441\u044c\u043c\u043e \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438, \u043e\u0442\u0432\u0435\u0447\u0430\u0442\u044c \u043d\u0430 \u043d\u0435\u0433\u043e \u043d\u0435 \u043d\u0443\u0436\u043d\u043e.`;
+    const codeLabel = '\u041a\u043e\u0434 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f';
+    const textPrefix = isRecoveryPurpose
+      ? '\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u0430\u0440\u043e\u043b\u044f'
+      : '\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435 email';
+    const actionLabel = isRecoveryPurpose
+      ? '\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f'
+      : '';
     const actionHtml = isRecoveryPurpose
       ? `
             <a href="${verifyUrl}" style="display:inline-block; background:#2563eb; color:#ffffff; text-decoration:none; font-weight:700; font-size:16px; line-height:1; border-radius:12px; padding:15px 20px;">
@@ -872,35 +909,40 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
       <div style="margin:0; padding:0; background:#f3f6fb; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
         <div style="max-width:600px; margin:0 auto; padding:24px 16px;">
           <div style="background:#ffffff; border:1px solid #e3e8f0; border-radius:18px; padding:28px;">
-            <h1 style="margin:0 0 14px; color:#0f1b34; font-size:46px; line-height:1.05; font-weight:900;">
+            <h1 style="margin:0 0 14px; color:#0f1b34; font-size:32px; line-height:1.15; font-weight:800;">
               ${heading}
             </h1>
             <p style="margin:0 0 16px; color:#33415c; font-size:16px; line-height:1.5;">
               ${description}
             </p>
             <div style="margin:16px 0 8px; color:#64748b; font-size:16px; line-height:1.4; font-weight:600;">
-              Код подтверждения
+              ${codeLabel}
             </div>
             <div style="margin:0 0 18px; border:1px dashed #9ec5ff; border-radius:14px; background:#f8fbff; padding:18px 14px; text-align:center;">
-              <span style="display:inline-block; color:#0f1b34; font-size:52px; line-height:1; letter-spacing:8px; font-weight:800;">${code}</span>
+              <span style="display:inline-block; color:#0f1b34; font-size:44px; line-height:1; letter-spacing:6px; font-weight:800;">${code}</span>
             </div>
             ${actionHtml}
             <p style="margin:18px 0 0; color:#64748b; font-size:14px; line-height:1.5;">
               ${hint}
             </p>
+            <p style="margin:14px 0 0; color:#94a3b8; font-size:12px; line-height:1.5;">
+              ${footer}
+            </p>
           </div>
         </div>
       </div>
     `;
-    const text = `${textPrefix}\n\nКод подтверждения: ${code}${actionText}\n\n${hint}`;
+    const text = `${textPrefix}\n\n${codeLabel}: ${code}${actionText}\n\n${hint}\n\n${footer}`;
 
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || 'MonitorApp <noreply@monitorapp.ru>',
+      from: getRegistrationFromAddress(),
+      envelope: { from: getRegistrationEnvelopeFrom(), to: email },
       replyTo: process.env.SMTP_REPLY_TO || 'support@monitorapp.ru',
       to: email,
       subject,
       html,
       text,
+      headers: buildTransactionalHeaders(emailType),
     });
 
     console.log(`[${new Date().toISOString()}] Registration code sent to ${maskEmailForLog(email)}: ${info.messageId}`);

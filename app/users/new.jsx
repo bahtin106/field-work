@@ -1,11 +1,3 @@
-import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
+import UserNewScreen from '../../screens/users/UserNewScreen';
 
-export default function UserNewRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../screens/users/UserNewScreen')}
-      titleKey="routes.users/new"
-    />
-  );
-}
-
+export default UserNewScreen;

@@ -157,8 +157,29 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
 
         const usersBefore = await tx`select count(*)::int as count from _target_users`;
 
-        // Ensure dependent order rows are removed before deleting referenced objects.
+        // Delete order media maps while their orders still exist. Their cleanup triggers
+        // write media_cleanup_queue.order_id, which is FK-protected by orders.
+        await tx`
+          do $do$
+          declare v_company_id uuid := (select id from _target_company limit 1);
+          begin
+            if to_regclass('public.finance_entry_media_external_map') is not null then
+              delete from public.finance_entry_media_external_map
+              where company_id = v_company_id;
+            end if;
+
+            if to_regclass('public.order_media_external_map') is not null then
+              delete from public.order_media_external_map
+              where company_id = v_company_id;
+            end if;
+          end
+          $do$
+        `;
+
+        // Orders reference client objects and users. Remove them after order media maps,
+        // but before the generic company/user cleanup loops.
         await tx`delete from public.orders where company_id = ${companyId}::uuid`;
+
         // Avoid FK breakage in feedback-attachment cleanup triggers by removing map rows first.
         await tx`
           delete from public.profile_media_external_map

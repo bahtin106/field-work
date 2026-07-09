@@ -4,9 +4,15 @@ import { useCallback, useEffect, useRef } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Image, InteractionManager, Keyboard, LogBox, Platform, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { enableFreeze } from 'react-native-screens';
 import { installDevWarnFilters } from '../src/utils/devWarnFilter';
 
 installDevWarnFilters();
+
+if (Platform.OS !== 'web' && !globalThis.__reactNativeScreensFreezeEnabled) {
+  enableFreeze(true);
+  globalThis.__reactNativeScreensFreezeEnabled = true;
+}
 
 LogBox.ignoreLogs([
   /No route named/,
@@ -69,6 +75,10 @@ function LastSeenTracker() {
 function BlurFocusedInputOnKeyboardHide() {
   useEffect(() => {
     if (Platform.OS === 'web') return undefined;
+    // Android can emit keyboardDidHide while switching between inputs with
+    // different keyboard modes (for example email -> password). Blurring the
+    // current input there closes the newly opened keyboard immediately.
+    if (Platform.OS === 'android') return undefined;
 
     const blurFocusedInput = () => {
       try {
@@ -98,6 +108,22 @@ const ACCESS_CHECK_MIN_GAP_MS = 1200;
 const ACCESS_BOOTSTRAP_DELAY_MS = 1800;
 const PUSH_BOOTSTRAP_DELAY_MS = 4500;
 const NOTIFICATION_LISTENERS_DELAY_MS = 2800;
+
+function isHuaweiLikeAndroidDevice() {
+  if (Platform.OS !== 'android') return false;
+  const constants = Platform.constants || {};
+  const identity = [
+    constants.Brand,
+    constants.Manufacturer,
+    constants.Model,
+    constants.Device,
+  ]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ');
+
+  return identity.includes('huawei') || identity.includes('honor');
+}
 
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
@@ -174,8 +200,17 @@ function RootLayoutInner() {
   const notificationIdsByOrderRef = useRef(new Map());
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
-  const isBlockedScreen = inAuthGroup && authScreen === 'blocked';
-  const rootSafeEdges = ['top', 'left', 'right'];
+  const normalizedPathname = String(pathname || '').trim().replace(/\/+$/, '') || '/';
+  const isAuthPathname =
+    normalizedPathname.startsWith('/(auth)') ||
+    /^\/(?:login|blocked|register|register-code|verify-email|set-password)(?:\/|$)/.test(normalizedPathname);
+  const inAuthFlow = inAuthGroup || isAuthPathname;
+  const isBlockedScreen =
+    (inAuthGroup && authScreen === 'blocked') ||
+    normalizedPathname === '/blocked' ||
+    normalizedPathname === '/(auth)/blocked';
+  // Some EMUI/HarmonyOS builds add a duplicated top inset with a non-translucent status bar.
+  const rootSafeEdges = isHuaweiLikeAndroidDevice() ? ['left', 'right'] : ['top', 'left', 'right'];
 
   const isSamePath = useCallback((targetPath) => {
     const current = String(pathname || '').trim().replace(/\/+$/, '') || '/';
@@ -243,12 +278,12 @@ function RootLayoutInner() {
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    if (inAuthGroup) {
+    if (inAuthFlow) {
       applyAndroidStatusBar(theme);
       return;
     }
     applyAndroidSystemBars(theme).catch(() => {});
-  }, [inAuthGroup, theme]);
+  }, [inAuthFlow, theme]);
 
   useEffect(() => {
     if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return undefined;
@@ -275,12 +310,12 @@ function RootLayoutInner() {
 
   useEffect(() => {
     if (isInitializing) return;
-    if (!isAuthenticated && !inAuthGroup) {
+    if (!isAuthenticated && !inAuthFlow && !isSamePath('/login') && !isSamePath('/(auth)/login')) {
       router.replace('/(auth)/login');
-    } else if (isAuthenticated && inAuthGroup && !isBlockedScreen) {
+    } else if (isAuthenticated && inAuthFlow && !isBlockedScreen && !isSamePath('/orders')) {
       router.replace('/orders');
     }
-  }, [inAuthGroup, isAuthenticated, isBlockedScreen, isInitializing, router]);
+  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
@@ -289,7 +324,7 @@ function RootLayoutInner() {
       if (isInitializing || !isAuthenticated || isBlockedScreen) return false;
 
       const current = String(pathname || '').trim();
-      if (!current || current === '/orders' || current === '/orders/' || current.startsWith('/(auth)')) {
+      if (!current || current === '/orders' || current === '/orders/' || inAuthFlow) {
         return false;
       }
 
@@ -301,7 +336,7 @@ function RootLayoutInner() {
     });
 
     return () => sub.remove();
-  }, [isAuthenticated, isBlockedScreen, isInitializing, pathname, router]);
+  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, pathname, router]);
 
   const loadOwnAccessProfile = useCallback(async (uid) => {
     if (!uid) return null;
@@ -923,14 +958,14 @@ function RootLayoutInner() {
             {isAuthenticated && !isBlockedScreen ? <OfflineStatusBanner /> : null}
             <View style={{ flex: 1, minHeight: 0 }}>
               <Stack
-                initialRouteName={isAuthenticated ? 'orders' : '(auth)'}
+                initialRouteName="(auth)"
                 screenOptions={{
                   headerShown: false,
                   animation: 'none',
                   animationTypeForReplace: 'push',
                   gestureEnabled: true,
                   fullScreenGestureEnabled: true,
-                  freezeOnBlur: false,
+                  freezeOnBlur: true,
                   contentStyle: { backgroundColor: theme.colors.background },
                 }}
               >
@@ -947,6 +982,10 @@ function RootLayoutInner() {
                 <Stack.Screen
                   name="company_settings/sections/telegram-bot"
                   options={{ title: t('routes.company_settings/sections/telegram-bot') }}
+                />
+                <Stack.Screen
+                  name="company_settings/sections/max-bot"
+                  options={{ title: t('routes.company_settings/sections/max-bot') }}
                 />
                 <Stack.Screen
                   name="company_settings/sections/order-feed-fields"

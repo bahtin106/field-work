@@ -41,6 +41,10 @@ import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
 import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
 import { financeEntryMediaStorage, financeEntryYandexMedia } from '../../lib/financeEntryMedia';
 import { orderMediaStorage } from '../../lib/orderMediaStorage';
+import {
+  clearActiveNotificationOrderId,
+  setActiveNotificationOrderId,
+} from '../../lib/notificationForegroundState';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
 import { mapStatusToDb } from '../../lib/orderFilters';
@@ -553,6 +557,15 @@ function OrderDetailsContent() {
     }
     return normalizeOrderRouteId(last);
   }, [idParam, pathname]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) return undefined;
+      setActiveNotificationOrderId(id);
+      return () => clearActiveNotificationOrderId(id);
+    }, [id]),
+  );
+
   const returnTo = useMemo(() => {
     try {
       return Reflect.has(__params, 'returnTo') ? String(__params.returnTo) : '/orders/my-orders';

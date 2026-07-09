@@ -214,6 +214,12 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
       return err('Profile save failed', 400);
     }
 
+    const { data: savedProfile } = await sb
+      .from('profiles')
+      .select('license_state, blocked_reason')
+      .eq('id', invitedUserId)
+      .maybeSingle();
+
     const emailRes = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
       method: 'POST',
       headers: emailServiceHeaders(),
@@ -237,7 +243,16 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
     }
 
     return Response.json(
-      { success: true, user_id: invitedUserId, email, email_sent: true, message: 'Invitation sent' },
+      {
+        success: true,
+        user_id: invitedUserId,
+        email,
+        email_sent: true,
+        message: 'Invitation sent',
+        license_state: savedProfile?.license_state || 'active',
+        blocked_reason: savedProfile?.blocked_reason || null,
+        blocked_by_license: savedProfile?.license_state === 'blocked_by_license',
+      },
       { headers: corsHeaders },
     );
   } catch (e: any) {

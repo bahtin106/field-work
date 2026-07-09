@@ -164,16 +164,9 @@ function LoginScreenContent() {
     loading,
     canSubmit,
     handleLogin,
-    reset,
     accessBlock,
     clearAccessBlock,
   } = useAuthLogin();
-
-  // Очищаем форму при входе на экран, включая возврат после logout.
-  useEffect(() => {
-    if (!isFocused) return;
-    reset();
-  }, [isFocused, reset]);
 
   const passwordFieldRef = useRef(null);
   const [recoverModalVisible, setRecoverModalVisible] = useState(false);
@@ -321,8 +314,9 @@ function LoginScreenContent() {
         throw new Error(String(data?.message || 'reset_failed'));
       }
 
+      const cooldownSeconds = Math.max(1, Number(data?.cooldown_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
       setRecoverSentOnce(true);
-      setRecoverCooldownUntil(Date.now() + PASSWORD_RESET_COOLDOWN_SECONDS * 1000);
+      setRecoverCooldownUntil(Date.now() + cooldownSeconds * 1000);
       setRecoverFeedback({ type: 'success', message: t('login_recover_sent_hint') });
     } catch (e) {
       const message = String(e?.message || '').trim() || t('login_recover_send_error');

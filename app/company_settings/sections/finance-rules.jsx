@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../../components/layout/LazyRouteScreen';
+import FinanceRulesScreen from '../../../screens/company_settings/sections/FinanceRulesScreen';
 
-export default function FinanceRulesRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../../screens/company_settings/sections/FinanceRulesScreen')}
-      titleKey="settings_sections_finance_rules_title"
-    />
-  );
-}
+export default FinanceRulesScreen;

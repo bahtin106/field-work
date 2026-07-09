@@ -9,6 +9,8 @@ const SUPABASE_URL =
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const PUSH_WORKER_KEY = Deno.env.get('PUSH_WORKER_KEY') || '';
 const PUSH_ANDROID_CHANNEL_ID = Deno.env.get('PUSH_ANDROID_CHANNEL_ID') || 'app-notify';
+const PUSH_ANDROID_ICON = Deno.env.get('PUSH_ANDROID_ICON') || '';
+const PUSH_ANDROID_COLOR = Deno.env.get('PUSH_ANDROID_COLOR') || '#0A84FF';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -87,6 +89,12 @@ type NotificationPrefs = {
 type PushTokenRow = {
   user_id: string;
   token: string;
+};
+
+type OrderNotificationContext = {
+  assigned_to: string | null;
+  created_by_user_id: string | null;
+  updated_by: string | null;
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -263,6 +271,27 @@ async function enqueueReminders() {
   }
 }
 
+async function fetchOrderNotificationContext(orderId: string): Promise<OrderNotificationContext | null> {
+  const normalizedOrderId = String(orderId || '').trim();
+  if (!normalizedOrderId) return null;
+  try {
+    const { data, error } = await sb
+      .from('orders')
+      .select('assigned_to, created_by_user_id, updated_by')
+      .eq('id', normalizedOrderId)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.warn('fetchOrderNotificationContext error:', error.message);
+      return null;
+    }
+    return (data || null) as OrderNotificationContext | null;
+  } catch (error: any) {
+    console.warn('fetchOrderNotificationContext failed:', error?.message || error);
+    return null;
+  }
+}
+
 async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
   if (event.recipient_user_id) {
     const recipient = String(event.recipient_user_id || '').trim();
@@ -271,10 +300,24 @@ async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
     // Do not notify user about assignment action they performed themselves.
     if (event.event_type === 'assigned_new_order') {
       const actorId = normalizedId((event.payload as any)?.actor_user_id);
+      const acceptedById = normalizedId((event.payload as any)?.accepted_by_user_id);
       const creatorId = normalizedId((event.payload as any)?.creator_user_id);
       const updatedById = normalizedId((event.payload as any)?.updated_by_user_id);
       const recipientId = normalizedId(recipient);
-      if (recipientId && (recipientId === actorId || recipientId === creatorId || recipientId === updatedById)) {
+      if (
+        recipientId &&
+        (recipientId === actorId ||
+          recipientId === acceptedById ||
+          recipientId === creatorId ||
+          recipientId === updatedById)
+      ) {
+        return [];
+      }
+
+      const orderContext = await fetchOrderNotificationContext(event.order_id);
+      const orderUpdatedById = normalizedId(orderContext?.updated_by);
+      const orderAssignedToId = normalizedId(orderContext?.assigned_to);
+      if (recipientId && recipientId === orderUpdatedById && (!orderAssignedToId || recipientId === orderAssignedToId)) {
         return [];
       }
     }
@@ -292,18 +335,11 @@ async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
   excluded.add(normalizedId((event.payload as any)?.actor_user_id));
   excluded.add(normalizedId((event.payload as any)?.updated_by_user_id));
 
-  try {
-    const { data: orderRow, error: orderError } = await sb
-      .from('orders')
-      .select('created_by_user_id, updated_by')
-      .eq('id', event.order_id)
-      .limit(1)
-      .maybeSingle();
-    if (!orderError && orderRow) {
-      excluded.add(normalizedId((orderRow as any).created_by_user_id));
-      excluded.add(normalizedId((orderRow as any).updated_by));
-    }
-  } catch {}
+  const orderRow = await fetchOrderNotificationContext(event.order_id);
+  if (orderRow) {
+    excluded.add(normalizedId(orderRow.created_by_user_id));
+    excluded.add(normalizedId(orderRow.updated_by));
+  }
   excluded.delete('');
 
   return (data ?? [])
@@ -446,6 +482,7 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
   const text = await getEventText(event);
   const feedbackId = String((event.payload as any)?.feedback_id || event.order_id || '').trim();
   const isSupportFeedback = event.event_type === 'support_feedback_new';
+  const androidIcon = String(PUSH_ANDROID_ICON || '').trim();
   const messages = valid.map((row) => ({
     to: row.token,
     title: text.title,
@@ -472,6 +509,8 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
         },
     sound: 'default' as const,
     channelId: PUSH_ANDROID_CHANNEL_ID,
+    ...(androidIcon ? { icon: androidIcon } : {}),
+    color: PUSH_ANDROID_COLOR,
     priority: 'high' as const,
     ttl: 60,
     expiration: Math.floor(Date.now() / 1000) + 60,

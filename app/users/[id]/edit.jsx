@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../../components/layout/LazyRouteScreen';
+import UserEditScreen from '../../../screens/users/[id]/UserEditScreen';
 
-export default function UserEditRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../../screens/users/[id]/UserEditScreen')}
-      titleKey="routes.users/[id]/edit"
-    />
-  );
-}
+export default UserEditScreen;

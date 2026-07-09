@@ -13,7 +13,7 @@ export default function AuthLayout() {
           animationTypeForReplace: 'push',
           gestureEnabled: true,
           fullScreenGestureEnabled: true,
-          freezeOnBlur: false,
+          freezeOnBlur: true,
         }}
       >
         <Stack.Screen name="login" />

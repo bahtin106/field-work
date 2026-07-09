@@ -1,11 +1,3 @@
-import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
-import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
+import OrderDetailsScreen from '../../screens/orders/OrderDetailsScreen';
 
-export default function OrderDetailsRoute() {
-  return (
-    <LazyRouteScreen
-      load={preloadOrderDetailsScreen}
-      titleKey="routes.orders/[id]"
-    />
-  );
-}
+export default OrderDetailsScreen;

@@ -16,12 +16,13 @@ import {
   Text,
   View,
 } from 'react-native';
-import { t } from '../../src/i18n';
+import { getLocale, t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { ROLE_LABELS } from '../../constants/roles';
 import Button from '../ui/Button';
 import TextField from '../ui/TextField';
+import { DateTimeModal } from '../ui/modals';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const EMPTY_ARRAY = [];
@@ -78,6 +79,7 @@ export default function FiltersPanel({
 }) {
   const { theme } = useTheme();
   useTranslation();
+  const localeTag = getLocale?.() || 'ru';
 
   const isAssignmentMode = mode === 'assignment' && assignment;
   const isObjectsMode = mode === 'objects';
@@ -176,6 +178,8 @@ export default function FiltersPanel({
       ? normalizeSelectionIds(assignment?.selectedIds)
       : (normalizeSelectionId(assignment?.selectedId ?? null) ? [normalizeSelectionId(assignment?.selectedId ?? null)] : []),
   );
+  const [datePickerField, setDatePickerField] = useState(null);
+  const [timePickerField, setTimePickerField] = useState(null);
 
   // Re-init draft and baseline every time panel opens
   useEffect(() => {
@@ -426,6 +430,8 @@ export default function FiltersPanel({
   useEffect(() => {
     setSearchQuery('');
     setInlineSearchQuery('');
+    setDatePickerField(null);
+    setTimePickerField(null);
   }, [activeCat, visible, isAssignmentMode]);
 
   useEffect(() => {
@@ -597,23 +603,41 @@ export default function FiltersPanel({
       return { ...prev, [key]: next };
     });
   };
-  const normalizeDateInput = (text) => {
-    const raw = String(text || '').trim();
-    if (!raw) return null;
-    const cleaned = raw.replace(/\./g, '-').replace(/\//g, '-');
-    const match = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!match) return raw;
-    return `${match[1]}-${match[2]}-${match[3]}`;
+  const pad2 = (value) => String(value).padStart(2, '0');
+  const formatDateValue = (date) =>
+    `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const formatTimeValue = (date) => `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const parseDateValue = (value) => {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   };
-  const normalizeTimeInput = (text) => {
-    const raw = String(text || '').trim();
-    if (!raw) return null;
-    const match = raw.match(/^(\d{1,2}):(\d{2})$/);
-    if (!match) return raw;
-    const hh = Math.max(0, Math.min(23, Number(match[1]) || 0));
-    const mm = Math.max(0, Math.min(59, Number(match[2]) || 0));
-    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  const parseTimeValue = (value) => {
+    const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const hours = Math.max(0, Math.min(23, Number(match[1]) || 0));
+    const minutes = Math.max(0, Math.min(59, Number(match[2]) || 0));
+    const parsed = new Date();
+    parsed.setHours(hours, minutes, 0, 0);
+    return parsed;
   };
+  const formatDateLabel = (value) => {
+    const parsed = parseDateValue(value);
+    if (!parsed) return '';
+    return parsed.toLocaleDateString(localeTag, {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
+  };
+  const formatTimeLabel = (value) => {
+    const parsed = parseTimeValue(value);
+    if (!parsed) return '';
+    return parsed.toLocaleTimeString(localeTag, { hour: '2-digit', minute: '2-digit' });
+  };
+  const getDatePickerInitial = () => parseDateValue(draft[datePickerField]) || new Date();
+  const getTimePickerInitial = () => parseTimeValue(draft[timePickerField]) || new Date();
   const normalizeNumberInput = (text) =>
     String(text || '')
       .replace(/[^0-9.,]/g, '')
@@ -899,6 +923,33 @@ export default function FiltersPanel({
           />
         </View>
       </View>
+    );
+  };
+
+  const renderDateTimeFilterField = ({ field, value, placeholder, icon, onPress }) => {
+    const hasValue = Boolean(value);
+    return (
+      <TextField
+        value={value || ''}
+        placeholder={placeholder}
+        pressable
+        onPress={onPress}
+        hideSeparator
+        rightSlot={
+          hasValue ? (
+            <Pressable
+              onPress={() => setDraft((prev) => ({ ...prev, [field]: null }))}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t('common_clear')}
+            >
+              <Feather name="x" size={18} color={c.textSecondary} />
+            </Pressable>
+          ) : (
+            <Feather name={icon} size={18} color={c.textSecondary} />
+          )
+        }
+      />
     );
   };
 
@@ -1437,43 +1488,39 @@ export default function FiltersPanel({
       case 'orders_departure_date':
         return (
           <View style={{ paddingHorizontal: sz.md, paddingTop: sz.sm, gap: sz.sm }}>
-            <TextField
-              value={draft.departureDateFrom || ''}
-              onChangeText={(text) =>
-                setDraft((d) => ({ ...d, departureDateFrom: normalizeDateInput(text) }))
-              }
-              placeholder={t('common_from')}
-              hideSeparator
-            />
-            <TextField
-              value={draft.departureDateTo || ''}
-              onChangeText={(text) =>
-                setDraft((d) => ({ ...d, departureDateTo: normalizeDateInput(text) }))
-              }
-              placeholder={t('common_to')}
-              hideSeparator
-            />
+            {renderDateTimeFilterField({
+              field: 'departureDateFrom',
+              value: formatDateLabel(draft.departureDateFrom),
+              placeholder: t('orders_filter_departure_date_from_placeholder'),
+              icon: 'calendar',
+              onPress: () => setDatePickerField('departureDateFrom'),
+            })}
+            {renderDateTimeFilterField({
+              field: 'departureDateTo',
+              value: formatDateLabel(draft.departureDateTo),
+              placeholder: t('orders_filter_departure_date_to_placeholder'),
+              icon: 'calendar',
+              onPress: () => setDatePickerField('departureDateTo'),
+            })}
           </View>
         );
       case 'orders_departure_time':
         return (
           <View style={{ paddingHorizontal: sz.md, paddingTop: sz.sm, gap: sz.sm }}>
-            <TextField
-              value={draft.departureTimeFrom || ''}
-              onChangeText={(text) =>
-                setDraft((d) => ({ ...d, departureTimeFrom: normalizeTimeInput(text) }))
-              }
-              placeholder={t('common_from')}
-              hideSeparator
-            />
-            <TextField
-              value={draft.departureTimeTo || ''}
-              onChangeText={(text) =>
-                setDraft((d) => ({ ...d, departureTimeTo: normalizeTimeInput(text) }))
-              }
-              placeholder={t('common_to')}
-              hideSeparator
-            />
+            {renderDateTimeFilterField({
+              field: 'departureTimeFrom',
+              value: formatTimeLabel(draft.departureTimeFrom),
+              placeholder: t('orders_filter_departure_time_from_placeholder'),
+              icon: 'clock',
+              onPress: () => setTimePickerField('departureTimeFrom'),
+            })}
+            {renderDateTimeFilterField({
+              field: 'departureTimeTo',
+              value: formatTimeLabel(draft.departureTimeTo),
+              placeholder: t('orders_filter_departure_time_to_placeholder'),
+              icon: 'clock',
+              onPress: () => setTimePickerField('departureTimeTo'),
+            })}
           </View>
         );
       case 'orders_amount':
@@ -1905,6 +1952,36 @@ export default function FiltersPanel({
           </View>
         )}
       </Animated.View>
+
+      <DateTimeModal
+        visible={Boolean(datePickerField)}
+        initial={getDatePickerInitial()}
+        mode="date"
+        allowFutureDates
+        onApply={(selected) => {
+          if (!datePickerField || !selected) return;
+          setDraft((prev) => ({
+            ...prev,
+            [datePickerField]: formatDateValue(selected),
+          }));
+        }}
+        onClose={() => setDatePickerField(null)}
+      />
+
+      <DateTimeModal
+        visible={Boolean(timePickerField)}
+        initial={getTimePickerInitial()}
+        mode="time"
+        minuteStep={1}
+        onApply={(selected) => {
+          if (!timePickerField || !selected) return;
+          setDraft((prev) => ({
+            ...prev,
+            [timePickerField]: formatTimeValue(selected),
+          }));
+        }}
+        onClose={() => setTimePickerField(null)}
+      />
     </View>
   );
 }

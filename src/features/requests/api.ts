@@ -79,6 +79,27 @@ function excludeFeedStatuses(query: any) {
   return query.not('status', 'in', `(${encoded})`);
 }
 
+function resolveStatusFilterValues(statuses: any = []) {
+  const source = Array.isArray(statuses)
+    ? statuses
+    : String(statuses || '')
+        .split(',')
+        .map((item) => item.trim());
+  const values = source.flatMap((statusKey) => {
+    const aliases = getStatusDbAliases(statusKey);
+    if (aliases.length) return aliases;
+    const mapped = mapStatusToDb(statusKey);
+    return mapped ? [mapped] : [];
+  });
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function applyStatusFilterValues(query: any, statusValues: string[] = []) {
+  if (!statusValues.length) return query;
+  if (statusValues.length === 1) return query.eq('status', statusValues[0]);
+  return query.in('status', statusValues);
+}
+
 function buildClientDisplayName(client) {
   if (!client || typeof client !== 'object') return '';
   const fromParts = [
@@ -394,6 +415,7 @@ export async function listRequests(params: any = {}) {
     const {
       scope = 'all',
       status = 'all',
+      statuses = [],
       executorId = null,
       departmentId = null,
       workTypeIds = [],
@@ -411,6 +433,7 @@ export async function listRequests(params: any = {}) {
     } = params;
 
     const isFeedRequest = status === 'feed';
+    const extraStatusValues = resolveStatusFilterValues(statuses);
     let query = supabase
       .from(isFeedRequest ? 'orders_secure_v2' : 'orders')
       .select(isFeedRequest ? SECURE_ORDER_SELECT_COLUMNS : ORDER_SELECT_COLUMNS);
@@ -447,6 +470,7 @@ export async function listRequests(params: any = {}) {
       }
       if (executorId) query = query.eq('assigned_to', executorId);
     }
+    query = applyStatusFilterValues(query, extraStatusValues);
 
     if (Array.isArray(workTypeIds) && workTypeIds.length) {
       const ids = await getOrderIdsByWorkTypes(workTypeIds);
@@ -510,6 +534,7 @@ export async function listRequests(params: any = {}) {
         }
         if (executorId) fallbackQuery = fallbackQuery.eq('assigned_to', executorId);
       }
+      fallbackQuery = applyStatusFilterValues(fallbackQuery, extraStatusValues);
 
 
       if (Array.isArray(workTypeIds) && workTypeIds.length) {

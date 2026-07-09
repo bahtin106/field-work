@@ -1,10 +1,3 @@
-import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
+import CreateOrderScreen from '../../screens/orders/CreateOrderScreen';
 
-export default function CreateOrderRoute() {
-  return (
-    <LazyRouteScreen
-      load={() => import('../../screens/orders/CreateOrderScreen')}
-      titleKey="routes.orders/create-order"
-    />
-  );
-}
+export default CreateOrderScreen;
