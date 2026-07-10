@@ -3,7 +3,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -32,6 +32,7 @@ import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/mo
 import QuickPreviewModal from '../../components/ui/modals/QuickPreviewModal';
 import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
 import { usePermissions } from '../../lib/permissions';
 import { formatPersonName } from '../../lib/personName';
@@ -266,6 +267,7 @@ function CreateOrderContent() {
   const { t } = useTranslation();
   const { profile, user } = useAuthContext();
   const queryClient = useQueryClient();
+  const navigation = useNavigation();
   const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin =
     String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
@@ -281,8 +283,6 @@ function CreateOrderContent() {
   const scrollRef = useRef(null);
   const dateFieldRef = useRef(null);
   const timeFieldRef = useRef(null);
-  const fieldRefs = useRef({});
-  const fieldContainerRefs = useRef({});
 
   const [schema, setSchema] = useState({ context: 'create', fields: [] });
   const [form, setForm] = useState({});
@@ -344,6 +344,7 @@ function CreateOrderContent() {
   const [draftRestoreVisible, setDraftRestoreVisible] = useState(false);
   const [savedDraft, setSavedDraft] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
+  const statusSystem = useCompanyOrderStatuses(companyId);
   const { departments } = useDepartmentsHook({
     companyId,
     enabled: !!companyId,
@@ -394,6 +395,7 @@ function CreateOrderContent() {
   );
 
   const intentionalExitRef = useRef(false);
+  const pendingNavigationActionRef = useRef(null);
   const autoTitleRef = useRef('');
   const lastAutoPhoneRef = useRef({ phone: '' });
   const clientFlowKeyRef = useRef(
@@ -416,6 +418,12 @@ function CreateOrderContent() {
   const setField = useCallback((key, val) => setForm((s) => ({ ...s, [key]: val })), []);
   const effectiveAssigneeId = isSoloAdmin ? soloAdminUserId : assigneeId;
   const effectiveToFeed = isSoloAdmin ? false : toFeed;
+  const orderStatusForCreation = useMemo(() => {
+    if (!statusSystem.isEnabled) {
+      return effectiveToFeed ? t('order_status_in_feed') : t('order_status_new');
+    }
+    return effectiveToFeed && statusSystem.feedEnabled ? 'feed' : 'new';
+  }, [effectiveToFeed, statusSystem.feedEnabled, statusSystem.isEnabled, t]);
   const orderFieldSettings = useMemo(
     () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
     [orderFieldSettingsData],
@@ -495,12 +503,27 @@ function CreateOrderContent() {
     [objectFieldsByKey],
   );
 
-  const DRAFT_KEY = 'draft_create_order';
+  const LEGACY_DRAFT_KEY = 'draft_create_order';
+  const draftScope = useMemo(() => {
+    const ownerId = String(user?.id || '').trim();
+    const scopedCompanyId = String(companyId || '').trim();
+    if (!ownerId || !scopedCompanyId) return null;
+
+    return {
+      ownerId,
+      companyId: scopedCompanyId,
+      storageKey: ['draft_create_order', 'v2', ownerId, scopedCompanyId].join(':'),
+    };
+  }, [companyId, user?.id]);
 
   // Persist unfinished order form locally.
   const saveDraft = useCallback(async () => {
+    if (!draftScope) return;
     try {
       const draft = {
+        version: 2,
+        ownerId: draftScope.ownerId,
+        companyId: draftScope.companyId,
         form,
         description,
         departureDate: departureDate?.toISOString(),
@@ -519,7 +542,7 @@ function CreateOrderContent() {
         toFeed,
         timestamp: Date.now(),
       };
-      await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+      await AsyncStorage.setItem(draftScope.storageKey, JSON.stringify(draft));
     } catch (e) {
       console.warn('[CreateOrder] Save draft failed:', e);
     }
@@ -540,33 +563,55 @@ function CreateOrderContent() {
     phoneSourceId,
     urgent,
     toFeed,
+    draftScope,
   ]);
 
   // Restore a saved local draft if it exists.
   const loadDraft = useCallback(async () => {
+    if (!draftScope) return null;
     try {
-      const json = await AsyncStorage.getItem(DRAFT_KEY);
+      // The previous unscoped key cannot be attributed safely, so never offer
+      // it to another account after upgrading to scoped drafts.
+      await AsyncStorage.removeItem(LEGACY_DRAFT_KEY);
+
+      const json = await AsyncStorage.getItem(draftScope.storageKey);
       if (!json) return null;
       const draft = JSON.parse(json);
+      if (
+        draft?.version !== 2 ||
+        String(draft?.ownerId || '') !== draftScope.ownerId ||
+        String(draft?.companyId || '') !== draftScope.companyId
+      ) {
+        await AsyncStorage.removeItem(draftScope.storageKey);
+        return null;
+      }
       return draft;
     } catch (e) {
       console.warn('[CreateOrder] Load draft failed:', e);
       return null;
     }
-  }, []);
+  }, [draftScope]);
 
   // Remove the local draft after successful submit or explicit discard.
   const deleteDraft = useCallback(async () => {
+    if (!draftScope) return;
     try {
-      await AsyncStorage.removeItem(DRAFT_KEY);
+      await AsyncStorage.removeItem(draftScope.storageKey);
     } catch (e) {
       console.warn('[CreateOrder] Delete draft failed:', e);
     }
-  }, []);
+  }, [draftScope]);
 
   // Restore form state from a saved local draft.
   const restoreDraft = useCallback((draft) => {
-    if (!draft) return;
+    if (
+      !draft ||
+      !draftScope ||
+      String(draft?.ownerId || '') !== draftScope.ownerId ||
+      String(draft?.companyId || '') !== draftScope.companyId
+    ) {
+      return;
+    }
     const draftForm = draft.form || {};
     setForm({ ...draftForm });
     setDescription(draft.description || '');
@@ -585,7 +630,7 @@ function CreateOrderContent() {
     setPhoneSourceId(normalizePhoneSourceId(draft.phoneSourceId));
     setUrgent(draft.urgent || false);
     setToFeed(isSoloAdmin ? false : draft.toFeed || false);
-  }, [isSoloAdmin, soloAdminUserId]);
+  }, [draftScope, isSoloAdmin, soloAdminUserId]);
 
   useEffect(() => {
     if (!isSoloAdmin) return;
@@ -602,6 +647,11 @@ function CreateOrderContent() {
   useEffect(() => {
     clearBanner();
   }, [clearBanner]);
+
+  useEffect(() => {
+    setSavedDraft(null);
+    setDraftRestoreVisible(false);
+  }, [draftScope?.storageKey]);
 
   const shouldShowError = useCallback(
     (field) => submittedAttempt || !!touched[field],
@@ -663,6 +713,7 @@ function CreateOrderContent() {
 
   const handleCancelPress = useCallback(() => {
     if (isSubmitting) return;
+    pendingNavigationActionRef.current = null;
     // Show discard confirmation only when there are meaningful edits.
     if (hasChanges()) {
       setCancelVisible(true);
@@ -675,8 +726,24 @@ function CreateOrderContent() {
   const confirmCancel = useCallback(() => {
     intentionalExitRef.current = true;
     setCancelVisible(false);
+    const pendingAction = pendingNavigationActionRef.current;
+    pendingNavigationActionRef.current = null;
+    if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
+      navigation.dispatch(pendingAction);
+      return;
+    }
     router.back();
-  }, []);
+  }, [navigation]);
+
+  useEffect(() => {
+    const subscription = navigation.addListener('beforeRemove', (event) => {
+      if (intentionalExitRef.current || !hasChanges()) return;
+      event.preventDefault();
+      pendingNavigationActionRef.current = event?.data?.action || null;
+      setCancelVisible(true);
+    });
+    return subscription;
+  }, [hasChanges, navigation]);
 
   const scrollToHandle = useCallback((targetRef) => {
     if (!scrollRef.current || !targetRef.current) return;
@@ -692,69 +759,6 @@ function CreateOrderContent() {
       },
     );
   }, []);
-
-  const setFieldContainerRef = useCallback((key, node) => {
-    if (!key) return;
-    if (node) {
-      fieldContainerRefs.current[key] = node;
-      return;
-    }
-    delete fieldContainerRefs.current[key];
-  }, []);
-
-  const focusField = useCallback(
-    (key) => {
-      const containerRef = fieldContainerRefs.current[key];
-      if (containerRef) {
-        scrollToHandle({ current: containerRef });
-      }
-      const ref = fieldRefs.current[key];
-      if (ref && typeof ref.focus === 'function') {
-        ref.focus();
-      }
-      if (!containerRef && ref) {
-        scrollToHandle({ current: ref });
-        return;
-      }
-      if (containerRef) {
-        return;
-      }
-      if (key === 'time_window_start') {
-        scrollToHandle(dateFieldRef);
-      } else if (key === 'departure_time') {
-        scrollToHandle(timeFieldRef);
-      } else if (key === 'assigned_to') {
-        scrollToHandle(dateFieldRef);
-      }
-    },
-    [scrollToHandle],
-  );
-
-  const renderedFieldOrder = useMemo(
-    () => [
-      ...orderedMainFieldKeys,
-      ...orderedCustomerFieldKeys,
-      ...orderedPlanningFieldKeys,
-    ],
-    [orderedCustomerFieldKeys, orderedMainFieldKeys, orderedPlanningFieldKeys],
-  );
-
-  const scrollToFirstFieldError = useCallback(
-    (errors, fallbackKeys = []) => {
-      const errorKeys = Object.keys(errors || {});
-      if (!errorKeys.length) return;
-
-      const errorSet = new Set(errorKeys);
-      const orderedKey =
-        renderedFieldOrder.find((fieldKey) => errorSet.has(fieldKey)) ||
-        fallbackKeys.find((fieldKey) => errorSet.has(fieldKey)) ||
-        errorKeys[0];
-      if (!orderedKey) return;
-
-      setTimeout(() => focusField(orderedKey), 0);
-    },
-    [focusField, renderedFieldOrder],
-  );
 
   const normalizePhone = useCallback((val) => toE164MobilePhoneOrNull(val), []);
   const hasDepartureTimeValue = useCallback(
@@ -974,7 +978,6 @@ function CreateOrderContent() {
         nextErrors[k] = { message: requiredMsg };
       });
       setFieldErrors(nextErrors);
-      scrollToFirstFieldError(nextErrors, reqCheck.missingKeys || []);
       return;
     }
 
@@ -1003,7 +1006,6 @@ function CreateOrderContent() {
     }
     if (Object.keys(nextErrors).length) {
       setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
-      scrollToFirstFieldError(nextErrors);
       return;
     }
 
@@ -1017,7 +1019,6 @@ function CreateOrderContent() {
           ...prev,
           ...phoneError,
         }));
-        scrollToFirstFieldError(phoneError);
         return;
       }
     }
@@ -1040,7 +1041,6 @@ function CreateOrderContent() {
           ...workTypeError,
         }));
         setWorkTypeId(null);
-        scrollToFirstFieldError(workTypeError);
         return;
       }
     }
@@ -1052,7 +1052,6 @@ function CreateOrderContent() {
         ...prev,
         ...clientError,
       }));
-      scrollToFirstFieldError(clientError);
       return;
     }
 
@@ -1067,7 +1066,6 @@ function CreateOrderContent() {
         ...prev,
         ...objectError,
       }));
-      scrollToFirstFieldError(objectError);
       return;
     }
 
@@ -1079,7 +1077,6 @@ function CreateOrderContent() {
         ...prev,
         ...clientError,
       }));
-      scrollToFirstFieldError(clientError);
       return;
     }
 
@@ -1156,13 +1153,14 @@ function CreateOrderContent() {
       comment: description,
       client_id: selectedClientId || null,
       object_id: resolvedObjectId || null,
+      phone: phoneFormatted || null,
       address_mode: resolvedObjectId ? 'object' : 'custom',
       ...toOrderAddressPatch(resolvedAddressDraft),
       assigned_to: effectiveToFeed ? null : effectiveAssigneeId,
       time_window_start: formatDateOnlyForStorage(departureDate),
       time_window_end: isDepartureRange ? formatDateOnlyForStorage(departureEndDate) : null,
       departure_time: formatTimeForStorage(departureTime),
-      status: effectiveToFeed ? t('order_status_in_feed') : t('order_status_new'),
+      status: orderStatusForCreation,
       urgent,
       currency: companySettings?.currency ?? null,
       creation_source: 'app',
@@ -1180,7 +1178,6 @@ function CreateOrderContent() {
           ...prev,
           ...workTypeError,
         }));
-        scrollToFirstFieldError(workTypeError);
         return;
       }
       const normalized = normalizeError(error, { t });
@@ -1245,7 +1242,6 @@ function CreateOrderContent() {
     requiredMsg,
     showBanner,
     showSuccessToast,
-    scrollToFirstFieldError,
     t,
     deleteDraft,
     createClientObjectMutation,
@@ -1260,6 +1256,7 @@ function CreateOrderContent() {
     parseDecimalOrNull,
     isOrderFinanceEnabled,
     queryClient,
+    orderStatusForCreation,
   ]);
 
   useFocusEffect(
@@ -1388,9 +1385,6 @@ function CreateOrderContent() {
       return (
         <>
           <TextField
-            ref={(r) => {
-              if (fieldKey) fieldRefs.current[fieldKey] = r;
-            }}
             label={withRequiredLabel(label, required)}
             placeholder={placeholder || label}
             value={value}
@@ -1961,6 +1955,7 @@ function CreateOrderContent() {
                     <ClearButton
                       onPress={() => {
                         setDepartureDate(null);
+                        setDepartureTime(null);
                         setDepartureEndDate(null);
                         setIsDepartureRange(false);
                       }}
@@ -2013,16 +2008,19 @@ function CreateOrderContent() {
                   isFieldRequired('departure_time'),
                 )}
                 value={
-                  hasDepartureTimeValue(departureTime)
+                  departureDate && hasDepartureTimeValue(departureTime)
                     ? formatTime(departureTime)
-                    : t('create_order_placeholder_time')
+                    : departureDate
+                      ? t('create_order_placeholder_time')
+                      : t('create_order_placeholder_time_disabled')
                 }
                 pressable
+                disabled={!departureDate}
                 style={formStyles.field}
                 ref={timeFieldRef}
                 error={shouldShowError('departure_time') && fieldErrors?.departure_time ? 'invalid' : undefined}
                 rightSlot={
-                  hasDepartureTimeValue(departureTime) ? (
+                  departureDate && hasDepartureTimeValue(departureTime) ? (
                     <ClearButton
                       onPress={() => {
                         setDepartureTime(null);
@@ -2847,7 +2845,7 @@ function CreateOrderContent() {
         </SectionHeader>
         <Card padded={false} style={formStyles.card}>
           {orderedMainFieldKeys.map((fieldKey) => (
-            <View key={fieldKey} ref={(node) => setFieldContainerRef(fieldKey, node)}>
+            <View key={fieldKey}>
               {renderCreateMainField(fieldKey)}
             </View>
           ))}
@@ -2856,7 +2854,7 @@ function CreateOrderContent() {
           <SectionHeader>{t('create_order_section_customer')}</SectionHeader>
           <Card padded={false} style={formStyles.card}>
             {orderedCustomerFieldKeys.map((fieldKey) => (
-              <View key={fieldKey} ref={(node) => setFieldContainerRef(fieldKey, node)}>
+              <View key={fieldKey}>
                 {renderCreateCustomerField(fieldKey)}
               </View>
             ))}
@@ -2865,7 +2863,7 @@ function CreateOrderContent() {
           <SectionHeader>{t('create_order_section_planning')}</SectionHeader>
           <Card padded={false} style={formStyles.card}>
             {orderedPlanningFieldKeys.map((fieldKey) => (
-              <View key={fieldKey} ref={(node) => setFieldContainerRef(fieldKey, node)}>
+              <View key={fieldKey}>
                 {renderCreatePlanningField(fieldKey)}
               </View>
             ))}
@@ -2880,6 +2878,7 @@ function CreateOrderContent() {
               onPress={handleSubmit}
               loading={isSubmitting}
               disabled={!subscriptionGuard.canEdit || isSubmitting}
+              formSubmit
             />
           </View>
           <View style={styles.buttonSpacer}>
@@ -2900,7 +2899,10 @@ function CreateOrderContent() {
         cancelLabel={t('create_order_modal_cancel_stay')}
         confirmVariant="destructive"
         onConfirm={confirmCancel}
-        onClose={() => setCancelVisible(false)}
+        onClose={() => {
+          pendingNavigationActionRef.current = null;
+          setCancelVisible(false);
+        }}
       />
 
       <SelectModal

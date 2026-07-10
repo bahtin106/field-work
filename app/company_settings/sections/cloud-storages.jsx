@@ -12,6 +12,7 @@ import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
+import { resolveAppLocale } from '../../../lib/localeFormatting';
 import { yandexDiskIntegration } from '../../../lib/yandexDiskIntegration';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -66,11 +67,11 @@ function formatStorageAmount(bytes, t) {
   if (value === 0) return `0 ${t('company_integrations_yandex_unit_mb')}`;
   const mb = value / (1024 * 1024);
   if (mb < 1024) {
-    const prettyMb = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(mb);
+    const prettyMb = new Intl.NumberFormat(resolveAppLocale(), { maximumFractionDigits: 0 }).format(mb);
     return `${prettyMb} ${t('company_integrations_yandex_unit_mb')}`;
   }
   const gb = mb / 1024;
-  const prettyGb = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(gb);
+  const prettyGb = new Intl.NumberFormat(resolveAppLocale(), { maximumFractionDigits: 1 }).format(gb);
   return `${prettyGb} ${t('company_integrations_yandex_unit_gb')}`;
 }
 

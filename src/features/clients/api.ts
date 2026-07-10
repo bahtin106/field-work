@@ -191,7 +191,7 @@ export async function listClients({ companyId = null, search = '' }: any = {}) {
     const buildListQuery = (useAdditional = true) => {
       const clientColumns = useAdditional ? CLIENT_COLUMNS_WITH_ADDITIONAL : CLIENT_COLUMNS_BASE;
       let query = supabase
-      .from('clients')
+      .from('clients_secure')
       .select(`${clientColumns}, ${CLIENT_LIST_OBJECTS_RELATION}, ${CLIENT_TAGS_RELATION}`)
       .eq('company_id', scopedCompanyId)
       .order('full_name', { ascending: true, nullsFirst: false });
@@ -271,8 +271,8 @@ export async function getClientById(clientId: string) {
 
     try {
       const { data, error }: any = await supabase
-        .from('clients')
-        .select(`${CLIENT_COLUMNS_WITH_ADDITIONAL}, client_objects(*, object_tag_links(tag:company_tags(id, value, tag_type))), ${CLIENT_TAGS_RELATION}`)
+        .from('clients_secure')
+        .select(`${CLIENT_COLUMNS_WITH_ADDITIONAL}, ${CLIENT_LIST_OBJECTS_RELATION}, ${CLIENT_TAGS_RELATION}`)
         .eq('id', key)
         .eq('company_id', scopedCompanyId)
         .maybeSingle();
@@ -302,7 +302,7 @@ export async function getClientById(clientId: string) {
         throw firstFailure;
       }
       const { data, error }: any = await supabase
-        .from('clients')
+        .from('clients_secure')
         .select(CLIENT_COLUMNS_BASE)
         .eq('id', key)
         .eq('company_id', scopedCompanyId)
@@ -440,7 +440,7 @@ export async function getClientOrderCount(clientId: string) {
     if (!scopedCompanyId) return 0;
 
     const { count, error } = await supabase
-      .from('orders')
+      .from('orders_accessible')
       .select('id', { count: 'exact', head: true })
       .eq('client_id', clientId)
       .eq('company_id', scopedCompanyId);
@@ -503,7 +503,7 @@ export async function getClientDeleteBlockers(clientId: string) {
     const currentUserId = String(userData?.user?.id || '');
     const canViewAllOrders = await canCurrentUserViewAllOrders();
 
-    let query = supabase.from('orders_secure_v2').select('id, assigned_to, object_id, client_id');
+    let query = supabase.from('orders_accessible').select('id, assigned_to, object_id, client_id');
     query = applyOrderRelationFilters(query, {
       clientId: normalizedClientId,
       objectIds,
@@ -541,7 +541,7 @@ export async function getClientByOrderId(orderId: string) {
     if (!orderId) return null;
 
     const { data: orderRow, error: orderError } = await supabase
-      .from('orders')
+      .from('orders_accessible')
       .select('client_id')
       .eq('id', orderId)
       .maybeSingle();

@@ -224,26 +224,6 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
       existingProfile = null;
     }
 
-    if (accountType === 'company') {
-      const { data: existingCompany, error: companyErr } = await admin
-        .from('companies')
-        .select('id')
-        .ilike('name', companyName)
-        .limit(1)
-        .maybeSingle();
-
-      if (companyErr && String(companyErr.code || '') !== 'PGRST116') {
-        return json({ ok: false, code: 'COMPANY_CHECK_FAILED', message: 'Company availability check failed' }, 400);
-      }
-      if (existingCompany) {
-        return json({
-          ok: true,
-          cooldown_seconds: 60,
-          expires_in_seconds: REGISTER_CODE_TTL_FALLBACK_SECONDS,
-        });
-      }
-    }
-
     const emailServiceUrl = getEmailServiceUrl();
     const sendRes = await fetch(`${emailServiceUrl}/registration/send-code`, {
       method: 'POST',

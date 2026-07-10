@@ -6,6 +6,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
+import { resolveAppLocale } from '../../../lib/localeFormatting';
 import { supabase } from '../../../lib/supabase';
 import { listSupportRequests, SUPPORT_UNREAD_REFETCH_MS } from '../../../src/features/supportRequests/api';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -16,7 +17,7 @@ function formatDateTime(value) {
   const d = new Date(value);
   if (!Number.isFinite(d.getTime())) return '—';
   try {
-    return d.toLocaleString('ru-RU', {
+    return d.toLocaleString(resolveAppLocale(), {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',

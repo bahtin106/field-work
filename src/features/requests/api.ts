@@ -16,46 +16,7 @@ import { resolveRequestTitle } from './title';
 import { getMyCompanyId } from '../profile/api';
 
 const DEFAULT_PAGE_SIZE = 20;
-const OBJECT_RELATION_SELECT = `
-  object:client_objects(
-    id,
-    client_id,
-    name,
-    country,
-    region,
-    district,
-    city,
-    street,
-    house,
-    postal_code,
-    floor,
-    entrance,
-    apartment,
-    comment,
-    location_mode,
-    geo_lat,
-    geo_lng
-  )
-`;
-const CLIENT_RELATION_SELECT = `
-  client:clients(
-    id,
-    company_id,
-    first_name,
-    last_name,
-    middle_name,
-    full_name,
-    email,
-    phone,
-    secondary_phone:additional_phone_1
-  )
-`;
-const ORDER_SELECT_COLUMNS = `*, ${OBJECT_RELATION_SELECT}, ${CLIENT_RELATION_SELECT}`;
-const ORDER_SELECT_COLUMNS_FALLBACK = `*, ${OBJECT_RELATION_SELECT}`;
 const SECURE_ORDER_SELECT_COLUMNS = '*';
-const CALENDAR_SELECT_COLUMNS = ORDER_SELECT_COLUMNS;
-const CALENDAR_SELECT_COLUMNS_FALLBACK = ORDER_SELECT_COLUMNS_FALLBACK;
-const EXTRA_ORDER_FIELDS = ['time_window_end'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isAuthSessionMissing(error: any) {
@@ -72,13 +33,10 @@ function isUuid(value) {
 function excludeFeedStatuses(query: any) {
   const feedStatusValues = getStatusDbAliases('feed').filter(Boolean);
   if (!feedStatusValues.length) return query;
-  if (feedStatusValues.length === 1) {
-    return query.neq('status', feedStatusValues[0]);
-  }
   const encoded = feedStatusValues
     .map((value) => `'${String(value).replace(/'/g, "''")}'`)
     .join(',');
-  return query.not('status', 'in', `(${encoded})`);
+  return query.or(`status.is.null,status.not.in.(${encoded})`);
 }
 
 function resolveStatusFilterValues(statuses: any = []) {
@@ -197,27 +155,7 @@ function normalizeOrder(row) {
 }
 
 async function enrichOrderWithExtraFields(row) {
-  if (!row?.id) return normalizeOrder(row);
-  try {
-    let { data, error }: any = await supabase
-      .from('orders')
-      .select(`id, ${EXTRA_ORDER_FIELDS.join(', ')}, ${OBJECT_RELATION_SELECT}, ${CLIENT_RELATION_SELECT}`)
-      .eq('id', row.id)
-      .maybeSingle();
-    if (error && shouldFallbackWithoutClientRelation(error)) {
-      const retryResult: any = await supabase
-        .from('orders')
-        .select(`id, ${EXTRA_ORDER_FIELDS.join(', ')}, ${OBJECT_RELATION_SELECT}`)
-        .eq('id', row.id)
-        .maybeSingle();
-      data = retryResult.data;
-      error = retryResult.error;
-    }
-    if (error || !data) return normalizeOrder(row);
-    return normalizeOrder({ ...(row || {}), ...(data || {}) });
-  } catch {
-    return normalizeOrder(row);
-  }
+  return normalizeOrder(row);
 }
 
 function buildConcurrencyError(message: string, latest: any = null) {
@@ -225,63 +163,6 @@ function buildConcurrencyError(message: string, latest: any = null) {
   error.code = 'CONFLICT';
   error.latest = latest;
   return error;
-}
-
-function shouldFallbackFromRpcFailure(rpcFailure) {
-  const msg = String(rpcFailure?.message || '').toLowerCase();
-  const missingRpc =
-    msg.includes('function') && (msg.includes('does not exist') || msg.includes('not found'));
-  const incompatibleRpcTypes =
-    msg.includes('case types uuid and integer cannot be matched') ||
-    (msg.includes('types uuid and integer') && msg.includes('cannot be matched'));
-  const rpcCaseTypeMismatch =
-    msg.includes('case types') && msg.includes('cannot be matched');
-  const rpcColumnMismatch =
-    msg.includes('column') && (msg.includes('does not exist') || msg.includes('not found'));
-  return missingRpc || incompatibleRpcTypes || rpcCaseTypeMismatch || rpcColumnMismatch;
-}
-
-function shouldFallbackWithoutClientRelation(error) {
-  const msg = String(error?.message || '').toLowerCase();
-  return (
-    (msg.includes('permission denied') && msg.includes('clients')) ||
-    (msg.includes('not enough permissions') && msg.includes('clients'))
-  );
-}
-
-function normalizePatchForDirectUpdate(patch) {
-  if (!patch || typeof patch !== 'object') return {};
-  const safePatch = { ...patch };
-  delete safePatch.created_by;
-  delete safePatch.created_by_user_id;
-  delete safePatch.updated_by;
-  delete safePatch.updated_by_user_id;
-  return safePatch;
-}
-
-function isCreatedByUserFkError(error) {
-  const message = String(error?.message || '').toLowerCase();
-  const details = String(error?.details || '').toLowerCase();
-  return (
-    String(error?.code || '') === '23503' &&
-    (message.includes('orders_created_by_user_id_fkey') ||
-      details.includes('orders_created_by_user_id_fkey'))
-  );
-}
-
-async function getCurrentProfileId() {
-  const { data: authData, error: authError }: any = await supabase.auth.getUser();
-  if (authError || !authData?.user?.id) return null;
-  const userId = String(authData.user.id || '').trim();
-  if (!isUuid(userId)) return null;
-
-  const { data, error }: any = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('id', userId)
-    .maybeSingle();
-  if (error || !data?.id) return null;
-  return String(data.id);
 }
 
 async function getRequestByIdFresh(id) {
@@ -324,80 +205,10 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
 
       return getRequestByIdFresh(id);
     } catch (rpcFailure) {
-      if (!shouldFallbackFromRpcFailure(rpcFailure) && !isCreatedByUserFkError(rpcFailure)) {
-        throw rpcFailure;
-      }
+      // All order mutations are authorized atomically in the database.
+      // A direct-table fallback would bypass the configured access matrix.
+      throw rpcFailure;
     }
-
-    // Fallback path before migration is applied.
-    const safePatch = {
-      ...normalizePatchForDirectUpdate(patch),
-      updated_at: new Date().toISOString(),
-    };
-    let query = supabase.from('orders').update(safePatch).eq('id', id);
-    if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt);
-    const { data, error } = await query.select('id, updated_at').maybeSingle();
-    if (error) {
-      if (isCreatedByUserFkError(error)) {
-        const currentProfileId = await getCurrentProfileId();
-        if (currentProfileId) {
-          let repairQuery = supabase
-            .from('orders')
-            .update({
-              ...safePatch,
-              created_by_user_id: currentProfileId,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', id);
-          if (expectedUpdatedAt) repairQuery = repairQuery.eq('updated_at', expectedUpdatedAt);
-          const repairResult = await repairQuery.select('id, updated_at').maybeSingle();
-          if (!repairResult.error && repairResult.data) {
-            return getRequestByIdFresh(id);
-          }
-        }
-      }
-      throw error;
-    }
-
-    if (!data) {
-      if (!expectedUpdatedAt) {
-        throw new Error('Order not found');
-      }
-      const latest = await getRequestById(id);
-      const retryExpectedUpdatedAt = latest?.updated_at || null;
-      if (retryExpectedUpdatedAt) {
-        let retryQuery = supabase
-          .from('orders')
-          .update({
-            ...safePatch,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', id)
-          .eq('updated_at', retryExpectedUpdatedAt);
-        let retryResult = await retryQuery.select('id, updated_at').maybeSingle();
-        if (retryResult.error && isCreatedByUserFkError(retryResult.error)) {
-          const currentProfileId = await getCurrentProfileId();
-          if (currentProfileId) {
-            retryQuery = supabase
-              .from('orders')
-              .update({
-                ...safePatch,
-                created_by_user_id: currentProfileId,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', id)
-              .eq('updated_at', retryExpectedUpdatedAt);
-            retryResult = await retryQuery.select('id, updated_at').maybeSingle();
-          }
-        }
-        if (!retryResult.error && retryResult.data) {
-          return getRequestByIdFresh(id);
-        }
-      }
-      throw buildConcurrencyError('Order was modified concurrently', latest || null);
-    }
-
-    return getRequestByIdFresh(id);
   });
 }
 
@@ -421,21 +232,21 @@ export async function listRequests(params: any = {}) {
       createdTo = null,
       sumMin = null,
       sumMax = null,
+      excludeFeedWhenAll = true,
       sortKey = ORDER_DEFAULT_SORT_KEY,
       userId = null,
       page = 1,
       pageSize = DEFAULT_PAGE_SIZE,
     } = params;
 
-    const isFeedRequest = status === 'feed';
     const extraStatusValues = resolveStatusFilterValues(statuses);
     const normalizedExecutorIds = Array.isArray(executorIds)
       ? executorIds.map(String).map((value) => value.trim()).filter(Boolean)
       : [];
     const normalizedExecutorId = String(executorId || '').trim();
     let query = supabase
-      .from(isFeedRequest ? 'orders_secure_v2' : 'orders')
-      .select(isFeedRequest ? SECURE_ORDER_SELECT_COLUMNS : ORDER_SELECT_COLUMNS);
+      .from('orders_accessible')
+      .select(SECURE_ORDER_SELECT_COLUMNS);
 
     if (scope === 'my') {
       let uid = String(userId || '').trim();
@@ -457,7 +268,7 @@ export async function listRequests(params: any = {}) {
       if (feedStatusValues.length === 1) query = query.eq('status', feedStatusValues[0]);
       if (feedStatusValues.length > 1) query = query.in('status', feedStatusValues);
     } else {
-      if (status === 'all') {
+      if (status === 'all' && excludeFeedWhenAll) {
         query = excludeFeedStatuses(query);
       }
       const statusValues = getStatusDbAliases(status);
@@ -500,73 +311,7 @@ export async function listRequests(params: any = {}) {
     const from = Math.max(0, (Number(page) - 1) * Number(pageSize));
     const to = from + Number(pageSize) - 1;
 
-    let { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
-    if (!isFeedRequest && error && shouldFallbackWithoutClientRelation(error)) {
-      let fallbackQuery = supabase.from('orders').select(ORDER_SELECT_COLUMNS_FALLBACK);
-
-      if (scope === 'my') {
-        let uid = String(userId || '').trim();
-        if (!uid) {
-          const { data: userData, error: userError } = await supabase.auth.getUser();
-          if (userError) {
-            if (isAuthSessionMissing(userError)) return [];
-            throw userError;
-          }
-          uid = String(userData?.user?.id || '').trim();
-        }
-        if (!uid) return [];
-        fallbackQuery = fallbackQuery.eq('assigned_to', uid);
-      }
-
-      if (status === 'feed') {
-        fallbackQuery = fallbackQuery.is('assigned_to', null);
-        const feedStatusValues = getStatusDbAliases('feed');
-        if (feedStatusValues.length === 1) fallbackQuery = fallbackQuery.eq('status', feedStatusValues[0]);
-        if (feedStatusValues.length > 1) fallbackQuery = fallbackQuery.in('status', feedStatusValues);
-      } else {
-        if (status === 'all') {
-          fallbackQuery = excludeFeedStatuses(fallbackQuery);
-        }
-        const statusValues = getStatusDbAliases(status);
-        if (statusValues.length === 1) fallbackQuery = fallbackQuery.eq('status', statusValues[0]);
-        if (statusValues.length > 1) fallbackQuery = fallbackQuery.in('status', statusValues);
-        if (statusValues.length === 0) {
-          const statusValue = mapStatusToDb(status);
-          if (statusValue) fallbackQuery = fallbackQuery.eq('status', statusValue);
-        }
-        if (normalizedExecutorIds.length) fallbackQuery = fallbackQuery.in('assigned_to', normalizedExecutorIds);
-        else if (normalizedExecutorId) fallbackQuery = fallbackQuery.eq('assigned_to', normalizedExecutorId);
-      }
-      fallbackQuery = applyStatusFilterValues(fallbackQuery, extraStatusValues);
-
-
-      if (Array.isArray(workTypeIds) && workTypeIds.length) {
-        const ids = await getOrderIdsByWorkTypes(workTypeIds);
-        if (!ids.length) return [];
-        fallbackQuery = fallbackQuery.in('id', ids);
-      }
-      if (Array.isArray(clientIds) && clientIds.length) {
-        fallbackQuery = fallbackQuery.in('client_id', clientIds.map(String));
-      }
-      if (Array.isArray(orderIds) && orderIds.length) {
-        fallbackQuery = fallbackQuery.in('id', orderIds.map(String));
-      }
-      if (dateFrom) fallbackQuery = fallbackQuery.gte('time_window_start', dateFrom);
-      if (dateTo) fallbackQuery = fallbackQuery.lte('time_window_start', dateTo);
-      if (createdFrom) fallbackQuery = fallbackQuery.gte('created_at', createdFrom);
-      if (createdTo) fallbackQuery = fallbackQuery.lte('created_at', createdTo);
-      if (Number.isFinite(parsedSumMin)) fallbackQuery = fallbackQuery.gte('start_price', parsedSumMin);
-      if (Number.isFinite(parsedSumMax)) fallbackQuery = fallbackQuery.lte('start_price', parsedSumMax);
-
-      fallbackQuery = applyOrderRelationFilters(fallbackQuery, {
-        clientId: relationClientId,
-        objectIds: relationObjectIds,
-      });
-
-      const retryResult = await applyOrderSortToQuery(fallbackQuery, sortKey).range(from, to);
-      data = retryResult.data;
-      error = retryResult.error;
-    }
+    const { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
     if (error) throw error;
     return enrichOrdersWithExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
   });
@@ -576,30 +321,12 @@ export async function getRequestById(id: any) {
   const key = String(id || '').trim();
   if (!key || !isUuid(key)) return null;
   return measureNetwork('requests.getById', async () => {
-    let { data, error } = await supabase
-      .from('orders')
-      .select(ORDER_SELECT_COLUMNS)
+    const { data, error } = await supabase
+      .from('orders_accessible')
+      .select(SECURE_ORDER_SELECT_COLUMNS)
       .eq('id', key)
       .maybeSingle();
-    if (error && shouldFallbackWithoutClientRelation(error)) {
-      const retryResult = await supabase
-        .from('orders')
-        .select(ORDER_SELECT_COLUMNS_FALLBACK)
-        .eq('id', key)
-        .maybeSingle();
-      data = retryResult.data;
-      error = retryResult.error;
-    }
     if (error) throw error;
-    if (!data) {
-      const secureResult: any = await supabase
-        .from('orders_secure_v2')
-        .select('*')
-        .eq('id', key)
-        .maybeSingle();
-      if (secureResult.error) throw secureResult.error;
-      data = secureResult.data;
-    }
     const enriched = await enrichOrderWithExtraFields(data);
     const withExecutor = await enrichOrdersWithExecutorNames(enriched ? [enriched] : []);
     return withExecutor[0] || enriched;
@@ -666,8 +393,8 @@ export async function listCalendarRequests({
     const normalizedScope = scope === 'all' ? 'all' : 'my';
 
     let query = supabase
-      .from('orders')
-      .select(CALENDAR_SELECT_COLUMNS)
+      .from('orders_accessible')
+      .select(SECURE_ORDER_SELECT_COLUMNS)
       .order('time_window_start', { ascending: false, nullsFirst: false });
 
     if (normalizedScope === 'my') {
@@ -680,27 +407,7 @@ export async function listCalendarRequests({
       query = query.lte('time_window_start', endDate);
     }
 
-    let { data, error } = await query;
-    if (error && shouldFallbackWithoutClientRelation(error)) {
-      let fallbackQuery = supabase
-        .from('orders')
-        .select(CALENDAR_SELECT_COLUMNS_FALLBACK)
-        .order('time_window_start', { ascending: false, nullsFirst: false });
-
-      if (normalizedScope === 'my') {
-        fallbackQuery = fallbackQuery.eq('assigned_to', userId);
-      }
-      if (startDate) {
-        fallbackQuery = fallbackQuery.gte('time_window_start', startDate);
-      }
-      if (endDate) {
-        fallbackQuery = fallbackQuery.lte('time_window_start', endDate);
-      }
-
-      const retryResult = await fallbackQuery;
-      data = retryResult.data;
-      error = retryResult.error;
-    }
+    const { data, error } = await query;
     if (error) throw error;
 
     const rows = await enrichOrdersWithExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);

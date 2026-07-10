@@ -5,15 +5,15 @@ import { useSuperAdminAccess } from './useSuperAdminAccess';
 
 export function useRequireSuperAdmin() {
   const router = useRouter();
-  const { isInitializing: isAuthInitializing } = useAuthContext();
+  const { isInitializing: isAuthInitializing, isAuthenticated } = useAuthContext();
   const { isSuperAdmin, isLoading, error } = useSuperAdminAccess();
 
   React.useEffect(() => {
-    if (isAuthInitializing || isLoading) return;
+    if (isAuthInitializing || !isAuthenticated || isLoading) return;
     if (!isSuperAdmin) {
       router.replace('/orders');
     }
-  }, [isAuthInitializing, isLoading, isSuperAdmin, router]);
+  }, [isAuthenticated, isAuthInitializing, isLoading, isSuperAdmin, router]);
 
   return {
     isAllowed: isSuperAdmin,

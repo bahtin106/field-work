@@ -44,6 +44,11 @@ function CalendarGridCellComponent({
   const isTodaySelected = isSelectedDay && isToday;
   const showOutline = isSelectedDay && !isToday;
   const highlightTodayWhenNotSelected = isToday && !isSelectedDay;
+  const selectionStyle = isTodaySelected
+    ? styles.dayCellSelectedFilled
+    : showOutline
+      ? styles.dayCellSelectedOutline
+      : styles.dayCellUnselected;
   const dayNumberEventShift = eventCount > 0
     ? {
         transform: [
@@ -79,8 +84,7 @@ function CalendarGridCellComponent({
       style={[
         styles.dayCell,
         { width: dayCellSize, height: dayCellSize },
-        isTodaySelected && styles.dayCellSelectedFilled,
-        showOutline && styles.dayCellSelectedOutline,
+        selectionStyle,
       ]}
     >
       <View

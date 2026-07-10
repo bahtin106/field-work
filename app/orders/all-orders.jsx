@@ -31,6 +31,8 @@ import {
   usePullToRefreshFeedback,
 } from '../../components/ui/PullToRefreshFeedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { usePersistedOrderStatusUsage } from '../../lib/orderStatusUsage';
+import { getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { usePermissions } from '../../lib/permissions';
 import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
@@ -141,8 +143,6 @@ const ALL_ORDERS_LIST = Object.freeze({
   itemVisiblePercentThreshold: 50,
   onEndReachedThreshold: 0.5,
 });
-const ALL_ORDER_STATUS_TABS = Object.freeze(['feed', 'all', 'new', 'progress', 'done']);
-const SOLO_ALL_ORDER_STATUS_TABS = Object.freeze(['all', 'new', 'progress', 'done']);
 const ALL_ORDERS_STATUS_ALWAYS_VISIBLE = Object.freeze(['feed', 'all']);
 const ALL_ORDERS_STATUS_BAR_PADDING = 3;
 const ALL_ORDERS_STATUS_CHIP_GAP = 2;
@@ -463,6 +463,9 @@ function AllOrdersContent() {
   const authAccountType = String(user?.user_metadata?.account_type || '').trim().toLowerCase();
   const isSoloAdmin =
     String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
+  const { data: companyId } = useMyCompanyIdQuery();
+  const statusSystem = useCompanyOrderStatuses(companyId);
+  const isFeedFeatureEnabled = statusSystem.isEnabled && statusSystem.feedEnabled && !isSoloAdmin;
   const permissionByRole = !permLoading ? has(ALL_ORDERS_PERMISSION_KEY) : null;
   const isExplicitlyDeniedOnline =
     !offlineMode && allowed === false && permissionByRole === false;
@@ -559,8 +562,17 @@ function AllOrdersContent() {
     normalizeStatusFilterParam(filter),
   );
   const statusTabs = useMemo(
-    () => (isSoloAdmin ? SOLO_ALL_ORDER_STATUS_TABS : ALL_ORDER_STATUS_TABS),
-    [isSoloAdmin],
+    () => {
+      if (!statusSystem.isEnabled) return ['all'];
+      return [
+        ...(statusSystem.feedEnabled && !isSoloAdmin ? ['feed'] : []),
+        'all',
+        ...statusSystem.regularStatuses
+          .map((status) => normalizeAllOrdersStatusFilter(status?.status_key))
+          .filter(Boolean),
+      ];
+    },
+    [isSoloAdmin, statusSystem.feedEnabled, statusSystem.isEnabled, statusSystem.regularStatuses],
   );
   const effectiveStatusFilter = useMemo(
     () => (statusTabs.includes(statusFilter) ? statusFilter : 'all'),
@@ -666,7 +678,6 @@ function AllOrdersContent() {
     };
   }, [filterDataEnabled]);
 
-  const { data: companyId } = useMyCompanyIdQuery();
   const { settings: companySettings } = useCompanySettings(companyId);
   const feedScopeKey = useMemo(() => {
     const scopedUserId = String(user?.id || profile?.id || '').trim();
@@ -715,11 +726,14 @@ function AllOrdersContent() {
   );
   const allRequestsParams = useMemo(() => {
     const next = { sortKey: normalizedSortKey };
-    if (effectiveStatusFilter && effectiveStatusFilter !== 'all') next.status = effectiveStatusFilter;
-    const statusFilters = Array.isArray(orderFilters.statuses)
+    if (statusSystem.isEnabled && effectiveStatusFilter && effectiveStatusFilter !== 'all') {
+      next.status = effectiveStatusFilter;
+    }
+    const statusFilters = statusSystem.isEnabled && Array.isArray(orderFilters.statuses)
       ? orderFilters.statuses.map(normalizeAllOrdersStatusFilter).filter((key) => key && key !== 'all')
       : [];
     if (statusFilters.length) next.statuses = statusFilters;
+    next.excludeFeedWhenAll = isFeedFeatureEnabled;
     if (executorFilters.length) next.executorIds = executorFilters;
     if (departmentFilter != null) next.departmentId = departmentFilter;
     if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
@@ -747,6 +761,7 @@ function AllOrdersContent() {
     departmentFilter,
     executorFilters,
     effectiveStatusFilter,
+    isFeedFeatureEnabled,
     normalizedSortKey,
     orderFilters.clientIds,
     orderFilters.createdDateFrom,
@@ -758,6 +773,7 @@ function AllOrdersContent() {
     orderFilters.statuses,
     relationClientId,
     relationObjectIds,
+    statusSystem.isEnabled,
     useWorkTypes,
     workTypeFilter,
   ]);
@@ -777,6 +793,16 @@ function AllOrdersContent() {
     isFetchingNextPage,
     isError: requestsError,
   } = useAllRequests(allRequestsParams, { enabled: requestsEnabled });
+
+  const previousStatusFilterRef = useRef(effectiveStatusFilter);
+  useEffect(() => {
+    const previousStatusFilter = previousStatusFilterRef.current;
+    previousStatusFilterRef.current = effectiveStatusFilter;
+    if (!requestsEnabled || previousStatusFilter === effectiveStatusFilter) return;
+    queryClient
+      .invalidateQueries({ queryKey: allRequestsQueryKey, exact: true, refetchType: 'active' })
+      .catch(() => {});
+  }, [allRequestsQueryKey, effectiveStatusFilter, queryClient, requestsEnabled]);
 
   const shouldLoadExecutorsForCards =
     !isSoloAdmin &&
@@ -859,7 +885,6 @@ function AllOrdersContent() {
   const feedPulse = useRef(new Animated.Value(0)).current;
   const feedMetaRequestSeqRef = useRef(0);
   const activeFeedScopeRef = useRef(feedScopeKey);
-  const isFeedFeatureEnabled = !isSoloAdmin;
   const feedState = !feedHasAny
     ? 'none'
     : feedFingerprint && feedFingerprint === feedSeenFingerprint
@@ -1073,42 +1098,38 @@ function AllOrdersContent() {
 
   const getStatusLabel = useCallback(
     (key) => {
-      switch (key) {
-        case 'feed':
-          return t('order_status_in_feed');
-        case 'all':
-          return t('common_all');
-        case 'new':
-          return t('order_status_new');
-        case 'progress':
-          return t('order_status_in_progress');
-        case 'done':
-          return t('order_status_completed');
-        default:
-          return '';
-      }
+      const normalized = normalizeAllOrdersStatusFilter(key);
+      if (normalized === 'all') return t('common_all');
+      return getOrderStatusLabel(normalized, statusSystem.statuses, t);
     },
-    [t],
+    [statusSystem.statuses, t],
   );
   const orderStatusOptions = useMemo(
-    () => [
-      { id: 'new', label: t('order_status_new') },
-      { id: 'progress', label: t('order_status_in_progress') },
-      { id: 'done', label: t('order_status_completed') },
-    ],
-    [t],
+    () =>
+      statusSystem.isEnabled
+        ? statusSystem.regularStatuses.map((status) => ({
+            id: normalizeAllOrdersStatusFilter(status.status_key),
+            label: getOrderStatusLabel(status.status_key, statusSystem.statuses, t),
+          }))
+        : [],
+    [statusSystem.isEnabled, statusSystem.regularStatuses, statusSystem.statuses, t],
   );
+  const hasStatusNavigation =
+    statusSystem.isEnabled &&
+    (orderStatusOptions.length > 0 || isFeedFeatureEnabled);
   const statusAlwaysVisibleKeys = useMemo(
     () => ALL_ORDERS_STATUS_ALWAYS_VISIBLE.filter((key) => statusTabs.includes(key)),
     [statusTabs],
   );
   const statusFilterOptions = useMemo(
     () =>
-      statusTabs.map((key) => ({
+      hasStatusNavigation
+        ? statusTabs.map((key) => ({
         id: key,
         label: getStatusLabel(key),
-      })),
-    [getStatusLabel, statusTabs],
+      }))
+        : [],
+    [getStatusLabel, hasStatusNavigation, statusTabs],
   );
   const statusChipLabels = useMemo(() => {
     const labels = {};
@@ -1117,6 +1138,20 @@ function AllOrdersContent() {
     });
     return labels;
   }, [statusFilterOptions, t]);
+  useEffect(() => {
+    if (statusSystem.isLoading) return;
+    const allowed = new Set(
+      statusSystem.isEnabled
+        ? orderStatusOptions.map((option) => normalizeAllOrdersStatusFilter(option?.id)).filter(Boolean)
+        : [],
+    );
+    setOrderFilters((previous) => {
+      const current = Array.isArray(previous.statuses) ? previous.statuses : [];
+      const next = current.filter((status) => allowed.has(normalizeAllOrdersStatusFilter(status)));
+      if (next.length === current.length) return previous;
+      return { ...previous, statuses: next };
+    });
+  }, [orderStatusOptions, statusSystem.isEnabled, statusSystem.isLoading]);
   const statusUsageStorageKey = useMemo(() => {
     const userId = String(user?.id || profile?.id || 'anonymous').trim() || 'anonymous';
     const companyScope = String(companyId || 'global').trim() || 'global';
@@ -1126,27 +1161,23 @@ function AllOrdersContent() {
     () => statusFilterOptions.map((option) => normalizeAllOrdersStatusFilter(option?.id)).filter(Boolean),
     [statusFilterOptions],
   );
-  const [statusUsage, setStatusUsage] = useState({});
-  const statusUsageRef = useRef({});
-
-  useEffect(() => {
-    let alive = true;
-    AsyncStorage.getItem(statusUsageStorageKey)
-      .then((raw) => {
-        if (!alive) return;
-        const normalized = normalizeAllOrdersStatusUsagePayload(raw, statusUsageAllowedIds);
-        statusUsageRef.current = normalized;
-        setStatusUsage(normalized);
-      })
-      .catch(() => {
-        if (!alive) return;
-        statusUsageRef.current = {};
-        setStatusUsage({});
-      });
-    return () => {
-      alive = false;
-    };
-  }, [statusUsageAllowedIds, statusUsageStorageKey]);
+  const {
+    usage: statusUsage,
+    usageRef: statusUsageRef,
+    isReady: statusUsageReady,
+    persistUsage: persistStatusUsage,
+    refreshUsage: refreshStatusUsage,
+  } = usePersistedOrderStatusUsage(
+    statusUsageStorageKey,
+    statusUsageAllowedIds,
+    normalizeAllOrdersStatusUsagePayload,
+  );
+  const statusNavigationReady = hasStatusNavigation && statusUsageReady;
+  useFocusEffect(
+    useCallback(() => {
+      refreshStatusUsage();
+    }, [refreshStatusUsage]),
+  );
 
   const recordStatusFilterUsage = useCallback(
     (value) => {
@@ -1163,9 +1194,9 @@ function AllOrdersContent() {
       };
       const normalized = normalizeAllOrdersStatusUsagePayload({ items: next }, statusUsageAllowedIds);
       statusUsageRef.current = normalized;
-      AsyncStorage.setItem(statusUsageStorageKey, JSON.stringify({ items: normalized })).catch(() => {});
+      persistStatusUsage(normalized);
     },
-    [statusUsageAllowedIds, statusUsageStorageKey],
+    [persistStatusUsage, statusUsageAllowedIds, statusUsageRef],
   );
   const selectStatusFilter = useCallback(
     (value) => {
@@ -1210,7 +1241,7 @@ function AllOrdersContent() {
       if (!key || selected.includes(key)) return false;
       const label = statusChipLabels[key] || getStatusLabel(key) || key;
       const nextWidth = estimateAllOrdersStatusChipWidth(label, {
-        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        hasLeadingDot: key === 'feed',
         maxWidth: active ? ALL_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH : ALL_ORDERS_STATUS_CHIP_MAX_WIDTH,
       });
       const nextGap = selected.length > 0 ? ALL_ORDERS_STATUS_CHIP_GAP : 0;
@@ -1243,7 +1274,7 @@ function AllOrdersContent() {
     const getStretchMax = (key) => {
       const label = statusChipLabels[key] || getStatusLabel(key) || key;
       const fullWidth = estimateAllOrdersStatusChipWidth(label, {
-        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        hasLeadingDot: key === 'feed',
         maxWidth:
           effectiveStatusFilter === key
             ? ALL_ORDERS_STATUS_CHIP_STRETCH_MAX_WIDTH
@@ -1293,7 +1324,6 @@ function AllOrdersContent() {
     return { keys: selected, moreWidth, widths };
   }, [
     effectiveStatusFilter,
-    feedState,
     getStatusLabel,
     orderedStatusQuickKeys,
     statusAlwaysVisibleKeys,
@@ -1333,7 +1363,7 @@ function AllOrdersContent() {
     const fullParts = [];
     const compactParts = [];
 
-    if (Array.isArray(orderFilters.statuses) && orderFilters.statuses.length) {
+    if (statusSystem.isEnabled && Array.isArray(orderFilters.statuses) && orderFilters.statuses.length) {
       const labels = orderFilters.statuses
         .map((code) => normalizeAllOrdersStatusFilter(code))
         .map((code) => orderStatusOptions.find((opt) => opt.id === code)?.label || getStatusLabel(code))
@@ -1476,6 +1506,7 @@ function AllOrdersContent() {
     orderFilters.sumMin,
     orderFilters.statuses,
     orderStatusOptions,
+    statusSystem.isEnabled,
     t,
     useWorkTypes,
     workTypeFilter,
@@ -1693,7 +1724,7 @@ function AllOrdersContent() {
   const listHeader = useMemo(
     () => (
       <View style={styles.listHeader}>
-        <View style={styles.filterBar}>
+        {statusNavigationReady ? <View style={styles.filterBar}>
           <View style={styles.statusFilterRow}>
             {visibleQuickStatusKeys.map((key) => {
               const active = effectiveStatusFilter === key;
@@ -1727,7 +1758,6 @@ function AllOrdersContent() {
                   ) : null}
                   <View style={styles.chipContent}>
                     {key === 'feed' &&
-                      feedState !== 'none' &&
                       (feedState === 'new' ? (
                         <Animated.View
                           style={[
@@ -1749,8 +1779,10 @@ function AllOrdersContent() {
                             },
                           ]}
                         />
-                      ) : (
+                      ) : feedState === 'seen' ? (
                         <View style={[styles.feedDotBase, styles.feedDotSeen]} />
+                      ) : (
+                        <View style={[styles.feedDotBase, styles.feedDotPlaceholder]} />
                       ))}
                     <Text
                       style={[styles.chipText, active && styles.chipTextActive]}
@@ -1796,7 +1828,7 @@ function AllOrdersContent() {
               </View>
             </Pressable>
           </View>
-        </View>
+        </View> : null}
 
         <SearchFiltersBar
           value={searchQuery}
@@ -1842,6 +1874,7 @@ function AllOrdersContent() {
       filterSummaryData.compact,
       filterSummaryData.full,
       getStatusLabel,
+      statusNavigationReady,
       hasLinkedRelationFilter,
       relationLabel,
       router,
@@ -1857,6 +1890,7 @@ function AllOrdersContent() {
       styles.feedChipPulseOverlay,
       styles.feedDotBase,
       styles.feedDotNew,
+      styles.feedDotPlaceholder,
       styles.feedDotSeen,
       styles.filterBar,
       styles.listHeader,
@@ -2042,7 +2076,7 @@ function AllOrdersContent() {
         showSearchCategory={false}
         inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
         ordersFilters={{
-          statuses: orderStatusOptions,
+          statuses: statusSystem.isEnabled ? orderStatusOptions : [],
           workTypes: useWorkTypes ? workTypes : [],
           clients: clientOptions,
           executors: executorOptions,
@@ -2063,7 +2097,7 @@ function AllOrdersContent() {
         onApply={(nextValues) => {
           const normalizedNextValues = {
             ...nextValues,
-            statuses: Array.isArray(nextValues?.statuses)
+            statuses: statusSystem.isEnabled && Array.isArray(nextValues?.statuses)
               ? nextValues.statuses.map(normalizeAllOrdersStatusFilter).filter(Boolean)
               : [],
             workTypes: useWorkTypes ? nextValues?.workTypes : [],
@@ -2078,14 +2112,16 @@ function AllOrdersContent() {
           router.setParams(buildRouteFilterParams(normalizedNextValues));
         }}
       />
-      <StatusSelectModal
-        visible={statusSelectVisible}
-        onClose={() => setStatusSelectVisible(false)}
-        options={statusSelectOptions}
-        value={effectiveStatusFilter}
-        onChange={selectStatusFilter}
-        title={t('orders_filter_status')}
-      />
+      {hasStatusNavigation ? (
+        <StatusSelectModal
+          visible={statusSelectVisible}
+          onClose={() => setStatusSelectVisible(false)}
+          options={statusSelectOptions}
+          value={effectiveStatusFilter}
+          onChange={selectStatusFilter}
+          title={t('orders_filter_status')}
+        />
+      ) : null}
       <SortSelectModal
         visible={sortVisible}
         onClose={() => setSortVisible(false)}
@@ -2207,6 +2243,9 @@ function createStyles(theme) {
       backgroundColor: withAlpha(theme.colors.danger, 0.22),
       borderWidth: 1,
       borderColor: withAlpha(theme.colors.danger, 0.55),
+    },
+    feedDotPlaceholder: {
+      opacity: 0,
     },
     searchBar: {
       marginHorizontal: searchBarOffset,

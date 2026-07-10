@@ -1,9 +1,9 @@
 // components/calendar/CalendarMonthHeader.jsx
 import { Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
-import { ru as dfnsRu } from 'date-fns/locale';
 import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
+import { resolveDateFnsLocale } from '../../lib/localeFormatting';
 
 function capitalizeLabel(value) {
   if (!value) return value;
@@ -13,7 +13,7 @@ function capitalizeLabel(value) {
 export function CalendarMonthHeader({
   monthDate,
   label,
-  dateLocale = dfnsRu,
+  dateLocale = resolveDateFnsLocale(),
   onPreviousMonth,
   onNextMonth,
   arrowHitSlop,

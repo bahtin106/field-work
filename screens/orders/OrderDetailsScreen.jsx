@@ -1,7 +1,6 @@
 ﻿import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ru } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,6 +36,7 @@ import { useOrderMedia } from '../../hooks/useOrderMedia';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { logClientError } from '../../lib/errorLogsClient';
+import { resolveDateFnsLocale } from '../../lib/localeFormatting';
 import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
 import { formatPersonName } from '../../lib/personName';
 import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
@@ -49,6 +49,7 @@ import {
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
 import { mapStatusToDb } from '../../lib/orderFilters';
+import { useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import {
   FEED_ORDER_FIELD_KEYS,
@@ -587,6 +588,8 @@ function OrderDetailsContent() {
   const router = useRouter();
   const navigation = useNavigation();
   const isNavigatingRef = useRef(false);
+  const allowLeaveRef = useRef(false);
+  const pendingNavigationActionRef = useRef(null);
   const queryClient = useQueryClient();
   const initialCachedOrder = useMemo(() => {
     if (!id) return null;
@@ -631,6 +634,7 @@ function OrderDetailsContent() {
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
   const [companyId, setCompanyId] = useState(() => initialCachedOrder?.company_id || null);
+  const statusSystem = useCompanyOrderStatuses(companyId);
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
@@ -1264,7 +1268,7 @@ function OrderDetailsContent() {
       try {
         // use centralized util for consistent behavior across app
         const { formatCurrency } = require('../../lib/currency');
-        return formatCurrency(n, cur, 'ru-RU') || '—';
+        return formatCurrency(n, cur) || '—';
       } catch {
         return '—';
       }
@@ -1532,13 +1536,24 @@ function OrderDetailsContent() {
 
       // в”Ђв”Ђ 4. Auto-status "Новый"в†’"В работе" в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       let effectiveOrder = fetchedOrder;
-      if (uid && fetchedOrder.status === mapStatusToDb('new') && fetchedOrder.assigned_to === uid) {
+      const hasProgressStatus = statusSystem.regularStatuses.some(
+        (status) => status.status_key === 'in_progress',
+      );
+      const isNewStatus = statusSystem.isEnabled
+        ? fetchedOrder.status === 'new'
+        : fetchedOrder.status === mapStatusToDb('new');
+      if (uid && isNewStatus && fetchedOrder.assigned_to === uid) {
         try {
-          await updateRequestWithVersion(id, { status: mapStatusToDb('in_progress') }, fetchedOrder?.updated_at || null);
+          const nextStatus = statusSystem.isEnabled
+            ? hasProgressStatus
+              ? 'in_progress'
+              : null
+            : mapStatusToDb('in_progress');
+          await updateRequestWithVersion(id, { status: nextStatus }, fetchedOrder?.updated_at || null);
           queryClient.invalidateQueries({ queryKey: ['requests'] });
           queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
           const refreshed = await ensureRequestPrefetch(queryClient, id);
-          effectiveOrder = refreshed || { ...fetchedOrder, status: mapStatusToDb('in_progress') };
+          effectiveOrder = refreshed || { ...fetchedOrder, status: nextStatus };
         } catch (e) {
           console.warn('Persist status error:', e);
           effectiveOrder = fetchedOrder;
@@ -1638,6 +1653,8 @@ function OrderDetailsContent() {
     queryClient,
     refetchRequestData,
     deriveExecutorNameInstant,
+    statusSystem.isEnabled,
+    statusSystem.regularStatuses,
   ]);
 
   const canEditByRole = useCallback(
@@ -3342,10 +3359,15 @@ function OrderDetailsContent() {
       return;
     }
 
+    const doneStatusAvailable =
+      statusSystem.isEnabled &&
+      statusSystem.regularStatuses.some((status) => status.status_key === 'done');
+    if (!doneStatusAvailable) return;
+
     let data = null;
     let error = null;
     try {
-      data = await saveOrderPatch(order.id, { status: mapStatusToDb('done') });
+      data = await saveOrderPatch(order.id, { status: 'done' });
     } catch (e) {
       error = e;
     }
@@ -3360,14 +3382,14 @@ function OrderDetailsContent() {
       return;
     }
 
-    const nextOrder = data || { ...order, status: t('order_status_completed') };
+    const nextOrder = data || { ...order, status: 'done' };
     setOrder(nextOrder);
     if (nextOrder?.id) {
       queryClient.setQueryData(queryKeys.requests.detail(nextOrder.id), nextOrder);
       queryClient.invalidateQueries({ queryKey: ['requests'] });
     }
     showToast(t('order_toast_order_finished'));
-  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, queryClient, saveOrderPatch, showToast, t]);
+  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, queryClient, saveOrderPatch, showToast, statusSystem.isEnabled, statusSystem.regularStatuses, t]);
 
   const onFinishPress = useCallback(() => handleFinishOrder(), [handleFinishOrder]);
 
@@ -3404,12 +3426,17 @@ function OrderDetailsContent() {
 
       if (!accepted && latestOrder && !latestOrder.assigned_to && userId) {
         const latestStatus = String(latestOrder.status || '');
-        const isInFeed = latestStatus === t('order_status_in_feed') || latestStatus === mapStatusToDb('feed');
-        if (isInFeed) {
+        const isInFeed = latestStatus === 'feed' || latestStatus === t('order_status_in_feed') || latestStatus === mapStatusToDb('feed');
+        if (isInFeed || !statusSystem.isEnabled || !statusSystem.feedEnabled) {
           try {
+            const nextStatus = statusSystem.isEnabled
+              ? statusSystem.regularStatuses.some((status) => status.status_key === 'in_progress')
+                ? 'in_progress'
+                : null
+              : t('order_status_in_progress');
             const fallbackOrder = await updateRequestWithVersion(
               order.id,
-              { assigned_to: userId, status: t('order_status_in_progress') },
+              { assigned_to: userId, status: nextStatus },
               latestOrder?.updated_at || order?.updated_at || null,
             );
             latestOrder = fallbackOrder || latestOrder;
@@ -3439,7 +3466,13 @@ function OrderDetailsContent() {
           ...(order || {}),
           ...(latestOrder || {}),
           assigned_to: userId,
-          status: latestOrder?.status || t('order_status_in_progress'),
+          status:
+            latestOrder?.status ||
+            (statusSystem.isEnabled
+              ? statusSystem.regularStatuses.some((status) => status.status_key === 'in_progress')
+                ? 'in_progress'
+                : null
+              : t('order_status_in_progress')),
         };
         setOrder(nextOrder);
         queryClient.setQueryData(queryKeys.requests.detail(order.id), nextOrder);
@@ -3461,7 +3494,7 @@ function OrderDetailsContent() {
     } catch {
       showToast(t('order_toast_network_error'));
     }
-  }, [order, users, userId, showToast, t, queryClient]);
+  }, [order, users, userId, showToast, statusSystem.feedEnabled, statusSystem.isEnabled, statusSystem.regularStatuses, t, queryClient]);
 
   const _handleSubmitEdit = useCallback(async () => {
     // Allow React state from the last input event to flush before validation/save.
@@ -3490,11 +3523,23 @@ function OrderDetailsContent() {
     const normalizedPhone = toE164MobilePhoneOrNull(phone);
     if (!normalizedPhone) return showWarning(t('order_validation_phone_format'));
 
-    const nextStatus = effectiveEditToFeed
-      ? t('order_status_in_feed')
-      : order.status === t('order_status_in_feed')
-        ? t('order_status_in_progress')
-        : order.status;
+    const previousIsFeed =
+      order.status === 'feed' ||
+      order.status === t('order_status_in_feed') ||
+      order.status === mapStatusToDb('feed');
+    const nextStatus = statusSystem.isEnabled
+      ? effectiveEditToFeed && statusSystem.feedEnabled
+        ? 'feed'
+        : previousIsFeed
+          ? statusSystem.regularStatuses.some((status) => status.status_key === 'in_progress')
+            ? 'in_progress'
+            : null
+          : order.status
+      : effectiveEditToFeed
+        ? t('order_status_in_feed')
+        : previousIsFeed
+          ? t('order_status_in_progress')
+          : order.status;
 
     const existingComment = String(order?.comment ?? '');
     const nextComment = String(description ?? '');
@@ -3623,9 +3668,14 @@ function OrderDetailsContent() {
     resolveTitleForSave,
     titlePrefix,
     isSoloAdmin,
+    statusSystem.feedEnabled,
+    statusSystem.isEnabled,
+    statusSystem.regularStatuses,
   ]);
 
   const confirmCancel = useCallback(() => {
+    const pendingAction = pendingNavigationActionRef.current;
+    pendingNavigationActionRef.current = null;
     setEditMode(false);
     setCancelVisible(false);
     setTimeout(applyNavBar, 10);
@@ -3652,7 +3702,12 @@ function OrderDetailsContent() {
       setWorkTypeId(order.work_type_id || null);
       setAmount(order.start_price !== null && order.start_price !== undefined ? String(order.start_price) : '');
     }
-  }, [order, makeSnapshotFromOrder, applyNavBar, titlePrefix, isSoloAdmin]);
+
+    if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
+      allowLeaveRef.current = true;
+      navigation.dispatch(pendingAction);
+    }
+  }, [navigation, order, makeSnapshotFromOrder, applyNavBar, titlePrefix, isSoloAdmin]);
 
   const deleteOrderCompletely = useCallback(async () => {
     const deletedOrderId = String(order?.id || '').trim();
@@ -4189,14 +4244,14 @@ function OrderDetailsContent() {
 
   useEffect(() => {
     const sub = navigation.addListener('beforeRemove', (e) => {
-      const actionType = e?.data?.action?.type;
-      if (
-        actionType &&
-        actionType !== 'GO_BACK' &&
-        actionType !== 'POP' &&
-        actionType !== 'POP_TO_TOP'
-      ) {
-        // allow explicit navigations (e.g., bottom bar tabs using router.replace)
+      if (allowLeaveRef.current) {
+        return;
+      }
+
+      if (editMode && formIsDirty()) {
+        e.preventDefault();
+        pendingNavigationActionRef.current = e?.data?.action || null;
+        setCancelVisible(true);
         return;
       }
 
@@ -4220,7 +4275,7 @@ function OrderDetailsContent() {
     pathname,
     router,
     returnParams,
-    requestCloseEdit,
+    formIsDirty,
   ]);
 
   useFocusEffect(
@@ -4378,7 +4433,7 @@ function OrderDetailsContent() {
     if (!order?.created_at) return t('order_details_departure_not_specified');
     const createdDate = new Date(order.created_at);
     if (Number.isNaN(createdDate.getTime())) return t('order_details_departure_not_specified');
-    return format(createdDate, 'dd.MM.yyyy, HH:mm', { locale: ru });
+    return format(createdDate, 'dd.MM.yyyy, HH:mm', { locale: resolveDateFnsLocale() });
   }, [order?.created_at, t]);
   const orderPhoneRawValue = useMemo(
     () =>
@@ -4389,7 +4444,7 @@ function OrderDetailsContent() {
   );
   const orderPhoneDisplayValue = useMemo(() => {
     if (!canShowOrderPhone) return t('order_details_phone_hidden');
-    if (!orderPhoneRawValue) return t('order_details_departure_not_specified');
+    if (!orderPhoneRawValue) return t('order_details_phone_not_specified');
     return formatRuMask(orderPhoneRawValue);
   }, [canShowOrderPhone, orderPhoneRawValue, t]);
   const openOrderPhoneDialer = useCallback(async () => {
@@ -4484,13 +4539,26 @@ function OrderDetailsContent() {
 
   const _selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
   const isFree = !order.assigned_to;
-  const isInFeedStatus = order.status === mapStatusToDb('feed') || order.status === t('order_status_in_feed');
+  const isInFeedStatus =
+    order.status === 'feed' ||
+    order.status === mapStatusToDb('feed') ||
+    order.status === t('order_status_in_feed');
+  const doneStatusAvailable =
+    statusSystem.isEnabled &&
+    statusSystem.regularStatuses.some((status) => status.status_key === 'done');
+  const showOrderStatusRow = statusSystem.isEnabled && !!order.status;
   const canAcceptOrder =
-    isInFeedStatus &&
+    (isInFeedStatus || !statusSystem.isEnabled || !statusSystem.feedEnabled) &&
     isFree &&
     !isSoloAdmin &&
     !isReadOnlyBySubscription &&
-    (role === 'worker' || canEditByRole());
+    canEditByRole();
+  const isAssignedToCurrentUser =
+    !!order?.assigned_to && String(order.assigned_to) === String(authUserId || '');
+  const canCompleteOrder =
+    !isReadOnlyBySubscription &&
+    !!order?.assigned_to &&
+    (isAssignedToCurrentUser ? has('canCompleteOwnOrders') : has('canCompleteOtherOrders'));
   const currency = order?.currency || companySettings?.currency;
   const resolveExpensePayer = (entry) => {
     if (String(entry?.kind || '') !== 'expense') return 'company';
@@ -4623,23 +4691,25 @@ function OrderDetailsContent() {
               {t('order_details_general_data')}
             </SectionHeader>
             <Card paddedXOnly>
-              <View style={base.row}>
-                <Text style={base.label}>{t('order_details_status')}</Text>
-                <View
-                  style={[
-                    base.rightWrap,
-                    { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
-                  ]}
-                >
-                  {order.urgent && (
-                    <View style={styles.urgentPill}>
-                      <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
-                    </View>
-                  )}
-                  <OrderStatusCapsule status={order.status} />
+              {showOrderStatusRow ? <>
+                <View style={base.row}>
+                  <Text style={base.label}>{t('order_details_status')}</Text>
+                  <View
+                    style={[
+                      base.rightWrap,
+                      { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
+                    ]}
+                  >
+                    {order.urgent && (
+                      <View style={styles.urgentPill}>
+                        <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
+                      </View>
+                    )}
+                    <OrderStatusCapsule status={order.status} companyId={order.company_id || companyId} />
+                  </View>
                 </View>
-              </View>
-              <View style={base.sep} />
+                <View style={base.sep} />
+              </> : null}
               <LabelValueRow
                 label={t('order_details_created_at')}
                 value={createdAtDisplayValue}
@@ -4730,12 +4800,12 @@ function OrderDetailsContent() {
                             return legacy ? legacy.slice(0, 5) : '';
                           })();
                           if (!hasRangeEnd) {
-                            const dateLabel = format(startDate, 'd MMMM yyyy', { locale: ru });
+                            const dateLabel = format(startDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() });
                             if (!showDepartureTime || !departureTimeLabel) return dateLabel;
                             return `${dateLabel}, ${departureTimeLabel}`;
                           }
                           const endDate = new Date(order.time_window_end);
-                          return `${format(startDate, 'd MMMM yyyy', { locale: ru })} — ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
+                          return `${format(startDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() })} — ${format(endDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() })}`;
                         })()}
                       </Text>
                     }
@@ -5314,7 +5384,7 @@ function OrderDetailsContent() {
               </Pressable>
             )}
 
-            {order.status !== mapStatusToDb('done') && !isFree && canEdit() && (
+            {doneStatusAvailable && order.status !== 'done' && !isFree && canCompleteOrder && (
               <Pressable
                 style={({ pressed }) => [
                   styles.finishButton,
@@ -5385,7 +5455,10 @@ function OrderDetailsContent() {
         confirmLabel={t('order_modal_cancel_leave')}
         cancelLabel={t('order_modal_cancel_stay')}
         confirmVariant="destructive"
-        onClose={() => setCancelVisible(false)}
+        onClose={() => {
+          pendingNavigationActionRef.current = null;
+          setCancelVisible(false);
+        }}
         onConfirm={confirmCancel}
       />
 

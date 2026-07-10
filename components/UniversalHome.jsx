@@ -7,6 +7,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { ActivityIndicator, InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../lib/personName';
+import { fetchCompanyOrderStatuses, getOrderStatusesQueryKey } from '../lib/orderStatuses';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
@@ -961,6 +962,15 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     }, 2800);
     return () => clearTimeout(timer);
   }, [homeCriticalReady]);
+
+  useEffect(() => {
+    if (!homeCriticalReady || !companyId || companySettings?.use_order_statuses !== true) return;
+    qc.prefetchQuery({
+      queryKey: getOrderStatusesQueryKey(companyId),
+      queryFn: () => fetchCompanyOrderStatuses(companyId),
+      staleTime: 5 * 60 * 1000,
+    }).catch(() => {});
+  }, [companyId, companySettings?.use_order_statuses, homeCriticalReady, qc]);
 
   useEffect(() => {
     if (!homeCriticalReady || !uid) return undefined;

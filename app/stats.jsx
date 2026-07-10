@@ -24,6 +24,7 @@ import {
 } from '../components/ui/PullToRefreshFeedback';
 import AnimatedFullscreenModal from '../components/ui/modals/AnimatedFullscreenModal';
 import { useCompanySettings } from '../hooks/useCompanySettings';
+import { useCompanyOrderStatuses } from '../lib/orderStatuses';
 import { usePermissions } from '../lib/permissions';
 import { formatCurrencyWithOptions } from '../lib/currency';
 import { getStatusDbAliases } from '../lib/orderFilters';
@@ -87,6 +88,7 @@ function StatsScreenContent() {
 
   // company settings hook must be used inside component body
   const { settings: companySettings } = useCompanySettings();
+  const statusSystem = useCompanyOrderStatuses();
 
   // currency-aware formatter (uses company currency when available)
   const fRUB = (n) => {
@@ -587,7 +589,7 @@ function StatsScreenContent() {
     try {
       // Load orders data
       let query = supabase
-        .from('orders')
+        .from('orders_accessible')
         .select(
           'id, status, time_window_start, assigned_to, start_price, finance_income_total, finance_expense_total, finance_discount_total, finance_gross_total, finance_net_total',
         )
@@ -627,17 +629,25 @@ function StatsScreenContent() {
       const netProfit = orders?.reduce((sum, o) => sum + getNet(o), 0) || 0;
 
       // Status breakdown
-      const statusRows = [
-        { key: 'done', aliases: completedStatusAliases, labelKey: 'stats_status_completed', color: TOK.SUCCESS },
-        { key: 'in_progress', aliases: inProgressStatusAliases, labelKey: 'stats_status_in_progress', color: TOK.WARNING },
-        { key: 'new', aliases: newStatusAliases, labelKey: 'stats_status_new', color: TOK.INFO },
-      ];
+      const statusColors = {
+        done: TOK.SUCCESS,
+        in_progress: TOK.WARNING,
+        new: TOK.INFO,
+      };
+      const statusRows = statusSystem.isEnabled
+        ? statusSystem.regularStatuses.map((status) => ({
+            key: status.status_key,
+            aliases: getStatusDbAliases(status.status_key),
+            label: status.name,
+            color: statusColors[status.status_key] || TOK.PRIMARY,
+          }))
+        : [];
       const statusBreakdown = statusRows
         .map((item) => {
           const filtered = (orders || []).filter((o) => item.aliases.includes(String(o.status || '').trim()));
           return {
             status: item.key,
-            label: t(item.labelKey),
+            label: item.label,
             count: filtered.length,
             color: item.color,
             amount: filtered.reduce((sum, o) => sum + getNet(o), 0),
@@ -702,7 +712,7 @@ function StatsScreenContent() {
     } catch (error) {
       console.error('Error loading stats:', error);
     }
-  }, [selectedUserId, periodRange, period, TOK, t]);
+  }, [selectedUserId, periodRange, period, TOK, statusSystem.isEnabled, statusSystem.regularStatuses, t]);
 
   // Initial load
   useEffect(() => {

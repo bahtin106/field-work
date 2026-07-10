@@ -13,6 +13,7 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { ConfirmModal, SelectModal } from '../../../components/ui/modals';
+import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { messengerBotIntegration } from '../../../lib/messengerBotIntegration';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
@@ -68,6 +69,13 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
   const authAccountType = String(authUser?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin =
     String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
+  const { settings: companySettings, isLoading: isCompanySettingsLoading } = useCompanySettings(
+    authProfile?.company_id || null,
+  );
+  const canRouteToFeed =
+    !isCompanySettingsLoading &&
+    companySettings?.use_order_statuses === true &&
+    companySettings?.feed_status_enabled === true;
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -366,32 +374,33 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
   }, [config.destination_user_id, updateConfig]);
 
   const handleAssigneeSelect = React.useCallback((assigneeId) => {
-    if (!assigneeId || assigneeId === '__feed__') {
+    if ((!assigneeId || assigneeId === '__feed__') && canRouteToFeed) {
       updateConfig({ destination_type: 'feed' });
       setAssigneeModalVisible(false);
       return;
     }
+    if (!assigneeId) return;
 
     updateConfig({
       destination_type: 'assignee',
       destination_user_id: assigneeId,
     });
     setAssigneeModalVisible(false);
-  }, [updateConfig]);
+  }, [canRouteToFeed, updateConfig]);
 
   const routingModalItems = React.useMemo(() => ([
-    {
+    ...(canRouteToFeed ? [{
       id: '__feed__',
       label: tr('feed_selected'),
       onPress: () => handleAssigneeSelect('__feed__'),
-    },
+    }] : []),
     ...assignees.map((item) => ({
       id: item.id,
       label: formatAssigneeLabel(item),
       subtitle: item?.is_blocked ? t('status_blocked') : undefined,
       onPress: () => handleAssigneeSelect(item.id),
     })),
-  ]), [assignees, formatAssigneeLabel, handleAssigneeSelect, t, tr]);
+  ]), [assignees, canRouteToFeed, formatAssigneeLabel, handleAssigneeSelect, t, tr]);
 
   const regenerateLink = React.useCallback(async () => {
     setStartLinkBusy(true);
@@ -645,23 +654,27 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
         ) : null}
         {showRoutingSection ? (
         <Card paddedXOnly style={s.sectionCard}>
-          <View style={base.row}>
-            <Text
-              style={[
-                base.label,
-                config.destination_type === 'assignee' ? s.rowLabelMuted : null,
-              ]}
-            >
-              {tr('route_to_feed')}
-            </Text>
-            <View style={s.routingControlWrap}>
-              <ThemedSwitch
-                value={config.destination_type !== 'assignee'}
-                onValueChange={handleRouteToFeedToggle}
-              />
-            </View>
-          </View>
-          <View style={base.sep} />
+          {canRouteToFeed ? (
+            <>
+              <View style={base.row}>
+                <Text
+                  style={[
+                    base.label,
+                    config.destination_type === 'assignee' ? s.rowLabelMuted : null,
+                  ]}
+                >
+                  {tr('route_to_feed')}
+                </Text>
+                <View style={s.routingControlWrap}>
+                  <ThemedSwitch
+                    value={config.destination_type !== 'assignee'}
+                    onValueChange={handleRouteToFeedToggle}
+                  />
+                </View>
+              </View>
+              <View style={base.sep} />
+            </>
+          ) : null}
           <Pressable
             style={base.row}
             onPress={() => setAssigneeModalVisible(true)}
@@ -676,13 +689,15 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
                   style={[
                     base.value,
                     s.routingValue,
-                    config.destination_type === 'assignee' ? null : s.routingValueDisabled,
+                    config.destination_type === 'assignee' || !canRouteToFeed ? null : s.routingValueDisabled,
                   ]}
                   numberOfLines={1}
                 >
                   {config.destination_type === 'assignee'
                     ? formatAssigneeLabel(assignees.find((item) => item.id === config.destination_user_id))
-                    : tr('feed_selected')}
+                    : canRouteToFeed
+                      ? tr('feed_selected')
+                      : t('common_select')}
                 </Text>
               </View>
               <View style={s.chevronButton}>
@@ -789,7 +804,7 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
           visible={assigneeModalVisible}
           title={tr('responsible_label')}
           items={routingModalItems}
-          selectedId={config.destination_type === 'assignee' ? config.destination_user_id : '__feed__'}
+          selectedId={config.destination_type === 'assignee' ? config.destination_user_id : canRouteToFeed ? '__feed__' : null}
           searchable
           onSelect={(item) => item?.onPress?.()}
           onClose={() => setAssigneeModalVisible(false)}

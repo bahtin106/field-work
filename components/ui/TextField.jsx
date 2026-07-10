@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { t as T } from '../../src/i18n';
-import { useAutoScrollOnInvalid } from '../../src/shared/forms/FormAutoScrollContext';
+import { useAutoScrollOnInvalid, useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
 import { getFieldValidationState, getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
@@ -40,6 +40,7 @@ const TextField = forwardRef(function TextField(
   {
     label,
     value,
+    validationValue,
     onChangeText,
     placeholder,
     keyboardType,
@@ -60,8 +61,9 @@ const TextField = forwardRef(function TextField(
     onBlur,
     pressable = false,
     onPress,
+    disabled = false,
     forceValidation = false,
-    required = false,
+    required,
     hideSeparator = false,
     filterInput, // Функция для фильтрации ввода (например, для паролей)
     onInvalidInput, // Callback когда пользователь вводит недопустимый символ
@@ -75,6 +77,7 @@ const TextField = forwardRef(function TextField(
   ref,
 ) {
   const { theme } = useTheme();
+  const formContext = useFormAutoScrollContext();
   const containerRef = useRef(null);
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
@@ -115,11 +118,11 @@ const TextField = forwardRef(function TextField(
 
   const validationState = getFieldValidationState({
     label,
-    value,
+    value: validationValue !== undefined ? validationValue : value,
     error,
     required,
     touched,
-    forceValidation,
+    forceValidation: forceValidation || (formContext?.validationAttempt ?? 0) > 0,
   });
   const resolvedLabel = getRequiredFieldLabel(label, validationState.isRequired);
   const isErr = validationState.isInvalid;
@@ -127,7 +130,6 @@ const TextField = forwardRef(function TextField(
     fieldRef: containerRef,
     isInvalid: isErr,
     shouldAutoScroll: !focused,
-    focus: false,
   });
   const s = styles(theme, isErr, focused, autoGrowEnabled, minContentHeight, effectiveMultiline);
   const inputRef = useRef(null);
@@ -239,7 +241,13 @@ const TextField = forwardRef(function TextField(
   }, [effectiveMultiline, pressable]);
 
   return (
-    <View ref={containerRef} style={style}>
+    <View
+      ref={containerRef}
+      style={[
+        style,
+        disabled && { opacity: theme.components?.listItem?.disabledOpacity ?? 0.5 },
+      ]}
+    >
       {!floatingLabel && resolvedLabel ? <Text style={s.topLabel}>{String(resolvedLabel)}</Text> : null}
       <View
         style={[
@@ -273,6 +281,8 @@ const TextField = forwardRef(function TextField(
             autoComplete={secureTextEntry ? 'password' : undefined}
             textContentType={secureTextEntry ? 'password' : undefined}
             importantForAutofill={secureTextEntry ? 'yes' : 'auto'}
+            editable={!disabled}
+            accessibilityState={{ disabled }}
             onKeyPress={(e) => {
               lastKeyRef.current = e?.nativeEvent?.key ?? null;
             }}
@@ -362,11 +372,13 @@ const TextField = forwardRef(function TextField(
           {pressable ? (
             <Pressable
               onPress={onPress}
+              disabled={disabled || typeof onPress !== 'function'}
               style={StyleSheet.absoluteFill}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               hitSlop={{ top: 6, bottom: 6 }}
               accessibilityRole="button"
               accessibilityLabel={buildAccessibilityLabel(label, placeholder, value)}
+              accessibilityState={{ disabled }}
             />
           ) : null}
         </View>
@@ -461,7 +473,7 @@ export function SelectField({
   onPress,
   onDisabledPress,
   error,
-  required = false,
+  required,
   forceValidation = false,
   right, // optional custom right ReactNode
   showValue = true, // when false -> only chevron shown
@@ -472,6 +484,7 @@ export function SelectField({
   valueNumberOfLines = 1,
 }) {
   const { theme } = useTheme();
+  const formContext = useFormAutoScrollContext();
   const rowRef = React.useRef(null);
   const base = listItemStyles(theme);
   const validationState = getFieldValidationState({
@@ -479,7 +492,7 @@ export function SelectField({
     value,
     error,
     required,
-    forceValidation,
+    forceValidation: forceValidation || (formContext?.validationAttempt ?? 0) > 0,
     touched: false,
   });
   const resolvedLabel = isTextLikeNode(label)
@@ -494,7 +507,6 @@ export function SelectField({
     fieldRef: rowRef,
     isInvalid: validationState.isInvalid,
     shouldAutoScroll: true,
-    focus: false,
   });
   const resolvedOnPress = disabled ? onDisabledPress : onPress;
   const isPressDisabled = typeof resolvedOnPress !== 'function';
@@ -751,19 +763,20 @@ export const DateOfBirthField = ({
   label = T('fields.dob'),
   value,
   error,
-  required = false,
+  required,
   forceValidation = false,
   onChange: _onChange, // kept for API compatibility (not used internally)
   style,
 }) => {
   const { theme } = useTheme();
+  const formContext = useFormAutoScrollContext();
   const containerRef = React.useRef(null);
   const validationState = getFieldValidationState({
     label,
     value,
     error,
     required,
-    forceValidation,
+    forceValidation: forceValidation || (formContext?.validationAttempt ?? 0) > 0,
     touched: false,
   });
   const isErr = validationState.isInvalid;
@@ -771,7 +784,6 @@ export const DateOfBirthField = ({
     fieldRef: containerRef,
     isInvalid: isErr,
     shouldAutoScroll: true,
-    focus: false,
   });
   const s = styles(theme, isErr, false);
   const sepConfig = theme.components?.input?.separator || {};

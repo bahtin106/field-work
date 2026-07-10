@@ -31,7 +31,10 @@ import {
   usePullToRefreshFeedback,
 } from '../../components/ui/PullToRefreshFeedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { resolveAppLocale } from '../../lib/localeFormatting';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
+import { usePersistedOrderStatusUsage } from '../../lib/orderStatusUsage';
+import { getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { formatPersonName } from '../../lib/personName';
 import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
@@ -94,7 +97,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 
 const LIST_CACHE_MAX_ENTRIES = 24;
 const DEFAULT_MY_ORDERS_PAGE_SIZE = 30;
-const MY_ORDERS_LIST_CACHE_STORAGE_PREFIX = 'orders.my.listCache.v3';
+const MY_ORDERS_LIST_CACHE_STORAGE_PREFIX = 'orders.my.listCache.v4';
 const MY_ORDERS_CACHE_PERSIST_DEBOUNCE_MS = 350;
 const MY_ORDERS_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const MY_ORDERS_LIST_CACHE_FRESH_MS = 45 * 1000;
@@ -252,13 +255,10 @@ function readPersistedListCachePayload(raw) {
 function excludeFeedStatuses(query) {
   const feedStatusAliases = getStatusDbAliases('feed').filter(Boolean);
   if (!feedStatusAliases.length) return query;
-  if (feedStatusAliases.length === 1) {
-    return query.neq('status', feedStatusAliases[0]);
-  }
   const encoded = feedStatusAliases
     .map((value) => `'${String(value).replace(/'/g, "''")}'`)
     .join(',');
-  return query.not('status', 'in', `(${encoded})`);
+  return query.or(`status.is.null,status.not.in.(${encoded})`);
 }
 
 function MyOrdersContent() {
@@ -348,6 +348,9 @@ function MyOrdersContent() {
           borderWidth: 1,
           borderColor: withAlpha(theme.colors.danger, 0.55),
         },
+        feedDotPlaceholder: {
+          opacity: 0,
+        },
         container: {
           padding: 16,
           paddingBottom: 40,
@@ -427,6 +430,8 @@ function MyOrdersContent() {
   const auth = useAuth();
   const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin = String(auth.profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
+  const { companyId } = useMyCompanyId();
+  const statusSystem = useCompanyOrderStatuses(companyId);
 
   useFocusEffect(
     useCallback(() => {
@@ -468,18 +473,13 @@ function MyOrdersContent() {
 
   const orderStatusOptions = useMemo(
     () =>
-      isSoloAdmin
-        ? [
-            { id: 'new', label: t('order_status_new') },
-            { id: 'in_progress', label: t('order_status_in_progress') },
-            { id: 'done', label: t('order_status_completed') },
-          ]
-        : [
-            { id: 'new', label: t('order_status_new') },
-            { id: 'in_progress', label: t('order_status_in_progress') },
-            { id: 'done', label: t('order_status_completed') },
-          ],
-    [isSoloAdmin, t],
+      statusSystem.isEnabled
+        ? statusSystem.regularStatuses.map((status) => ({
+            id: normalizeMyOrdersStatusFilter(status.status_key),
+            label: getOrderStatusLabel(status.status_key, statusSystem.statuses, t),
+          }))
+        : [],
+    [statusSystem.isEnabled, statusSystem.regularStatuses, statusSystem.statuses, t],
   );
   const statusFilterLabels = useMemo(() => {
     const labels = {
@@ -501,17 +501,16 @@ function MyOrdersContent() {
       seen.add(key);
       return { id: key, label: label || statusFilterLabels[key] || key };
     };
-    const leadingOptions = isSoloAdmin
-      ? [addOption('all', statusFilterLabels.all)]
-      : [
-          addOption('feed', statusFilterLabels.feed),
-          addOption('all', statusFilterLabels.all),
-        ];
+    if (!statusSystem.isEnabled) return [];
+    const leadingOptions = [
+      ...(statusSystem.feedEnabled && !isSoloAdmin ? [addOption('feed', statusFilterLabels.feed)] : []),
+      addOption('all', statusFilterLabels.all),
+    ];
     return [
       ...leadingOptions,
       ...orderStatusOptions.map((option) => addOption(option?.id, option?.label)),
     ].filter(Boolean);
-  }, [isSoloAdmin, orderStatusOptions, statusFilterLabels]);
+  }, [isSoloAdmin, orderStatusOptions, statusFilterLabels, statusSystem.feedEnabled, statusSystem.isEnabled]);
   const statusChipLabels = useMemo(
     () => ({
       ...statusFilterLabels,
@@ -522,23 +521,27 @@ function MyOrdersContent() {
   const statusAliasToFilterKey = useMemo(() => {
     const aliasMap = new Map();
     orderStatusOptions.forEach((opt) => {
-      const key = String(opt?.id || '').trim();
+      const key = normalizeMyOrdersStatusFilter(opt?.id);
       if (!key) return;
       aliasMap.set(key, key);
-      getStatusDbAliases(key).forEach((alias) => {
+      getStatusDbAliases(normalizeOrderStatusFilterKey(key)).forEach((alias) => {
         const aliasKey = String(alias || '').trim();
         if (aliasKey) aliasMap.set(aliasKey, key);
       });
     });
+    if (statusSystem.feedEnabled && !isSoloAdmin) {
+      getStatusDbAliases('feed').forEach((alias) => {
+        const aliasKey = String(alias || '').trim();
+        if (aliasKey) aliasMap.set(aliasKey, 'feed');
+      });
+    }
     return aliasMap;
-  }, [orderStatusOptions]);
+  }, [isSoloAdmin, orderStatusOptions, statusSystem.feedEnabled]);
 
   const handleBackPress = useCallback(() => {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);
 
-
-  const { companyId } = useMyCompanyId();
   const { settings: companySettings } = useCompanySettings(companyId);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: !!companyId,
@@ -661,9 +664,12 @@ function MyOrdersContent() {
       }
     }
 
-    if (statuses?.length) {
+    if (statusSystem.isEnabled && statuses?.length) {
       const labels = statuses
-        .map((code) => orderStatusOptions.find((opt) => opt.id === code)?.label || code)
+        .map((code) => {
+          const normalized = normalizeMyOrdersStatusFilter(code);
+          return orderStatusOptions.find((opt) => opt.id === normalized)?.label || code;
+        })
         .filter(Boolean);
       if (labels.length) {
         fullParts.push(
@@ -691,7 +697,7 @@ function MyOrdersContent() {
       if (!value) return null;
       const parsed = new Date(value);
       if (Number.isNaN(parsed.getTime())) return null;
-      return parsed.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      return parsed.toLocaleDateString(resolveAppLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
     };
 
     if (departureDateFrom || departureDateTo) {
@@ -718,7 +724,7 @@ function MyOrdersContent() {
       if (Number.isNaN(h) || Number.isNaN(m)) return null;
       const base = new Date();
       base.setHours(h, m, 0, 0);
-      return base.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      return base.toLocaleTimeString(resolveAppLocale(), { hour: '2-digit', minute: '2-digit' });
     };
 
     if (departureTimeFrom || departureTimeTo) {
@@ -755,7 +761,7 @@ function MyOrdersContent() {
       full: joinFilterSummary(fullParts, t('common_bullet')),
       compact: joinFilterSummary(compactParts, t('common_bullet')),
     };
-  }, [clientOptions, filters.values, orderStatusOptions, workTypeOptions, t]);
+  }, [clientOptions, filters.values, orderStatusOptions, statusSystem.isEnabled, workTypeOptions, t]);
 
   const cacheScopeKey = useMemo(() => {
     const scopedUserId = String(auth.user?.id || auth.profile?.id || '').trim();
@@ -786,26 +792,26 @@ function MyOrdersContent() {
     () => MY_ORDERS_STATUS_ALWAYS_VISIBLE.filter((key) => statusUsageAllowedIds.includes(key)),
     [statusUsageAllowedIds],
   );
-  const [statusUsage, setStatusUsage] = useState({});
-  const statusUsageRef = useRef({});
-  useEffect(() => {
-    let alive = true;
-    AsyncStorage.getItem(statusUsageStorageKey)
-      .then((raw) => {
-        if (!alive) return;
-        const normalized = normalizeStatusUsagePayload(raw, statusUsageAllowedIds);
-        statusUsageRef.current = normalized;
-        setStatusUsage(normalized);
-      })
-      .catch(() => {
-        if (!alive) return;
-        statusUsageRef.current = {};
-        setStatusUsage({});
-      });
-    return () => {
-      alive = false;
-    };
-  }, [statusUsageAllowedIds, statusUsageStorageKey]);
+  const hasStatusNavigation =
+    statusSystem.isEnabled &&
+    (orderStatusOptions.length > 0 || (statusSystem.feedEnabled && !isSoloAdmin));
+  const {
+    usage: statusUsage,
+    usageRef: statusUsageRef,
+    isReady: statusUsageReady,
+    persistUsage: persistStatusUsage,
+    refreshUsage: refreshStatusUsage,
+  } = usePersistedOrderStatusUsage(
+    statusUsageStorageKey,
+    statusUsageAllowedIds,
+    normalizeStatusUsagePayload,
+  );
+  const statusNavigationReady = hasStatusNavigation && statusUsageReady;
+  useFocusEffect(
+    useCallback(() => {
+      refreshStatusUsage();
+    }, [refreshStatusUsage]),
+  );
   const recentOrdersQueryKey = useMemo(
     () => buildOrdersRecentQueryKey(cacheScopeKey),
     [cacheScopeKey],
@@ -874,8 +880,9 @@ function MyOrdersContent() {
   });
   const [filter, setFilter] = useState('all');
   const rawStatusFilter = normalizeMyOrdersStatusFilter(filter);
-  const activeStatusFilter = statusUsageAllowedIds.includes(rawStatusFilter) ? rawStatusFilter : 'all';
-  const isFeedFeatureEnabled = !isSoloAdmin;
+  const activeStatusFilter =
+    hasStatusNavigation && statusUsageAllowedIds.includes(rawStatusFilter) ? rawStatusFilter : 'all';
+  const isFeedFeatureEnabled = statusSystem.isEnabled && statusSystem.feedEnabled && !isSoloAdmin;
   const effectiveFilter = activeStatusFilter;
   const recordStatusFilterUsage = useCallback(
     (nextFilter) => {
@@ -894,14 +901,9 @@ function MyOrdersContent() {
       };
       const normalized = normalizeStatusUsagePayload({ items: next }, statusUsageAllowedIds);
       statusUsageRef.current = normalized;
-      try {
-        AsyncStorage.setItem(
-          statusUsageStorageKey,
-          JSON.stringify({ savedAt: now, items: normalized }),
-        ).catch(() => {});
-      } catch {}
+      persistStatusUsage(normalized, { savedAt: now });
     },
-    [statusAlwaysVisibleKeys, statusUsageAllowedIds, statusUsageStorageKey],
+    [persistStatusUsage, statusAlwaysVisibleKeys, statusUsageAllowedIds, statusUsageRef],
   );
   const statusSelectOptions = useMemo(
     () => rankStatusFilterOptions(statusFilterOptions, statusUsage),
@@ -931,7 +933,7 @@ function MyOrdersContent() {
       if (!key || selected.includes(key)) return false;
       const label = statusChipLabels[key] || statusFilterLabels[key] || key;
       const nextWidth = estimateStatusChipWidth(label, {
-        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        hasLeadingDot: key === 'feed',
         maxWidth: active ? MY_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH : MY_ORDERS_STATUS_CHIP_MAX_WIDTH,
       });
       const nextGap = selected.length > 0 ? MY_ORDERS_STATUS_CHIP_GAP : 0;
@@ -965,7 +967,7 @@ function MyOrdersContent() {
     const getStretchMax = (key) => {
       const label = statusChipLabels[key] || statusFilterLabels[key] || key;
       const fullWidth = estimateStatusChipWidth(label, {
-        hasLeadingDot: key === 'feed' && feedState !== 'none',
+        hasLeadingDot: key === 'feed',
         maxWidth:
           activeStatusFilter === key
             ? MY_ORDERS_STATUS_CHIP_STRETCH_MAX_WIDTH
@@ -1015,7 +1017,6 @@ function MyOrdersContent() {
     return { keys: selected, moreWidth, widths };
   }, [
     activeStatusFilter,
-    feedState,
     orderedStatusQuickKeys,
     statusAlwaysVisibleKeys,
     statusChipLabels,
@@ -1156,6 +1157,10 @@ function MyOrdersContent() {
     (nextFilter, options = {}) => {
       const normalized = normalizeMyOrdersStatusFilter(nextFilter);
       const nextStatus = statusUsageAllowedIds.includes(normalized) ? normalized : 'all';
+      if (nextStatus !== activeStatusFilter) {
+        forceNetworkRefreshRef.current = true;
+        setRefreshNonce((value) => value + 1);
+      }
       setFilter(nextStatus);
       primeOrdersFromCache(nextStatus);
       setStatusSelectVisible(false);
@@ -1163,7 +1168,7 @@ function MyOrdersContent() {
         recordStatusFilterUsage(nextStatus);
       }
     },
-    [primeOrdersFromCache, recordStatusFilterUsage, statusUsageAllowedIds],
+    [activeStatusFilter, primeOrdersFromCache, recordStatusFilterUsage, statusUsageAllowedIds],
   );
   useEffect(() => {
     if (firstContentMarkedRef.current) return;
@@ -1287,14 +1292,18 @@ function MyOrdersContent() {
     relationFingerprint,
   ]);
   useEffect(() => {
-    if (!isSoloAdmin) return;
     const currentStatuses = Array.isArray(selectedStatusFilters) ? selectedStatusFilters : [];
+    const allowedKeys = new Set(
+      statusSystem.isEnabled
+        ? orderStatusOptions.map((option) => normalizeOrderStatusFilterKey(option?.id)).filter(Boolean)
+        : [],
+    );
     const allowedStatuses = currentStatuses.filter((statusKey) =>
-      statusKey === 'new' || statusKey === 'in_progress' || statusKey === 'done');
+      allowedKeys.has(normalizeOrderStatusFilterKey(statusKey)));
     if (allowedStatuses.length !== currentStatuses.length) {
       setFilterValue('statuses', allowedStatuses);
     }
-  }, [isSoloAdmin, selectedStatusFilters, setFilterValue]);
+  }, [orderStatusOptions, selectedStatusFilters, setFilterValue, statusSystem.isEnabled]);
   useEffect(() => {
     if (rawStatusFilter !== activeStatusFilter) {
       setFilter(activeStatusFilter);
@@ -1623,7 +1632,7 @@ function MyOrdersContent() {
       }
 
       const filterValues = filters.values;
-      const selectedStatusKeys = Array.isArray(filterValues.statuses)
+      const selectedStatusKeys = statusSystem.isEnabled && Array.isArray(filterValues.statuses)
         ? filterValues.statuses
             .map((code) => normalizeOrderStatusFilterKey(code))
             .filter((code) => code && code !== 'all')
@@ -1674,7 +1683,7 @@ function MyOrdersContent() {
       }
 
       const buildOrdersQuery = (selectOptions = undefined) => {
-        let query = supabase.from('orders_secure_v2').select('*', selectOptions);
+        let query = supabase.from('orders_accessible').select('*', selectOptions);
         if (key === 'all' && hasLinkedRelationFilter) {
           query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
         } else if (key === 'feed') {
@@ -1689,7 +1698,7 @@ function MyOrdersContent() {
             else if (statusAliases.length > 1) query = query.in('status', statusAliases);
           }
         }
-        if (key === 'all') query = excludeFeedStatuses(query);
+        if (key === 'all' && isFeedFeatureEnabled) query = excludeFeedStatuses(query);
         if (statusFilters.length) query = query.in('status', statusFilters);
         if (clientIds.length) query = query.in('client_id', clientIds);
         if (!Number.isNaN(sumMin)) query = query.gte('start_price', sumMin);
@@ -1725,6 +1734,7 @@ function MyOrdersContent() {
             createdTo,
             sumMin: Number.isNaN(sumMin) ? null : sumMin,
             sumMax: Number.isNaN(sumMax) ? null : sumMax,
+            excludeFeedWhenAll: isFeedFeatureEnabled,
           });
         }
 
@@ -1868,6 +1878,8 @@ function MyOrdersContent() {
     t,
     updateFeedMeta,
     useWorkTypesFlag,
+    isFeedFeatureEnabled,
+    statusSystem.isEnabled,
   ]);
 
   const filteredOrders = useMemo(() => {
@@ -2164,7 +2176,7 @@ function MyOrdersContent() {
   const listHeader = useMemo(
     () => (
       <View>
-        {visibleQuickStatusKeys.length > 0 ? (
+        {statusNavigationReady && visibleQuickStatusKeys.length > 0 ? (
           <View style={styles.filterBar}>
             <View style={styles.statusFilterRow}>
               {visibleQuickStatusKeys.map((key) => (
@@ -2197,7 +2209,6 @@ function MyOrdersContent() {
                   ) : null}
                   <View style={styles.chipContent}>
                     {key === 'feed' &&
-                      feedState !== 'none' &&
                       (feedState === 'new' ? (
                         <Animated.View
                           style={[
@@ -2219,8 +2230,10 @@ function MyOrdersContent() {
                             },
                           ]}
                         />
-                      ) : (
+                      ) : feedState === 'seen' ? (
                         <View style={[styles.feedDotBase, styles.feedDotSeen]} />
+                      ) : (
+                        <View style={[styles.feedDotBase, styles.feedDotPlaceholder]} />
                       ))}
                     <Text
                       style={[styles.chipText, activeStatusFilter === key && styles.chipTextActive]}
@@ -2314,6 +2327,7 @@ function MyOrdersContent() {
     ),
     [
       activeStatusFilter,
+      statusNavigationReady,
       searchQuery,
       styles,
       feedState,
@@ -2507,7 +2521,7 @@ function MyOrdersContent() {
             showSearchCategory={false}
             inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_clients'] }}
             ordersFilters={{
-              statuses: orderStatusOptions,
+              statuses: statusSystem.isEnabled ? orderStatusOptions : [],
               workTypes: useWorkTypesFlag ? workTypeOptions : [],
               clients: clientOptions,
               executors: [],
@@ -2526,14 +2540,16 @@ function MyOrdersContent() {
           />
         </Suspense>
       ) : null}
-      <StatusSelectModal
-        visible={statusSelectVisible}
-        onClose={() => setStatusSelectVisible(false)}
-        options={statusSelectOptions}
-        value={activeStatusFilter}
-        onChange={selectStatusFilter}
-        title={t('orders_filter_status')}
-      />
+      {hasStatusNavigation ? (
+        <StatusSelectModal
+          visible={statusSelectVisible}
+          onClose={() => setStatusSelectVisible(false)}
+          options={statusSelectOptions}
+          value={activeStatusFilter}
+          onChange={selectStatusFilter}
+          title={t('orders_filter_status')}
+        />
+      ) : null}
       {sortVisible ? (
         <Suspense fallback={null}>
           <SortSelectModal

@@ -31,6 +31,7 @@ import { useFilters } from '../../components/hooks/useFilters';
 import { UserCard } from '../../components/users/UserCard';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { formatPersonName } from '../../lib/personName';
+import { resolveAppLocale } from '../../lib/localeFormatting';
 import { pluralizeRu } from '../../lib/pluralize';
 import {
   ensureEmployeePrefetch,
@@ -597,7 +598,7 @@ function UsersIndexContent() {
       }
 
       // For 4+ days, use date-only format (no time)
-      const datePart = new Intl.DateTimeFormat('ru-RU', {
+      const datePart = new Intl.DateTimeFormat(resolveAppLocale(), {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',

@@ -3,7 +3,6 @@ import { router, usePathname } from 'expo-router';
 import React, { memo, useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -78,23 +77,28 @@ function BottomNavInner() {
   const [navVisible, setNavVisible] = React.useState(false);
   const appear = useRef(new Animated.Value(0)).current;
   const tabNavInFlightRef = useRef(false);
-  const navigateTab = React.useCallback((target, { dismiss = false } = {}) => {
+  const navigateTab = React.useCallback((target) => {
     if (!target || tabNavInFlightRef.current) return;
     tabNavInFlightRef.current = true;
 
     try {
-      if (dismiss) {
-        if (typeof router?.dismissTo === 'function') {
-          router.dismissTo(target);
-        } else if (!dismissToRoute(router, target)) {
-          router.navigate(target);
-        }
+      if (target === PATHS.home && typeof router.dismissTo === 'function') {
+        // Pop precisely to the home route. Unlike dismissAll(), this cannot
+        // restore a previously mounted child route such as Calendar.
+        router.dismissTo(PATHS.home);
       } else {
         router.navigate(target);
       }
-    } catch {}
-
-    tabNavInFlightRef.current = false;
+    } catch {
+      // A failed stack operation must not leave the user on a child route.
+      if (target === PATHS.home) {
+        try {
+          router.replace(PATHS.home);
+        } catch {}
+      }
+    } finally {
+      tabNavInFlightRef.current = false;
+    }
   }, []);
 
   // При изменении appReady на false (логаут/новый логин) - скрываем бар
@@ -193,7 +197,7 @@ function BottomNavInner() {
           label={t('bottomNav.home')}
           active={activeKey === 'home'}
           onPress={() => {
-            if (activeKey !== 'home') navigateTab(PATHS.home, { dismiss: true });
+            if (activeKey !== 'home') navigateTab(PATHS.home);
           }}
           colors={colors}
           metrics={metrics}

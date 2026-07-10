@@ -45,11 +45,6 @@ function normalizeCompanyName(value: unknown) {
   return text(value).replace(/\s+/g, ' ');
 }
 
-function buildSoloCompanyName(userId: string) {
-  const suffix = text(userId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 8);
-  return suffix ? `${SOLO_DEFAULT_COMPANY_NAME} ${suffix}` : SOLO_DEFAULT_COMPANY_NAME;
-}
-
 async function isProfileEmailOwnedByAuthUser(
   supabaseAdmin: ReturnType<typeof createClient>,
   profile: { id?: string | null } | null,
@@ -305,30 +300,11 @@ export async function handleRegisterUserRequest(req: Request) {
       existingUser = null;
     }
 
-    let existingCompany = null;
-    if (accountType === 'company') {
-      const { data, error } = await supabaseAdmin
-        .from('companies')
-        .select('id')
-        .ilike('name', companyNameInput)
-        .limit(1)
-        .maybeSingle();
-      if (error && String(error.code || '') !== 'PGRST116') {
-        await logServerIssue(supabaseAdmin, {
-          name: 'RegisterCompanyCheckError',
-          message: error.message,
-          extra: { code: error.code, companyNameInput },
-        });
-        return errorResponse(req, allowedOrigins, 'Company availability check failed', 400, 'COMPANY_CHECK_FAILED');
-      }
-      existingCompany = data;
-    }
-
     if (isCheckOnly) {
       return jsonResponse(req, allowedOrigins, {
         success: true,
         email_available: !existingUser,
-        company_available: accountType === 'company' ? !existingCompany : true,
+        company_available: true,
       });
     }
 
@@ -357,10 +333,6 @@ export async function handleRegisterUserRequest(req: Request) {
 
     if (existingUser) {
       return errorResponse(req, allowedOrigins, 'User with this email already exists', 400, 'EMAIL_TAKEN');
-    }
-
-    if (accountType === 'company' && existingCompany) {
-      return errorResponse(req, allowedOrigins, 'Company with this name already exists', 400, 'COMPANY_NAME_TAKEN');
     }
 
     const metadataCompanyName = accountType === 'company' ? companyNameInput : SOLO_DEFAULT_COMPANY_NAME;
@@ -401,10 +373,7 @@ export async function handleRegisterUserRequest(req: Request) {
     }
     createdUserId = userId;
 
-    let companyName = companyNameInput;
-    if (accountType === 'solo') {
-      companyName = buildSoloCompanyName(userId);
-    }
+    const companyName = accountType === 'solo' ? SOLO_DEFAULT_COMPANY_NAME : companyNameInput;
 
     const companyPayloads: Record<string, unknown>[] = [
       { name: companyName, timezone: companyTimeZone, created_by: userId, owner_id: userId },
@@ -452,9 +421,6 @@ export async function handleRegisterUserRequest(req: Request) {
         extra: { code: companyErr.code || null, companyName, accountType },
       });
       await supabaseAdmin.auth.admin.deleteUser(userId);
-      if (String(companyErr?.code || '') === '23505') {
-        return errorResponse(req, allowedOrigins, 'Company with this name already exists', 400, 'COMPANY_NAME_TAKEN');
-      }
       return errorResponse(req, allowedOrigins, 'Company creation failed', 400, 'COMPANY_CREATE_FAILED');
     }
 

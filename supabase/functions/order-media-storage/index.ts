@@ -254,6 +254,36 @@ async function getCallerContext(admin: ReturnType<typeof createClient>, token: s
   };
 }
 
+async function assertOrderMediaActionAllowed(
+  admin: ReturnType<typeof createClient>,
+  caller: { companyId: string; role: string },
+  action: string,
+) {
+  const normalizedAction = String(action || '').trim();
+  const requiredKeys =
+    normalizedAction === 'inspect_urls'
+      ? ['canViewOrderPhotos']
+      : normalizedAction === 'delete' || normalizedAction === 'cleanup_order'
+        ? ['canEditOrders']
+        : ['canAddGalleryPhotos', 'canAddCameraPhotos'];
+
+  const checks = await Promise.all(
+    requiredKeys.map(async (key) => {
+      const { data, error } = await admin.rpc('order_role_has_permission', {
+        p_company_id: caller.companyId,
+        p_role: caller.role,
+        p_key: key,
+      });
+      if (error) throw error;
+      return data === true;
+    }),
+  );
+
+  const allowed =
+    requiredKeys.length === 1 ? checks[0] === true : checks.some((value) => value === true);
+  if (!allowed) throw new Error('Forbidden');
+}
+
 async function getCallerAndOrderContext(admin: ReturnType<typeof createClient>, token: string, orderId: string) {
   const caller = await getCallerContext(admin, token);
   const { data: order, error: orderErr } = await admin
@@ -573,6 +603,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
     }
 
     const ctx = await getCallerAndOrderContext(admin, token, orderId);
+    await assertOrderMediaActionAllowed(admin, ctx, action);
     const isBegetOnlyAction = action === 'prepare_upload' || action === 'upload';
     if (isBegetOnlyAction && ctx.mediaProvider !== 'beget_s3') {
       return json(400, { success: false, message: 'Media provider is not Beget S3' });

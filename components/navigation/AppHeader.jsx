@@ -7,6 +7,7 @@ import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
 
@@ -119,6 +120,7 @@ const createStyles = (theme, metrics) =>
 export default function AppHeader({ options = {}, back, route, onBackPress: onBackPressProp }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const formContext = useFormAutoScrollContext();
   const nav = useNavigation();
   const routeParams = route?.params || EMPTY_ROUTE_PARAMS;
   const pathname = usePathname?.() || '';
@@ -246,6 +248,9 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
 
   const rightPress = useCallback(() => {
     if (rightDisabled) return undefined;
+    if (options?.formSubmit === true || routeParams.formSubmit === true) {
+      formContext?.beginValidationAttempt?.();
+    }
     if (typeof options?.onRightPress === 'function') return options.onRightPress();
     if (typeof routeParams.onRightPress === 'function') return routeParams.onRightPress();
     // Global action registry by id to avoid non-serializable params
@@ -256,6 +261,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     if (routeParams.headerButtonTo) return router.push(routeParams.headerButtonTo);
   }, [
     options,
+    formContext,
     routeParams,
     rightDisabled,
   ]);

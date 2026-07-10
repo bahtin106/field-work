@@ -1,5 +1,6 @@
 ﻿import React from 'react';
 import Feather from '@expo/vector-icons/Feather';
+import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
@@ -9,11 +10,15 @@ import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import TextField from '../../../components/ui/TextField';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
+import MultiSelectModal from '../../../components/ui/modals/MultiSelectModal';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { formatCurrency } from '../../../lib/currency';
+import { resolveAppLocale } from '../../../lib/localeFormatting';
 import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
+import { fetchWorkTypes } from '../../../lib/workTypes';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
+import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import {
   useDeleteCompanyFinanceRuleMutation,
   useCompanyFinanceRules,
@@ -62,6 +67,7 @@ const CONDITION_PAYMENT_STATUS_OPTIONS = [
 const IF_FILTER_OPTIONS = [
   { id: 'payment_method', labelKey: 'finance_rule_condition_fact_payment_method' },
   { id: 'payment_status', labelKey: 'finance_rule_condition_fact_payment_status' },
+  { id: 'work_type', labelKey: 'finance_rule_condition_fact_work_type' },
   { id: 'min_gross_after_discount', labelKey: 'finance_rule_condition_min_gross_after_discount' },
   { id: 'max_gross_after_discount', labelKey: 'finance_rule_condition_max_gross_after_discount' },
   { id: 'min_base_price', labelKey: 'finance_rule_condition_min_base_price' },
@@ -134,6 +140,7 @@ function createEmptyRuleDraft() {
     recipient_mode: 'company',
     condition_payment_method: 'any',
     condition_payment_status: 'any',
+    condition_work_type_ids: [],
     condition_min_gross_after_discount: '',
     condition_max_gross_after_discount: '',
     condition_min_base_price: '',
@@ -155,6 +162,7 @@ function buildConditionsJsonFromDraft(draft) {
   const selectedFilters = new Set(Array.isArray(draft?.if_filters) ? draft.if_filters : []);
   const paymentMethod = String(draft?.condition_payment_method || 'any');
   const paymentStatus = String(draft?.condition_payment_status || 'any');
+  const workTypeIds = normalizeConditionWorkTypeIds(draft?.condition_work_type_ids);
 
   if (selectedFilters.has('payment_method') && (paymentMethod === 'cash' || paymentMethod === 'cashless')) {
     conditions.push({ fact: 'payment_method', operator: 'eq', value: paymentMethod });
@@ -166,6 +174,10 @@ function buildConditionsJsonFromDraft(draft) {
     conditions.push({ fact: 'payment_status', operator: 'eq', value: paymentStatus });
   } else if (selectedFilters.has('payment_status') && paymentStatus === 'any') {
     conditions.push({ fact: 'payment_status', operator: 'eq', value: 'any' });
+  }
+
+  if (selectedFilters.has('work_type') && workTypeIds.length > 0) {
+    conditions.push({ fact: 'work_type_id', operator: 'in', value: workTypeIds });
   }
 
   for (const rangeFilter of RANGE_FILTERS) {
@@ -194,6 +206,7 @@ function parseDraftConditions(conditionsJson) {
   const result = {
     condition_payment_method: 'any',
     condition_payment_status: 'any',
+    condition_work_type_ids: [],
     condition_min_gross_after_discount: '',
     condition_max_gross_after_discount: '',
     condition_min_base_price: '',
@@ -217,6 +230,9 @@ function parseDraftConditions(conditionsJson) {
     } else if (fact === 'payment_status' && operator === 'eq' && (value === 'paid' || value === 'unpaid' || value === 'any')) {
       result.condition_payment_status = String(value);
       result.if_filters.push('payment_status');
+    } else if (fact === 'work_type_id' && (operator === 'in' || operator === 'eq')) {
+      result.condition_work_type_ids = normalizeConditionWorkTypeIds(value);
+      result.if_filters.push('work_type');
     } else {
       const normalizedFact = fact === 'price' ? 'gross_after_discount' : fact;
       const mapping = RANGE_FILTERS.find((item) => item.fact === normalizedFact);
@@ -235,9 +251,9 @@ function parseDraftConditions(conditionsJson) {
   return result;
 }
 
-function formatRuleOutcomeSummary(t, rule) {
+function formatRuleOutcomeSummary(t, rule, workTypesById = new Map()) {
   const ruleCurrency = String(rule?.currency || 'RUB');
-  const conditionsClause = formatRuleConditionsClause(t, rule?.conditions_json, ruleCurrency);
+  const conditionsClause = formatRuleConditionsClause(t, rule?.conditions_json, ruleCurrency, workTypesById);
   const recipient = String(rule?.recipient_mode || '') === 'assigned_to'
     ? t('finance_recipient_executor_dative')
     : t('finance_recipient_company_dative');
@@ -255,7 +271,7 @@ function formatRuleOutcomeSummary(t, rule) {
       .replace('{percent}', String(percentValue))
       .replace('{base}', String(subtractFrom || '').toLowerCase());
   } else {
-    const amountValue = formatCurrency(Number(rule?.fixed_amount ?? 0), ruleCurrency, 'ru-RU');
+    const amountValue = formatCurrency(Number(rule?.fixed_amount ?? 0), ruleCurrency);
     outcomeText = t(
       'order_finance_entry_sentence_fixed_plain',
     )
@@ -268,10 +284,10 @@ function formatRuleOutcomeSummary(t, rule) {
   return `${conditionsClause}, ${outcomeText}`;
 }
 
-function formatRuleConditionsClause(t, conditionsJson, currency = 'RUB') {
+function formatRuleConditionsClause(t, conditionsJson, currency = 'RUB', workTypesById = new Map()) {
   const draftConditions = parseDraftConditions(conditionsJson);
   const parts = [];
-  const locale = 'ru-RU';
+  const locale = resolveAppLocale();
   const formatConditionAmount = (raw) => {
     const value = parseNumberSafe(raw, Number.NaN);
     if (!Number.isFinite(value)) return String(raw ?? '');
@@ -300,6 +316,17 @@ function formatRuleConditionsClause(t, conditionsJson, currency = 'RUB') {
         t(statusLabel?.labelKey || String(draftConditions.condition_payment_status || '')),
       ).toLowerCase()}`,
     );
+  }
+
+  if (draftConditions.if_filters.includes('work_type')) {
+    const workTypeFact = String(t('finance_rule_condition_fact_work_type')).toLowerCase();
+    const workTypeLabels = normalizeConditionWorkTypeIds(draftConditions.condition_work_type_ids)
+      .map((id) => workTypesById.get(String(id)) || t('finance_rule_condition_work_type_unknown'))
+      .filter(Boolean);
+    const workTypeValue = workTypeLabels.length
+      ? workTypeLabels.join(', ')
+      : String(t('finance_rule_condition_work_type_select')).toLowerCase();
+    parts.push(`${workTypeFact} - ${workTypeValue}`);
   }
 
   for (const rangeFilter of RANGE_FILTERS) {
@@ -332,10 +359,26 @@ function parseNumberSafe(raw, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function normalizeConditionWorkTypeIds(value) {
+  const rawList = Array.isArray(value) ? value : value ? [value] : [];
+  return Array.from(
+    new Set(
+      rawList
+        .map((item) => String(item || '').trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 export default function FinanceRulesSettingsScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
+  const router = useRouter();
+  const { user: authUser, profile: authProfile } = useAuthContext();
+  const isSoloAdmin =
+    String(authProfile?.role || '').toLowerCase() === 'admin' &&
+    String(authUser?.user_metadata?.account_type || '').toLowerCase() === 'solo';
   const { has, loading: permissionsLoading } = usePermissions();
   const canManageFinanceRules = has('canEditFinanceEntries');
 
@@ -346,6 +389,7 @@ export default function FinanceRulesSettingsScreen() {
   const [recipientModeModalVisible, setRecipientModeModalVisible] = React.useState(false);
   const [conditionPaymentMethodModalVisible, setConditionPaymentMethodModalVisible] = React.useState(false);
   const [conditionPaymentStatusModalVisible, setConditionPaymentStatusModalVisible] = React.useState(false);
+  const [conditionWorkTypesModalVisible, setConditionWorkTypesModalVisible] = React.useState(false);
   const [ifFilterPickerVisible, setIfFilterPickerVisible] = React.useState(false);
   const [confirmApplyToExistingVisible, setConfirmApplyToExistingVisible] = React.useState(false);
   const [confirmToggleVisible, setConfirmToggleVisible] = React.useState(false);
@@ -353,11 +397,18 @@ export default function FinanceRulesSettingsScreen() {
   const [deleteRuleChoiceVisible, setDeleteRuleChoiceVisible] = React.useState(false);
   const [editorSubmitAttempt, setEditorSubmitAttempt] = React.useState(false);
   const [draft, setDraft] = React.useState(() => createEmptyRuleDraft());
+  const [workTypes, setWorkTypes] = React.useState([]);
+  const [workTypesLoading, setWorkTypesLoading] = React.useState(false);
   const { settings: companySettings } = useCompanySettings(companyId);
 
   const rulesQuery = useCompanyFinanceRules(companyId, { enabled: !!companyId });
   const saveMutation = useUpsertCompanyFinanceRuleMutation(companyId);
   const deleteMutation = useDeleteCompanyFinanceRuleMutation(companyId);
+
+  React.useEffect(() => {
+    if (!isSoloAdmin) return;
+    router.replace('/company_settings');
+  }, [isSoloAdmin, router]);
 
   React.useEffect(() => {
     let mounted = true;
@@ -386,6 +437,36 @@ export default function FinanceRulesSettingsScreen() {
       mounted = false;
     };
   }, [t, toast]);
+
+  React.useEffect(() => {
+    let mounted = true;
+
+    if (!companyId) {
+      setWorkTypes([]);
+      setWorkTypesLoading(false);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    setWorkTypesLoading(true);
+    fetchWorkTypes(companyId)
+      .then((payload) => {
+        if (!mounted) return;
+        setWorkTypes(Array.isArray(payload?.types) ? payload.types : []);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setWorkTypes([]);
+      })
+      .finally(() => {
+        if (mounted) setWorkTypesLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [companyId]);
 
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
@@ -453,6 +534,12 @@ export default function FinanceRulesSettingsScreen() {
     }
     return null;
   }, [draft?.if_filters, t]);
+  const draftWorkTypeConditionError = React.useMemo(() => {
+    const selectedFilters = new Set(Array.isArray(draft?.if_filters) ? draft.if_filters : []);
+    if (!selectedFilters.has('work_type')) return null;
+    if (normalizeConditionWorkTypeIds(draft?.condition_work_type_ids).length > 0) return null;
+    return t('finance_rule_condition_work_type_required');
+  }, [draft?.condition_work_type_ids, draft?.if_filters, t]);
   const rules = React.useMemo(() => (Array.isArray(rulesQuery.data) ? rulesQuery.data : []), [rulesQuery.data]);
   const canAddRule = rules.length < MAX_RULES_PER_COMPANY;
   const selectedIfFilters = React.useMemo(
@@ -463,6 +550,27 @@ export default function FinanceRulesSettingsScreen() {
     () => IF_FILTER_OPTIONS.filter((item) => !selectedIfFilters.includes(item.id)),
     [selectedIfFilters],
   );
+  const workTypesById = React.useMemo(() => {
+    const map = new Map();
+    for (const item of workTypes) {
+      const id = String(item?.id || '').trim();
+      if (id) map.set(id, String(item?.name || '').trim() || t('finance_rule_condition_work_type_unknown'));
+    }
+    return map;
+  }, [t, workTypes]);
+  const workTypeConditionItems = React.useMemo(() => {
+    if (workTypesLoading) {
+      return [{ value: '__loading__', label: t('work_types_settings_loading'), disabled: true }];
+    }
+    if (!workTypes.length) {
+      return [{ value: '__empty__', label: t('order_modal_work_type_empty'), disabled: true }];
+    }
+    return workTypes.map((item) => ({
+      id: String(item?.id || ''),
+      value: String(item?.id || ''),
+      label: String(item?.name || '').trim() || t('finance_rule_condition_work_type_unknown'),
+    }));
+  }, [t, workTypes, workTypesLoading]);
 
   const getOptionLabel = React.useCallback(
     (options, id) => {
@@ -472,6 +580,33 @@ export default function FinanceRulesSettingsScreen() {
     },
     [t],
   );
+
+  const getWorkTypeConditionValueLabel = React.useCallback(
+    (ids) => {
+      const normalizedIds = normalizeConditionWorkTypeIds(ids);
+      if (!normalizedIds.length) return t('finance_rule_condition_work_type_select');
+      return normalizedIds
+        .map((id) => workTypesById.get(String(id)) || t('finance_rule_condition_work_type_unknown'))
+        .join(', ');
+    },
+    [t, workTypesById],
+  );
+
+  const openConditionValueEditor = React.useCallback((filterId) => {
+    if (filterId === 'payment_method') {
+      setConditionPaymentMethodModalVisible(true);
+      return true;
+    }
+    if (filterId === 'payment_status') {
+      setConditionPaymentStatusModalVisible(true);
+      return true;
+    }
+    if (filterId === 'work_type') {
+      setConditionWorkTypesModalVisible(true);
+      return true;
+    }
+    return false;
+  }, []);
 
   const openCreate = React.useCallback(() => {
     if (!canAddRule) {
@@ -519,6 +654,7 @@ export default function FinanceRulesSettingsScreen() {
       draftAmountPositiveError ||
       draftRecipientModeError ||
       draftIfConditionsError ||
+      draftWorkTypeConditionError ||
       draftConditionsPriceError;
     if (firstError) {
       toast.error(firstError);
@@ -559,6 +695,7 @@ export default function FinanceRulesSettingsScreen() {
     draftAmountPositiveError,
     draftConditionsPriceError,
     draftIfConditionsError,
+    draftWorkTypeConditionError,
     draftNameError,
     draftRecipientModeError,
     saveMutation,
@@ -633,6 +770,8 @@ export default function FinanceRulesSettingsScreen() {
     [deleteMutation, t, toast],
   );
 
+  if (isSoloAdmin) return null;
+
   if (permissionsLoading) {
     return (
       <Screen
@@ -696,7 +835,11 @@ export default function FinanceRulesSettingsScreen() {
                 <View style={styles.ruleTextWrap}>
                   <Text style={styles.ruleName}>{rule.name}</Text>
                   <Text style={styles.ruleConditionsText}>
-                    {formatRuleOutcomeSummary(t, { ...rule, currency: companySettings?.currency || 'RUB' })}
+                    {formatRuleOutcomeSummary(
+                      t,
+                      { ...rule, currency: companySettings?.currency || 'RUB' },
+                      workTypesById,
+                    )}
                   </Text>
                 </View>
                 <ThemedSwitch
@@ -789,6 +932,7 @@ export default function FinanceRulesSettingsScreen() {
                       if_filters: (prev.if_filters || []).filter((item) => item !== filterKey),
                       ...(filterKey === 'payment_method' ? { condition_payment_method: 'any' } : {}),
                       ...(filterKey === 'payment_status' ? { condition_payment_status: 'any' } : {}),
+                      ...(filterKey === 'work_type' ? { condition_work_type_ids: [] } : {}),
                       ...(rangeFilter && filterKey === rangeFilter.minFilterId ? { [rangeFilter.minField]: '' } : {}),
                       ...(rangeFilter && filterKey === rangeFilter.maxFilterId ? { [rangeFilter.maxField]: '' } : {}),
                     }));
@@ -814,6 +958,16 @@ export default function FinanceRulesSettingsScreen() {
                   value={getOptionLabel(CONDITION_PAYMENT_STATUS_OPTIONS, draft.condition_payment_status)}
                   pressable
                   onPress={() => setConditionPaymentStatusModalVisible(true)}
+                  style={styles.field}
+                />
+              ) : null}
+
+              {filterKey === 'work_type' ? (
+                <TextField
+                  label={t('finance_rule_condition_fact_work_type')}
+                  value={getWorkTypeConditionValueLabel(draft.condition_work_type_ids)}
+                  pressable
+                  onPress={() => setConditionWorkTypesModalVisible(true)}
                   style={styles.field}
                 />
               ) : null}
@@ -855,6 +1009,9 @@ export default function FinanceRulesSettingsScreen() {
 
           {editorSubmitAttempt && draftConditionsPriceError ? (
             <Text style={styles.conditionsErrorText}>{draftConditionsPriceError}</Text>
+          ) : null}
+          {editorSubmitAttempt && draftWorkTypeConditionError ? (
+            <Text style={styles.conditionsErrorText}>{draftWorkTypeConditionError}</Text>
           ) : null}
           {editorSubmitAttempt && draftIfConditionsError ? (
             <Text style={styles.conditionsErrorText}>{draftIfConditionsError}</Text>
@@ -1089,6 +1246,23 @@ export default function FinanceRulesSettingsScreen() {
         onClose={() => setConditionPaymentStatusModalVisible(false)}
       />
 
+      <MultiSelectModal
+        visible={conditionWorkTypesModalVisible}
+        title="finance_rule_condition_fact_work_type"
+        items={workTypeConditionItems}
+        value={normalizeConditionWorkTypeIds(draft.condition_work_type_ids)}
+        searchable={!workTypesLoading && workTypes.length > 8}
+        onChange={(values) => {
+          setDraft((prev) => ({
+            ...prev,
+            condition_work_type_ids: normalizeConditionWorkTypeIds(values).filter(
+              (value) => value !== '__loading__' && value !== '__empty__',
+            ),
+          }));
+        }}
+        onClose={() => setConditionWorkTypesModalVisible(false)}
+      />
+
       <SelectModal
         visible={ifFilterPickerVisible}
         title={t('finance_rule_add_condition')}
@@ -1106,6 +1280,7 @@ export default function FinanceRulesSettingsScreen() {
             if_filters: Array.from(new Set([...(prev.if_filters || []), nextId])),
           }));
           setIfFilterPickerVisible(false);
+          openConditionValueEditor(nextId);
         }}
         onClose={() => setIfFilterPickerVisible(false)}
       />

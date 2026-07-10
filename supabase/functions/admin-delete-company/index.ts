@@ -103,6 +103,10 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
           throw new Error('Company not found');
         }
 
+        // The status guard keeps the Feed status immutable during normal operation.
+        // Allow its removal only inside this verified, all-or-nothing company deletion.
+        await tx`select set_config('app.company_deletion_in_progress', '1', true)`;
+
         await tx`create temp table _target_users(id uuid primary key) on commit drop`;
         await tx`
           insert into _target_users(id)

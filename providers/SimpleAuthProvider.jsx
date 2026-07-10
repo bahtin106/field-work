@@ -83,6 +83,12 @@ const isAbortLikeError = (error) => {
 const isInvalidRefreshTokenError = (error) =>
   INVALID_REFRESH_TOKEN_RE.test(String(error?.message || error || ''));
 
+const isAuthSessionMissingError = (error) => {
+  const name = String(error?.name || '').toLowerCase();
+  const message = String(error?.message || error || '').toLowerCase();
+  return name.includes('authsessionmissingerror') || message.includes('auth session missing');
+};
+
 const isNetworkRequestError = (error) => {
   if (!error) return false;
   const message = String(error?.message || error || '');
@@ -146,11 +152,13 @@ const tryBootstrapMyProfileFromAuth = async () => {
   try {
     const { error } = await supabase.rpc('bootstrap_my_profile_from_auth');
     if (error) {
+      if (isAuthSessionMissingError(error)) return false;
       log.warn('bootstrap_my_profile_from_auth failed:', error);
       return false;
     }
     return true;
   } catch (error) {
+    if (isAuthSessionMissingError(error)) return false;
     log.warn('bootstrap_my_profile_from_auth exception:', error);
     return false;
   }
@@ -158,12 +166,18 @@ const tryBootstrapMyProfileFromAuth = async () => {
 
 const isSessionExpiredLikeError = (error) => {
   const message = String(error?.message || error || '').toLowerCase();
-  return message.includes('сессия истекла') || message.includes('session expired') || message.includes('no session');
+  return (
+    isAuthSessionMissingError(error) ||
+    message.includes('сессия истекла') ||
+    message.includes('session expired') ||
+    message.includes('no session')
+  );
 };
 
 export function SimpleAuthProvider({ children }) {
   const [state, setState] = useState({
     isInitializing: true,
+    isSigningOut: false,
     isAuthenticated: false,
     user: null,
     profile: null,
@@ -180,6 +194,7 @@ export function SimpleAuthProvider({ children }) {
   const recoveryTimerRef = useRef(null);
   const recoveryJobIdRef = useRef(0);
   const profileLoadInFlightRef = useRef(new Map());
+  const profileAbortControllersRef = useRef(new Map());
 
   useEffect(() => {
     profileRef.current = state.profile;
@@ -233,9 +248,10 @@ export function SimpleAuthProvider({ children }) {
       const loadPromise = (async () => {
         debugLog('Loading profile for:', userId);
         const loadStartedAt = Date.now();
+        const controller = new AbortController();
+        profileAbortControllersRef.current.set(userId, controller);
 
         try {
-          const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), PROFILE_LOAD_TIMEOUT_MS);
 
           let data;
@@ -256,13 +272,16 @@ export function SimpleAuthProvider({ children }) {
           }
 
           if (!data) {
+            if (logoutInProgressRef.current || currentUserIdRef.current !== userId) return null;
             debugLog('Profile missing, requesting server bootstrap...');
             await tryBootstrapMyProfileFromAuth();
+            if (logoutInProgressRef.current || currentUserIdRef.current !== userId) return null;
 
             const { data: retriedProfile, error: retryError } = await supabase
               .from('profiles')
               .select(PROFILE_COLUMNS)
               .eq('id', userId)
+              .abortSignal(controller.signal)
               .maybeSingle();
 
             if (retryError) throw retryError;
@@ -303,7 +322,10 @@ export function SimpleAuthProvider({ children }) {
             throw error;
           }
         } finally {
-          profileLoadInFlightRef.current.delete(userId);
+          if (profileAbortControllersRef.current.get(userId) === controller) {
+            profileLoadInFlightRef.current.delete(userId);
+            profileAbortControllersRef.current.delete(userId);
+          }
         }
       })();
 
@@ -365,10 +387,15 @@ export function SimpleAuthProvider({ children }) {
     }
 
     clearProfileRecovery();
+    profileAbortControllersRef.current.forEach((controller) => {
+      try {
+        controller.abort();
+      } catch {}
+    });
+    profileAbortControllersRef.current.clear();
     profileLoadInFlightRef.current.clear();
     authRequestIdRef.current += 1;
     currentUserIdRef.current = null;
-    initialSessionHandledRef.current = false;
     signedOutSettledRef.current = true;
     profileRef.current = null;
     setState((prev) => {
@@ -382,6 +409,7 @@ export function SimpleAuthProvider({ children }) {
 
       return {
         isInitializing: false,
+        isSigningOut: false,
         isAuthenticated: false,
         user: null,
         profile: null,
@@ -409,11 +437,7 @@ export function SimpleAuthProvider({ children }) {
       const explicitlySignedOutUserId = normalizeScopeId(explicitlySignedOutUserIdRef.current);
       const nextScopeUserId = normalizeScopeId(nextUserId);
 
-      if (event === 'SIGNED_IN') {
-        explicitlySignedOutUserIdRef.current = null;
-        logoutInProgressRef.current = false;
-        signedOutSettledRef.current = false;
-      }
+      if (logoutInProgressRef.current) return;
 
       if (
         explicitlySignedOutUserId &&
@@ -423,13 +447,23 @@ export function SimpleAuthProvider({ children }) {
         return;
       }
 
+      if (
+        explicitlySignedOutUserId &&
+        nextScopeUserId === explicitlySignedOutUserId &&
+        event === 'SIGNED_IN'
+      ) {
+        const sessionResult = await supabase.auth.getSession().catch(() => null);
+        const activeUserId = normalizeScopeId(sessionResult?.data?.session?.user?.id);
+        if (activeUserId !== nextScopeUserId) return;
+      }
+
       if (explicitlySignedOutUserId && nextScopeUserId && nextScopeUserId !== explicitlySignedOutUserId) {
         explicitlySignedOutUserIdRef.current = null;
       }
 
-      // During explicit logout, ignore all non-login auth events to prevent transient UI jumps.
-      if (logoutInProgressRef.current && event !== 'SIGNED_IN') {
-        return;
+      if (event === 'SIGNED_IN') {
+        explicitlySignedOutUserIdRef.current = null;
+        signedOutSettledRef.current = false;
       }
 
       if (event === 'SIGNED_OUT' || !nextUserId) {
@@ -450,6 +484,12 @@ export function SimpleAuthProvider({ children }) {
         normalizeScopeId(cachedProfileBeforeAuth.id) !== normalizeScopeId(nextUserId);
       if (userChanged || cachedUserChanged) {
         clearProfileRecovery();
+        profileAbortControllersRef.current.forEach((controller) => {
+          try {
+            controller.abort();
+          } catch {}
+        });
+        profileAbortControllersRef.current.clear();
         profileLoadInFlightRef.current.clear();
         currentUserIdRef.current = nextUserId;
         signedOutSettledRef.current = false;
@@ -485,6 +525,7 @@ export function SimpleAuthProvider({ children }) {
       const requestId = ++authRequestIdRef.current;
       setState((prev) => ({
         isInitializing: false,
+        isSigningOut: false,
         isAuthenticated: true,
         user,
         profile: bootstrapProfile || prev.profile || null,
@@ -652,34 +693,40 @@ export function SimpleAuthProvider({ children }) {
     logoutInProgressRef.current = true;
 
     const currentUserId = state.user?.id || null;
-    const sessionPromise = supabase.auth.getSession().catch(() => null);
-    setSignedOutState({ signedOutUserId: currentUserId });
-    let signOutError = null;
-    const signOutPromise = supabase.auth.signOut({ scope: 'local' }).catch((error) => {
-      signOutError = error;
-    });
+    setState((prev) => ({ ...prev, isInitializing: true, isSigningOut: true }));
 
     let currentAccessToken = '';
+    let hadSession = false;
+    let sessionWasChecked = false;
     try {
-      const sessionResult = await Promise.race([
-        sessionPromise,
-        new Promise((resolve) => setTimeout(() => resolve(null), 800)),
-      ]);
+      const sessionResult = await supabase.auth.getSession();
+      sessionWasChecked = !sessionResult?.error;
+      hadSession = !!sessionResult?.data?.session;
       currentAccessToken = sessionResult?.data?.session?.access_token
         ? String(sessionResult.data.session.access_token)
         : '';
     } catch {}
 
+    let signOutError = null;
     try {
-      await signOutPromise;
-    } finally {
-      logoutInProgressRef.current = false;
-    }
-    if (signOutError) {
-      log.error('signOut error', signOutError);
+      const result = await supabase.auth.signOut({ scope: 'local' });
+      signOutError = result?.error || null;
+    } catch (error) {
+      signOutError = error;
     }
 
-    cleanupSessionRuntime('sign-out').catch(() => {});
+    const sessionIsGone =
+      (sessionWasChecked && !hadSession) || isAuthSessionMissingError(signOutError);
+    if (signOutError && !sessionIsGone) {
+      logoutInProgressRef.current = false;
+      log.error('signOut error', signOutError);
+      setState((prev) => ({ ...prev, isInitializing: false, isSigningOut: false }));
+      return;
+    }
+
+    const cleanupPromise = cleanupSessionRuntime('sign-out').catch(() => {});
+    setSignedOutState({ signedOutUserId: currentUserId });
+    logoutInProgressRef.current = false;
 
     if (currentUserId) {
       (async () => {
@@ -695,6 +742,8 @@ export function SimpleAuthProvider({ children }) {
         } catch {}
       })();
     }
+
+    await cleanupPromise;
   }, [setSignedOutState, state.user?.id]);
 
   const mergeAuthUserMetadata = useCallback((metadataPatch = {}) => {

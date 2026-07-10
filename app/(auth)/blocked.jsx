@@ -1,8 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
-import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -10,7 +9,6 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 export default function AuthBlockedScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const router = useRouter();
   const params = useLocalSearchParams();
   const { signOut } = useAuthContext();
   const code = String(params?.code || '').trim().toLowerCase();
@@ -46,8 +44,6 @@ export default function AuthBlockedScreen() {
                 try {
                   await signOut();
                 } catch {}
-                resetPublicAuthRoute();
-                router.replace('/(auth)/login');
               }}
             >
               <Text style={styles(theme).buttonText}>{t('btn_ok')}</Text>

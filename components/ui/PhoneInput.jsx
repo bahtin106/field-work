@@ -12,7 +12,7 @@ export default function PhoneInput({
   error,
   style,
   placeholder = '+7 (9XX) XXX-XX-XX',
-  required = false,
+  required,
   ...rest
 }) {
   const prevMaskedRef = useRef('');

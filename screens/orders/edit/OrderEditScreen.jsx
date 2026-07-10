@@ -1,5 +1,4 @@
 import { format } from 'date-fns';
-import { ru } from 'date-fns/locale';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -19,6 +18,13 @@ import {
 
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
+import {
+  getDefaultOrderStatusKey,
+  getOrderStatusLabel,
+  useCompanyOrderStatuses,
+} from '../../../lib/orderStatuses';
+import { normalizeOrderStatusFilterKey } from '../../../lib/orderFilters';
+import { resolveDateFnsLocale } from '../../../lib/localeFormatting';
 import { fetchWorkTypes, getMyCompanyId } from '../../../lib/workTypes';
 import {
   ensureRequestAssigneeNamePrefetch,
@@ -95,6 +101,7 @@ import {
 } from '../../../src/shared/validation/phone';
 import { parseClientPrefillFromSearch } from '../../../src/features/clients/prefillFromSearch';
 import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matching';
+import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 import DeferredScreen from '../../../src/shared/perf/DeferredScreen';
 import { openCoordinatesInYandex } from '../../../components/ui/map';
@@ -103,8 +110,6 @@ import { buildAssigneeSelectItems } from '../../../src/features/requests/assigne
 
 const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
-const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
-const SOLO_ADMIN_ORDER_STATUS_KEYS = ['in_progress', 'completed'];
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
@@ -163,6 +168,20 @@ function normalizeOrderRouteId(value) {
   if (!normalized) return null;
   if (ROUTE_PLACEHOLDER_RE.test(normalized)) return null;
   return normalized;
+}
+
+function findCompanyOrderStatusKey(status, statuses) {
+  const raw = String(status || '').trim();
+  if (!raw) return null;
+  const normalized = normalizeOrderStatusFilterKey(raw);
+  return (
+    (Array.isArray(statuses) ? statuses : []).find(
+      (item) =>
+        String(item?.status_key || '') === raw ||
+        String(item?.status_key || '') === normalized ||
+        String(item?.name || '') === raw,
+    )?.status_key || null
+  );
 }
 
 function parseCoordinatesFromText(input) {
@@ -258,6 +277,7 @@ function formatDateOnlyForStorage(input) {
 }
 
 function EditOrderContent() {
+  const { t: translate } = useTranslation();
   const navigation = useNavigation();
   const router = useRouter();
   const {
@@ -295,6 +315,7 @@ function EditOrderContent() {
 
   const { theme } = useTheme();
   const { profile, user } = useAuthContext();
+  const authUserId = String(profile?.id || user?.id || '').trim();
   const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin =
     String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
@@ -320,6 +341,7 @@ function EditOrderContent() {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [companyId, setCompanyId] = useState(companyIdFromParams);
+  const statusSystem = useCompanyOrderStatuses(companyId);
   const { departments } = useDepartmentsHook({
     companyId,
     enabled: !!companyId,
@@ -399,8 +421,6 @@ function EditOrderContent() {
   const [cancelVisible, setCancelVisible] = useState(false);
   const [cancelKey, setCancelKey] = useState(0);
   const [fieldErrors, setFieldErrors] = useState({});
-  const [submittedAttempt, setSubmittedAttempt] = useState(false);
-  const [touched, setTouched] = useState({});
   const titlePrefix = useMemo(() => T('order_auto_title_prefix'), []);
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
@@ -588,6 +608,7 @@ function EditOrderContent() {
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
   const allowLeaveRef = useRef(false);
+  const pendingNavigationActionRef = useRef(null);
   const needsPhoneSourceRestoreRef = useRef(false);
   const preferredPhoneSourceRestoreRef = useRef(PHONE_SOURCE_IDS.MANUAL);
   const phoneSourceIdRef = useRef(PHONE_SOURCE_IDS.MANUAL);
@@ -619,18 +640,15 @@ function EditOrderContent() {
       return next;
     });
   }, []);
-  const shouldShowError = useCallback(
-    (fieldKey) => submittedAttempt || !!touched[fieldKey],
-    [submittedAttempt, touched],
-  );
   const getFieldError = useCallback(
-    (fieldKey) => (shouldShowError(fieldKey) ? fieldErrors?.[fieldKey]?.message || null : null),
-    [fieldErrors, shouldShowError],
+    (fieldKey) => fieldErrors?.[fieldKey]?.message || null,
+    [fieldErrors],
   );
   const selectedEmployeeName = useMemo(() => {
+    if (!assigneeId) return '';
     if (selectedEmployee) return selectedEmployee.display_name || selectedEmployee.email || '';
     return assignedEmployeeLabel || T('common_noName');
-  }, [selectedEmployee, assignedEmployeeLabel]);
+  }, [assigneeId, selectedEmployee, assignedEmployeeLabel]);
   const selectedClientName = useMemo(() => {
     if (!selectedClientId) return '';
     const client = clients.find((item) => String(item.id) === String(selectedClientId));
@@ -784,13 +802,42 @@ function EditOrderContent() {
   }, [normalizeId, workTypeId, workTypeNameFallback, workTypes]);
 
   const selectedStatusLabel = useMemo(() => {
-    return statusLabel || '';
-  }, [statusLabel]);
+    if (!statusSystem.isEnabled) return statusLabel || '';
+    return getOrderStatusLabel(statusKey || statusLabel, statusSystem.statuses, translate);
+  }, [statusKey, statusLabel, statusSystem.isEnabled, statusSystem.statuses, translate]);
 
   const statusItems = useMemo(() => {
-    const statusKeys = isSoloAdmin ? SOLO_ADMIN_ORDER_STATUS_KEYS : ORDER_STATUS_KEYS;
-    return statusKeys.map((k) => ({ id: k, label: T(`order_status_${k}`) }));
-  }, [isSoloAdmin]);
+    if (!statusSystem.isEnabled) return [];
+    const availableStatuses = isSoloAdmin
+      ? statusSystem.regularStatuses
+      : statusSystem.selectableStatuses;
+    const selectedAssigneeId = String(assigneeId || '');
+    const canCompleteSelectedOrder =
+      !!selectedAssigneeId &&
+      !!authUserId &&
+      (selectedAssigneeId === authUserId
+        ? hasPermission('canCompleteOwnOrders')
+        : hasPermission('canCompleteOtherOrders'));
+    return availableStatuses
+      .filter((status) =>
+        status.status_key !== 'done' || statusKey === 'done' || canCompleteSelectedOrder,
+      )
+      .map((status) => ({
+        id: status.status_key,
+        label: getOrderStatusLabel(status.status_key, statusSystem.statuses, translate),
+      }));
+  }, [
+    assigneeId,
+    authUserId,
+    hasPermission,
+    isSoloAdmin,
+    statusKey,
+    statusSystem.isEnabled,
+    statusSystem.regularStatuses,
+    statusSystem.selectableStatuses,
+    statusSystem.statuses,
+    translate,
+  ]);
   const workTypeItems = useMemo(
     () => [
       {
@@ -1284,6 +1331,48 @@ function EditOrderContent() {
     [titlePrefix],
   );
 
+  useEffect(() => {
+    const normalizedStart = normalizeDateOrNull(departureDate);
+    const normalizedEnd = normalizeDateOrNull(departureEndDate);
+    const hasValidDateRange =
+      !isDepartureRange ||
+      !!(
+        normalizedStart &&
+        normalizedEnd &&
+        normalizedEnd.getTime() >= normalizedStart.getTime()
+      );
+
+    if (resolveTitleForSave(title, normalizedStart)) clearFieldError('title');
+    if (workTypeId) clearFieldError('work_type_id');
+    if (selectedClientId) clearFieldError('client_id');
+    if (
+      !selectedClientId ||
+      addressMode !== ORDER_ADDRESS_MODE.OBJECT ||
+      selectedObjectId
+    ) {
+      clearFieldError('object_id');
+    }
+    if (normalizedStart && hasValidDateRange) clearFieldError('time_window_start');
+    if (hasDepartureTimeValue(departureTime)) clearFieldError('departure_time');
+    if (effectiveToFeed || effectiveAssigneeId) clearFieldError('assigned_to');
+  }, [
+    addressMode,
+    clearFieldError,
+    departureDate,
+    departureEndDate,
+    departureTime,
+    effectiveAssigneeId,
+    effectiveToFeed,
+    hasDepartureTimeValue,
+    isDepartureRange,
+    normalizeDateOrNull,
+    resolveTitleForSave,
+    selectedClientId,
+    selectedObjectId,
+    title,
+    workTypeId,
+  ]);
+
   const buildSnapshot = useCallback(
     (draft) =>
       JSON.stringify({
@@ -1395,6 +1484,9 @@ function EditOrderContent() {
       const nextWorkTypeResolved =
         typeof row.work_type_id !== 'undefined' || workTypeIdFromParams !== null;
       const nextStatus = row.status || (nextToFeed ? T('order_status_in_feed') : T('order_status_new'));
+      const nextStatusKey = statusSystem.isEnabled
+        ? findCompanyOrderStatusKey(nextStatus, statusSystem.statuses)
+        : null;
       const nextPrice = row.start_price !== null && row.start_price !== undefined ? String(row.start_price) : '';
       const fallbackName =
         String(row.work_type_name || row.work_type?.name || workTypeNameFromParams || '').trim() || '';
@@ -1443,13 +1535,12 @@ function EditOrderContent() {
       setToFeed(nextToFeed);
       setUrgent(nextUrgent);
       setWorkTypeId(nextWorkTypeId);
-      setStatusLabel(nextStatus);
-      try {
-        const found = ORDER_STATUS_KEYS.find((k) => T(`order_status_${k}`) === nextStatus);
-        setStatusKey(found || null);
-      } catch {
-        setStatusKey(null);
-      }
+      setStatusLabel(
+        statusSystem.isEnabled
+          ? getOrderStatusLabel(nextStatusKey || nextStatus, statusSystem.statuses, T)
+          : nextStatus,
+      );
+      setStatusKey(nextStatusKey);
       setPrice(nextPrice);
 
       snapshotRef.current = buildSnapshot({
@@ -1485,7 +1576,7 @@ function EditOrderContent() {
         urgent: nextUrgent,
         price: nextPrice,
         workTypeId: nextWorkTypeId,
-        status: nextStatus,
+        status: statusSystem.isEnabled ? nextStatusKey : nextStatus,
       });
       userEditedRef.current = false;
       hydratedOrderIdRef.current = id;
@@ -1502,7 +1593,7 @@ function EditOrderContent() {
 
       if (!nextWorkTypeResolved || nextWorkTypeId == null) {
         supabase
-          .from('orders')
+          .from('orders_accessible')
           .select('work_type_id, client_id, time_window_end')
           .eq('id', id)
           .maybeSingle()
@@ -1550,7 +1641,7 @@ function EditOrderContent() {
               urgent: nextUrgent,
               price: nextPrice,
               workTypeId: resolvedWorkTypeId,
-              status: nextStatus,
+              status: statusSystem.isEnabled ? nextStatusKey : nextStatus,
             });
             userEditedRef.current = false;
           })
@@ -1578,6 +1669,8 @@ function EditOrderContent() {
     isSoloAdmin,
     soloAdminDisplayName,
     soloAdminUserId,
+    statusSystem.isEnabled,
+    statusSystem.statuses,
     titlePrefix,
   ]);
   useEffect(() => {
@@ -1588,11 +1681,14 @@ function EditOrderContent() {
     if (toFeed) {
       setToFeed(false);
     }
-    if (statusKey === 'in_feed') {
-      setStatusKey('new');
-      setStatusLabel(T('order_status_new'));
+    if (statusKey === 'feed') {
+      const nextStatusKey = statusSystem.isEnabled
+        ? getDefaultOrderStatusKey(statusSystem.statuses)
+        : null;
+      setStatusKey(nextStatusKey);
+      setStatusLabel(getOrderStatusLabel(nextStatusKey, statusSystem.statuses, T));
     }
-  }, [assigneeId, isSoloAdmin, soloAdminUserId, statusKey, toFeed]);
+  }, [assigneeId, isSoloAdmin, soloAdminUserId, statusKey, statusSystem.isEnabled, statusSystem.statuses, toFeed]);
   useEffect(() => {
     if (!assigneeId) {
       assignedLabelRequestIdRef.current += 1;
@@ -1649,7 +1745,7 @@ function EditOrderContent() {
       urgent,
       price,
       workTypeId,
-      status: statusLabel,
+      status: statusSystem.isEnabled ? statusKey : statusLabel,
     });
     return current !== snapshotRef.current;
   })();
@@ -1664,6 +1760,7 @@ function EditOrderContent() {
         const sub = BackHandler.addEventListener('hardwareBackPress', () => {
           if (allowLeaveRef.current) return false;
           if (isDirty) {
+            pendingNavigationActionRef.current = null;
             setCancelKey((k) => k + 1);
             setCancelVisible(true);
             return true;
@@ -1839,6 +1936,7 @@ function EditOrderContent() {
   }, [toastError, toastInfo, toastSuccess, toastWarning]);
 
   const performLeave = useCallback(() => {
+    pendingNavigationActionRef.current = null;
     allowLeaveRef.current = true;
     if (navigation && typeof navigation.goBack === 'function') {
       navigation.goBack();
@@ -1849,10 +1947,18 @@ function EditOrderContent() {
 
   const confirmCancel = useCallback(() => {
     setCancelVisible(false);
+    const pendingAction = pendingNavigationActionRef.current;
+    pendingNavigationActionRef.current = null;
+    if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
+      allowLeaveRef.current = true;
+      navigation.dispatch(pendingAction);
+      return;
+    }
     performLeave();
-  }, [performLeave]);
+  }, [navigation, performLeave]);
 
   const handleCancelPress = useCallback(() => {
+    pendingNavigationActionRef.current = null;
     if (isDirty) {
       setCancelKey((k) => k + 1);
       setCancelVisible(true);
@@ -1865,6 +1971,7 @@ function EditOrderContent() {
     const sub = navigation.addListener('beforeRemove', (e) => {
       if (allowLeaveRef.current || !isDirty) return;
       e.preventDefault();
+      pendingNavigationActionRef.current = e?.data?.action || null;
       setCancelKey((k) => k + 1);
       setCancelVisible(true);
     });
@@ -1899,12 +2006,19 @@ function EditOrderContent() {
       users: employees,
       departmentsById,
       t: T,
-      includeFeed: !isSoloAdmin,
+      includeFeed: !isSoloAdmin && (!statusSystem.isEnabled || statusSystem.feedEnabled),
       onSelectFeed: () => {
         setAssigneeId(null);
         setToFeed(true);
-        setStatusKey('in_feed');
-        setStatusLabel(T('order_status_in_feed'));
+        const nextStatusKey = statusSystem.isEnabled
+          ? getDefaultOrderStatusKey(statusSystem.statuses, { toFeed: true })
+          : null;
+        setStatusKey(nextStatusKey);
+        setStatusLabel(
+          statusSystem.isEnabled
+            ? getOrderStatusLabel(nextStatusKey, statusSystem.statuses, T)
+            : T('order_status_in_feed'),
+        );
         setAssigneeModalVisible(false);
       },
       onSelectUser: (userId) => {
@@ -1921,14 +2035,21 @@ function EditOrderContent() {
           setAssignedEmployeeLabel('');
         }
         setToFeed(false);
-        if (statusKey === 'in_feed') {
-          setStatusKey('new');
-          setStatusLabel(T('order_status_new'));
+        if (statusKey === 'feed') {
+          const nextStatusKey = statusSystem.isEnabled
+            ? getDefaultOrderStatusKey(statusSystem.statuses)
+            : null;
+          setStatusKey(nextStatusKey);
+          setStatusLabel(
+            statusSystem.isEnabled
+              ? getOrderStatusLabel(nextStatusKey, statusSystem.statuses, T)
+              : T('order_status_new'),
+          );
         }
         setAssigneeModalVisible(false);
       },
     });
-  }, [departments, employees, isSoloAdmin, statusKey]);
+  }, [departments, employees, isSoloAdmin, statusKey, statusSystem.feedEnabled, statusSystem.isEnabled, statusSystem.statuses]);
   const customAddressDraft = useMemo(
     () => ({
       country,
@@ -2093,8 +2214,6 @@ function EditOrderContent() {
 
   const handleSave = async () => {
     if (permissionsLoading) return;
-    setSubmittedAttempt(true);
-    setFieldErrors({});
     if (!hasPermission('canEditOrders')) {
       showToast(T('order_edit_no_permission'), 'warning');
       return;
@@ -2145,7 +2264,11 @@ function EditOrderContent() {
     // Allow React state from the last input event to flush before validation/save.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const resolvedTitle = resolveTitleForSave(title, departureDate);
+    const normalizedDepartureDate = normalizeDateOrNull(departureDate);
+    const normalizedDepartureEndDate = normalizeDateOrNull(departureEndDate);
+    const normalizedPhone = toE164MobilePhoneOrNull(phone);
+    const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
+    const resolvedTitle = resolveTitleForSave(title, normalizedDepartureDate);
     const nextErrors = {};
     if (isFieldRequired('title') && !resolvedTitle) {
       nextErrors.title = { message: T('order_validation_title_required') };
@@ -2153,7 +2276,7 @@ function EditOrderContent() {
     if (isFieldRequired('comment') && !String(description || '').trim()) {
       nextErrors.comment = { message: T('field_settings_required_fill') };
     }
-    if (isFieldRequired('time_window_start') && !normalizeDateOrNull(departureDate)) {
+    if (isFieldRequired('time_window_start') && !normalizedDepartureDate) {
       nextErrors.time_window_start = { message: T('order_validation_date_required') };
     }
     if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
@@ -2178,119 +2301,64 @@ function EditOrderContent() {
     ) {
       nextErrors.object_id = { message: T('objects_select_required_for_order') };
     }
-    const normalizedPhoneForRequired = toE164MobilePhoneOrNull(phone);
-    if (isFieldRequired('phone') && !normalizedPhoneForRequired) {
+    if (isDepartureRange && !normalizedDepartureEndDate) {
+      nextErrors.time_window_start = { message: T('order_validation_date_required') };
+    } else if (
+      isDepartureRange &&
+      normalizedDepartureDate &&
+      normalizedDepartureEndDate &&
+      normalizedDepartureEndDate.getTime() < normalizedDepartureDate.getTime()
+    ) {
+      nextErrors.time_window_start = { message: T('order_validation_date_range_invalid') };
+    }
+    if (isFieldRequired('phone') && !normalizedPhone) {
       nextErrors.phone = {
         message: phone ? T('order_validation_phone_format') : T('order_validation_phone_required'),
       };
+    }
+    const rawPhone = (phone || '').replace(/\D/g, '');
+    if (
+      rawPhone &&
+      (!isValidOptionalMobilePhone(String(phone || '')) || !normalizedPhone)
+    ) {
+      nextErrors.phone = { message: T('order_validation_phone_format') };
     }
     if (Object.keys(nextErrors).length) {
       setFieldErrors(nextErrors);
       return;
     }
+    setFieldErrors({});
 
-    const rawPhone = (phone || '').replace(/\D/g, '');
-    if (rawPhone && !isValidOptionalMobilePhone(String(phone || ''))) {
-      setFieldErrors((prev) => ({ ...prev, phone: { message: T('order_validation_phone_format') } }));
-      return showToast(T('order_validation_phone_format'), 'error');
-    }
-    if (rawPhone && !toE164MobilePhoneOrNull(phone)) {
-      setFieldErrors((prev) => ({ ...prev, phone: { message: T('order_validation_phone_format') } }));
-      return showToast(T('order_validation_phone_format'), 'error');
-    }
-    const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
     if (canEditOrderAmount && String(price ?? '').trim() && parsedPrice === null) {
       return showToast(T('order_validation_amount_format'), 'error');
     }
     if (canEditOrderAmount && parsedPrice != null && parsedPrice < 0) {
       return showToast(T('order_validation_amount_format'), 'error');
     }
+    if (!selectedClientId && normalizedPhone) {
+      return showToast(T('order_validation_client_required_for_contact_details'), 'error');
+    }
 
-    await proceedSave();
+    await proceedSave({
+      normalizedDepartureDate,
+      normalizedDepartureEndDate,
+      normalizedPhone,
+      parsedPrice,
+    });
   };
 
-  const proceedSave = async () => {
+  const proceedSave = async ({
+    normalizedDepartureDate,
+    normalizedDepartureEndDate,
+    normalizedPhone,
+    parsedPrice,
+  }) => {
     try {
       if (savingRef.current || saving) return;
       savingRef.current = true;
       setSaving(true);
       showToast(T('toast_saving'), 'info', { sticky: true });
 
-      const normalizedDepartureDate = normalizeDateOrNull(departureDate);
-      if (isFieldRequired('time_window_start') && !normalizedDepartureDate) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          time_window_start: { message: T('order_validation_date_required') },
-        }));
-        showToast(T('order_validation_date_required'), 'error');
-        return;
-      }
-      if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          departure_time: { message: T('order_validation_departure_time_required') },
-        }));
-        showToast(T('order_validation_departure_time_required'), 'error');
-        return;
-      }
-      const normalizedDepartureEndDate = normalizeDateOrNull(departureEndDate);
-      if (isDepartureRange && !normalizedDepartureEndDate) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          time_window_start: { message: T('order_validation_date_required') },
-        }));
-        showToast(T('order_validation_date_required'), 'error');
-        return;
-      }
-      if (
-        isDepartureRange &&
-        normalizedDepartureDate &&
-        normalizedDepartureEndDate &&
-        normalizedDepartureEndDate.getTime() < normalizedDepartureDate.getTime()
-      ) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          time_window_start: { message: T('order_validation_date_range_invalid') },
-        }));
-        showToast(T('order_validation_date_range_invalid'), 'error');
-        return;
-      }
-
-      const normalizedPhone = toE164MobilePhoneOrNull(phone);
-      const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
-      if (canEditOrderAmount && String(price ?? '').trim() && parsedPrice === null) {
-        showToast(T('order_validation_amount_format'), 'error');
-        return;
-      }
-      if (canEditOrderAmount && parsedPrice != null && parsedPrice < 0) {
-        showToast(T('order_validation_amount_format'), 'error');
-        return;
-      }
-      if (isFieldRequired('client_id') && !selectedClientId) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          client_id: { message: T('order_validation_client_required') },
-        }));
-        showToast(T('order_validation_client_required'), 'error');
-        return;
-      }
-      if (
-        isFieldRequired('object_id') &&
-        selectedClientId &&
-        addressMode === ORDER_ADDRESS_MODE.OBJECT &&
-        !selectedObjectId
-      ) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          object_id: { message: T('objects_select_required_for_order') },
-        }));
-        showToast(T('objects_select_required_for_order'), 'error');
-        return;
-      }
-      if (!selectedClientId && normalizedPhone) {
-        showToast(T('order_validation_client_required_for_contact_details'), 'error');
-        return;
-      }
       const existingComment = String(orderData?.comment ?? '');
       const nextComment = String(description ?? '');
       const isCommentChanged = nextComment !== existingComment;
@@ -2320,7 +2388,7 @@ function EditOrderContent() {
               work_type_id: normalizeId(workTypeId),
             }
           : {}),
-        ...(statusLabel ? { status: statusLabel } : {}),
+        ...(statusSystem.isEnabled ? { status: statusKey || null } : {}),
       };
 
       const saveOnce = async (expectedUpdatedAt) =>
@@ -2372,7 +2440,7 @@ function EditOrderContent() {
         urgent,
         price,
         workTypeId,
-        status: statusLabel,
+        status: statusSystem.isEnabled ? statusKey : statusLabel,
       });
       userEditedRef.current = false;
       showToast(T('toast_success'), 'success');
@@ -2405,11 +2473,12 @@ function EditOrderContent() {
                 label={withRequiredLabel(T('order_field_title'), isFieldRequired('title'))}
                 placeholder={T('order_placeholder_title')}
                 value={title}
+                validationValue={resolveTitleForSave(title, displayDepartureDate)}
+                required={isFieldRequired('title')}
                 onChangeText={(value) => {
                   setTitle(value);
                   clearFieldError('title');
                 }}
-                onBlur={() => setTouched((prev) => ({ ...prev, title: true }))}
                 multiline
                 minLines={1}
                 style={styles.field}
@@ -2427,11 +2496,11 @@ function EditOrderContent() {
                 label={withRequiredLabel(T('order_field_description'), isFieldRequired('comment'))}
                 placeholder={T('order_placeholder_description')}
                 value={description}
+                required={isFieldRequired('comment')}
                 onChangeText={(value) => {
                   setDescription(value);
                   clearFieldError('comment');
                 }}
-                onBlur={() => setTouched((prev) => ({ ...prev, comment: true }))}
                 multiline
                 minLines={1}
                 style={styles.field}
@@ -2448,7 +2517,9 @@ function EditOrderContent() {
               <TextField
                 label={withRequiredLabel(T('order_field_work_type'), isFieldRequired('work_type_id'))}
                 value={selectedWorkTypeName}
+                validationValue={workTypeId}
                 placeholder={T('order_details_work_type_not_selected')}
+                required={isFieldRequired('work_type_id')}
                 pressable
                 style={styles.field}
                 onPress={() => setWorkTypeModalVisible(true)}
@@ -2467,11 +2538,14 @@ function EditOrderContent() {
       focusField,
       getFieldError,
       isFieldRequired,
+      displayDepartureDate,
+      resolveTitleForSave,
       selectedWorkTypeName,
       setDescription,
       styles.field,
       title,
       useWorkTypes,
+      workTypeId,
       withRequiredLabel,
     ],
   );
@@ -2485,6 +2559,8 @@ function EditOrderContent() {
               <TextField
                 label={withRequiredLabel(T('routes_clients_client'), isFieldRequired('client_id'))}
                 value={selectedClientName || T('common_select')}
+                validationValue={selectedClientId}
+                required={isFieldRequired('client_id')}
                 pressable
                 style={styles.field}
                 onPress={() => setClientModalVisible(true)}
@@ -2498,8 +2574,17 @@ function EditOrderContent() {
           return (
             <>
               <TextField
-                label={withRequiredLabel(T('create_order_client_object_label'), isFieldRequired('object_id'))}
+                label={withRequiredLabel(
+                  T('create_order_client_object_label'),
+                  isFieldRequired('object_id') && addressMode === ORDER_ADDRESS_MODE.OBJECT,
+                )}
                 value={selectedObjectDisplay}
+                validationValue={
+                  addressMode === ORDER_ADDRESS_MODE.OBJECT ? selectedObjectId : addressMode
+                }
+                required={
+                  isFieldRequired('object_id') && addressMode === ORDER_ADDRESS_MODE.OBJECT
+                }
                 pressable
                 style={styles.field}
                 onPress={() => setObjectModalVisible(true)}
@@ -2534,7 +2619,6 @@ function EditOrderContent() {
                   setPhone(value);
                   clearFieldError('phone');
                 }}
-                onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
                 style={styles.field}
                 required={isFieldRequired('phone')}
                 error={getFieldError('phone') ? 'invalid' : undefined}
@@ -2548,6 +2632,7 @@ function EditOrderContent() {
     },
     [
       clearFieldError,
+      addressMode,
       getFieldError,
       isFieldRequired,
       phone,
@@ -2555,6 +2640,7 @@ function EditOrderContent() {
       selectedPhoneSourceLabel,
       selectedClientId,
       selectedClientName,
+      selectedObjectId,
       selectedObjectDisplay,
       setPhoneSourceModalVisible,
       styles.field,
@@ -2583,12 +2669,14 @@ function EditOrderContent() {
           <>
             <TextField
               label={withRequiredLabel(T('order_field_departure_date'), isFieldRequired('time_window_start'))}
+              validationValue={displayDepartureDate}
+              required={isFieldRequired('time_window_start')}
               value={
                 displayDepartureDate
                   ? (() => {
-                      const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
+                      const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() });
                       if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
-                      const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
+                      const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() });
                       return `${startLabel} — ${endLabel}`;
                     })()
                   : T('order_placeholder_departure_date')
@@ -2620,9 +2708,11 @@ function EditOrderContent() {
           <>
             <TextField
               label={withRequiredLabel(T('order_field_departure_time'), isFieldRequired('departure_time'))}
+              validationValue={displayDepartureTime}
+              required={isFieldRequired('departure_time')}
               value={
                 hasDepartureTimeValue(displayDepartureTime)
-                  ? format(displayDepartureTime, 'HH:mm', { locale: ru })
+                  ? format(displayDepartureTime, 'HH:mm', { locale: resolveDateFnsLocale() })
                   : T('order_placeholder_departure_time')
               }
               pressable
@@ -2654,12 +2744,17 @@ function EditOrderContent() {
         return (
           <>
             <TextField
-              label={withRequiredLabel(T('create_order_label_executor'), isFieldRequired('assigned_to') && !toFeed)}
+              label={withRequiredLabel(
+                T('create_order_label_executor'),
+                isFieldRequired('assigned_to') && !effectiveToFeed,
+              )}
               value={
                 toFeed
                   ? T('create_order_executor_in_feed')
-                  : selectedEmployeeName || T('order_details_not_assigned')
+                  : selectedEmployeeName || T('create_order_executor_placeholder')
               }
+              validationValue={effectiveToFeed ? 'feed' : effectiveAssigneeId}
+              required={isFieldRequired('assigned_to') && !effectiveToFeed}
               pressable
               style={styles.field}
               onPress={() => setAssigneeModalVisible(true)}
@@ -2685,6 +2780,8 @@ function EditOrderContent() {
       displayDepartureDate,
       displayDepartureEndDate,
       displayDepartureTime,
+      effectiveAssigneeId,
+      effectiveToFeed,
       getFieldError,
       hasDepartureTimeValue,
       isDepartureRange,
@@ -2801,14 +2898,16 @@ function EditOrderContent() {
             {generalPlanningFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditPlanningField(fieldKey)}</View>
             ))}
-            <TextField
-              label={T('orders_filter_status')}
-              value={selectedStatusLabel}
-              placeholder={T('orders_filter_status')}
-              pressable
-              style={styles.field}
-              onPress={() => setStatusModalVisible(true)}
-            />
+            {statusSystem.isEnabled && statusItems.length > 0 ? (
+              <TextField
+                label={T('orders_filter_status')}
+                value={selectedStatusLabel}
+                placeholder={T('orders_filter_status')}
+                pressable
+                style={styles.field}
+                onPress={() => setStatusModalVisible(true)}
+              />
+            ) : null}
           </Card>
 
           {secondaryPlanningFieldKeys.length > 0 ? (
@@ -2948,7 +3047,7 @@ function EditOrderContent() {
       />
 
       <SelectModal
-        visible={statusModalVisible}
+        visible={statusSystem.isEnabled && statusItems.length > 0 && statusModalVisible}
         title={T('orders_filter_status')}
         items={statusItems}
         searchable={false}
@@ -2957,7 +3056,7 @@ function EditOrderContent() {
           try {
             setStatusKey(item?.id ?? null);
             setStatusLabel(item?.label ?? '');
-            if (item?.id === 'in_feed') {
+            if (item?.id === 'feed') {
               setAssigneeId(null);
               setToFeed(true);
             } else {
@@ -3135,7 +3234,10 @@ function EditOrderContent() {
       <ConfirmModal
         key={`cancel-${cancelKey}`}
         visible={cancelVisible}
-        onClose={() => setCancelVisible(false)}
+        onClose={() => {
+          pendingNavigationActionRef.current = null;
+          setCancelVisible(false);
+        }}
         title={T('dlg_leave_title')}
         message={T('dlg_leave_msg')}
         confirmLabel={T('dlg_leave_confirm')}

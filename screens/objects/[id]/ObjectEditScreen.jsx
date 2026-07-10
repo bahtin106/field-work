@@ -423,6 +423,7 @@ export default function EditObjectScreen() {
   const [viewerCategoryLabel, setViewerCategoryLabel] = React.useState('');
   const [removeMediaSection, setRemoveMediaSection] = React.useState(null);
   const allowLeaveRef = React.useRef(false);
+  const pendingNavigationActionRef = React.useRef(null);
   const objectMediaRef = React.useRef({});
   const initialObjectMediaSectionsRef = React.useRef([]);
   const viewerRawPhotosRef = React.useRef([]);
@@ -770,6 +771,7 @@ export default function EditObjectScreen() {
     const sub = navigation.addListener('beforeRemove', (event) => {
       if (allowLeaveRef.current || !isDirty) return;
       event.preventDefault();
+      pendingNavigationActionRef.current = event?.data?.action || null;
       setCancelVisible(true);
     });
     return sub;
@@ -1565,7 +1567,10 @@ export default function EditObjectScreen() {
 
       <ConfirmModal
         visible={cancelVisible}
-        onClose={() => setCancelVisible(false)}
+        onClose={() => {
+          pendingNavigationActionRef.current = null;
+          setCancelVisible(false);
+        }}
         title={t('dlg_leave_title')}
         message={t('dlg_leave_msg')}
         confirmLabel={t('dlg_leave_confirm')}
@@ -1573,6 +1578,13 @@ export default function EditObjectScreen() {
         confirmVariant="destructive"
         onConfirm={() => {
           setCancelVisible(false);
+          const pendingAction = pendingNavigationActionRef.current;
+          pendingNavigationActionRef.current = null;
+          allowLeaveRef.current = true;
+          if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
+            navigation.dispatch(pendingAction);
+            return;
+          }
           goBack();
         }}
       />

@@ -8,7 +8,7 @@ import Card from '../../../components/ui/Card';
 import TextField from '../../../components/ui/TextField';
 import { useCompanyAccessState } from '../../../hooks/useCompanyAccessState';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
-import { isCompanyNameAvailable, normalizeCompanyName, validateCompanyName } from '../../../lib/companyName';
+import { normalizeCompanyName, validateCompanyName } from '../../../lib/companyName';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -118,8 +118,6 @@ export default function AdminCompanyEditScreen() {
       const normalizedName = normalizeCompanyName(name);
       const nameError = validateCompanyName(normalizedName, t);
       if (nameError) throw new Error(nameError);
-      const isAvailable = await isCompanyNameAvailable(normalizedName, companyId);
-      if (!isAvailable) throw new Error(t('errors_companyName_duplicate'));
       return saveCompany({
         p_company_id: companyId,
         p_name: normalizedName,

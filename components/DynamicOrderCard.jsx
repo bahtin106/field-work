@@ -29,15 +29,19 @@ import { useTheme } from '../theme/ThemeProvider';
 /* ===== Utils ===== */
 
 const CARD_PRESS_GUARD_MS = 250;
-const CARD_DATE_FORMATTER_RU = new Intl.DateTimeFormat('ru-RU', {
-  day: 'numeric',
-  month: 'short',
-  year: 'numeric',
-});
-const CARD_TIME_FORMATTER_RU = new Intl.DateTimeFormat('ru-RU', {
-  hour: '2-digit',
-  minute: '2-digit',
-});
+const CARD_DATE_FORMATTERS = new Map();
+
+function getCardDateFormatters(locale) {
+  const key = String(locale || 'ru').toLowerCase().startsWith('en') ? 'en-US' : 'ru-RU';
+  const cached = CARD_DATE_FORMATTERS.get(key);
+  if (cached) return cached;
+  const formatters = {
+    date: new Intl.DateTimeFormat(key, { day: 'numeric', month: 'short', year: 'numeric' }),
+    time: new Intl.DateTimeFormat(key, { hour: '2-digit', minute: '2-digit' }),
+  };
+  CARD_DATE_FORMATTERS.set(key, formatters);
+  return formatters;
+}
 
 const PRIMARY_ROW_LABEL_KEYS = {
   customer_name: 'order_details_customer',
@@ -83,10 +87,11 @@ function parseDisplayDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function formatDateShort(iso, showTime = true, explicitTime = '') {
+function formatDateShort(iso, showTime = true, explicitTime = '', locale = 'ru') {
   const d = parseDisplayDate(iso);
   if (!d) return '';
-  const parts = CARD_DATE_FORMATTER_RU.formatToParts(d);
+  const formatters = getCardDateFormatters(locale);
+  const parts = formatters.date.formatToParts(d);
   const day = parts.find((p) => p.type === 'day')?.value || String(d.getDate());
   const month = parts.find((p) => p.type === 'month')?.value || '';
   const year = parts.find((p) => p.type === 'year')?.value || String(d.getFullYear());
@@ -95,7 +100,7 @@ function formatDateShort(iso, showTime = true, explicitTime = '') {
     const time = normalizeTimeOnly(explicitTime);
     if (time) return `${dateStr}, ${time}`;
     if (hasExplicitTimeInDatetime(iso)) {
-      return `${dateStr}, ${CARD_TIME_FORMATTER_RU.format(d)}`;
+      return `${dateStr}, ${formatters.time.format(d)}`;
     }
   }
   return dateStr;
@@ -121,8 +126,8 @@ function parseDepartureTime(order) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
-function formatPrice(val, currency = 'RUB') {
-  return formatCurrency(val, currency, 'ru-RU');
+function formatPrice(val, currency = 'RUB', locale = 'ru') {
+  return formatCurrency(val, currency, String(locale).toLowerCase().startsWith('en') ? 'en-US' : 'ru-RU');
 }
 
 function getOptionLabel(field, value) {
@@ -248,7 +253,7 @@ function DynamicOrderCard({
   companyCurrency = null, // optional currency from parent screen
   companySettingsOverride = null, // optional settings snapshot from parent list
 }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { theme } = useTheme();
   const { profile } = useAuthContext();
   const hasCompanySettingsOverride =
@@ -686,12 +691,12 @@ function DynamicOrderCard({
     priceValue !== null &&
     priceValue !== undefined &&
     String(priceValue).trim().length > 0;
-  const priceText = showPrice ? formatPrice(priceValue, order?.currency || companyCurrency || 'RUB') : '';
+  const priceText = showPrice ? formatPrice(priceValue, order?.currency || companyCurrency || 'RUB', locale) : '';
   const footerLeftText =
     context === 'calendar' && bottomTimeStr
       ? bottomTimeStr
       : showDate
-        ? formatDateShort(bottomDateIso, showDepartureTime, bottomTimeStr)
+        ? formatDateShort(bottomDateIso, showDepartureTime, bottomTimeStr, locale)
         : '';
   const footerRightText = showExecutor ? String(resolvedExecutorName || executorName || '').trim() : '';
   const footerRightTopText = showExecutor ? (priceText || ' ') : ' ';
@@ -756,6 +761,7 @@ function DynamicOrderCard({
         </Text>
         <OrderStatusCapsule
           status={statusTitle}
+          companyId={order?.company_id}
           style={{ maxWidth: '48%', flexShrink: 1 }}
           textStyle={{ flexShrink: 1 }}
         />

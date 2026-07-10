@@ -30,6 +30,7 @@ import { resolveTagErrorMessage } from '../../src/features/tags/errors';
 import { uploadClientAvatar } from '../../src/features/clients/avatar';
 import { CLIENT_COMMENT_MAX_LENGTH } from '../../src/features/clients/constants';
 import { FEEDBACK_CODES, FieldErrorText, getMessageByCode } from '../../src/shared/feedback';
+import { useClearResolvedFieldErrors } from '../../src/shared/forms/useClearResolvedFieldErrors';
 import {
   buildClientAdditionalPhonesPatch,
   CLIENT_ADDITIONAL_PHONE_SLOT_COUNT,
@@ -241,6 +242,11 @@ export default function NewClientScreen() {
   const cleanLastName = String(lastName || '').trim();
   const cleanMiddleName = String(middleName || '').trim();
   const hasAnyName = !!(cleanFirstName || cleanLastName || cleanMiddleName);
+  useClearResolvedFieldErrors({
+    isResolved: hasAnyName,
+    fieldKeys: ['first_name', 'middle_name', 'last_name'],
+    setFieldErrors,
+  });
   const shouldShowAnyNameError =
     (shouldShowError('first_name') || shouldShowError('last_name') || shouldShowError('middle_name')) &&
     !hasAnyName;

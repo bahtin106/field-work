@@ -1,7 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 const TELEGRAM_PROVIDER = 'telegram';
-const FEED_STATUS = '\u0412 \u043b\u0435\u043d\u0442\u0435';
 const NEW_STATUS = '\u041d\u043e\u0432\u044b\u0439';
 const CONFIRM_TEXT = '\u2705 \u0417\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u044f\u0432\u043a\u0438';
 const RESTART_TEXT = '\u041d\u0430\u0447\u0430\u0442\u044c \u0437\u0430\u043d\u043e\u0432\u043e';
@@ -1916,13 +1915,16 @@ async function createOrderFromConversation(
     integration.destination_type === 'assignee'
       ? normalizeUuidOrNull(integration.destination_user_id)
       : null;
-  const statusCandidates = assignedTo ? [NEW_STATUS, 'Новая'] : [FEED_STATUS];
   const { data: company, error: companyError } = await admin
     .from('companies')
-    .select('currency')
+    .select('currency, use_order_statuses, feed_status_enabled')
     .eq('id', integration.company_id)
     .maybeSingle();
   if (companyError) throw companyError;
+  const useCompanyStatuses = company?.use_order_statuses === true;
+  const statusCandidates = useCompanyStatuses
+    ? [assignedTo ? 'new' : company?.feed_status_enabled === true ? 'feed' : 'new']
+    : [NEW_STATUS];
   let createdOrderId: string | null = null;
   let lastInsertError: unknown = null;
 

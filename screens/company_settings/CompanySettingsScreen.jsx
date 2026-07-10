@@ -27,7 +27,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { Feather } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
-import { isCompanyNameAvailable, normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
+import { normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
 import { FUNCTIONS } from '../../lib/constants';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
@@ -506,11 +506,6 @@ export default function CompanySettings() {
       closeCompanyEditor();
       return;
     }
-    const available = await isCompanyNameAvailable(normalizedName, companyId);
-    if (!available) {
-      setCompanyNameError(t('errors_companyName_duplicate'));
-      return;
-    }
     setSavingCompany(true);
     try {
       await toast.promise(() => updateSetting('name', normalizedName), {
@@ -526,7 +521,7 @@ export default function CompanySettings() {
     } finally {
       setSavingCompany(false);
     }
-  }, [closeCompanyEditor, companyId, companyNameDraft, companyNameInitial, t, toast, updateSetting]);
+  }, [closeCompanyEditor, companyNameDraft, companyNameInitial, t, toast, updateSetting]);
 
   // Time zones list
   const tzItems = React.useMemo(() => {

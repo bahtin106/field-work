@@ -62,6 +62,7 @@ const ORDER_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.GENERAL,
     inputKind: 'boolean',
     supportsRequired: false,
+    defaultEnabled: false,
     sortOrder: 40,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'client_id', {
@@ -97,7 +98,7 @@ const ORDER_FIELDS = [
     labelKey: 'create_order_label_date',
     sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
     inputKind: 'datetime',
-    defaultRequired: true,
+    defaultRequired: false,
     sortOrder: 100,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'departure_time', {
@@ -209,12 +210,14 @@ const OBJECT_FIELDS = [
     labelKey: 'order_field_country',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
+    defaultEnabled: false,
     sortOrder: 20,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'region', {
     labelKey: 'order_field_region',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
+    defaultEnabled: false,
     sortOrder: 30,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'district', {
@@ -254,18 +257,21 @@ const OBJECT_FIELDS = [
     labelKey: 'order_field_postal_code',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
+    defaultEnabled: false,
     sortOrder: 80,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'floor', {
     labelKey: 'order_field_floor',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
+    defaultEnabled: false,
     sortOrder: 90,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'entrance', {
     labelKey: 'order_field_entrance',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
+    defaultEnabled: false,
     sortOrder: 100,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'apartment', {
@@ -278,24 +284,28 @@ const OBJECT_FIELDS = [
     labelKey: 'order_field_comment',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDITIONAL,
     inputKind: 'multiline',
+    defaultEnabled: false,
     sortOrder: 120,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_1', {
     labelKey: 'order_field_secondary_phone',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
+    defaultEnabled: false,
     sortOrder: 130,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_2', {
     labelKey: 'client_field_additional_phone_2',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
+    defaultEnabled: false,
     sortOrder: 140,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_3', {
     labelKey: 'client_field_additional_phone_3',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
+    defaultEnabled: false,
     sortOrder: 150,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_1', {
@@ -303,6 +313,7 @@ const OBJECT_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
+    defaultEnabled: false,
     sortOrder: 160,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_2', {
@@ -310,6 +321,7 @@ const OBJECT_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
+    defaultEnabled: false,
     sortOrder: 170,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_3', {
@@ -317,6 +329,7 @@ const OBJECT_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
+    defaultEnabled: false,
     sortOrder: 180,
   }),
 ];
@@ -361,12 +374,14 @@ const CLIENT_FIELDS = [
     labelKey: 'clients_comment_label',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDITIONAL,
     inputKind: 'multiline',
+    defaultEnabled: false,
     sortOrder: 50,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'email', {
     labelKey: 'view_label_email',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'email',
+    defaultEnabled: false,
     sortOrder: 60,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'phone', {
@@ -455,13 +470,8 @@ const EMPLOYEE_FIELDS = [
     labelKey: 'label_birthdate',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'date',
+    defaultEnabled: false,
     sortOrder: 70,
-  }),
-  createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'department_id', {
-    labelKey: 'label_department',
-    sectionKey: FIELD_SETTINGS_SECTIONS.COMPANY,
-    inputKind: 'select',
-    sortOrder: 80,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'role', {
     labelKey: 'label_role',
@@ -472,7 +482,7 @@ const EMPLOYEE_FIELDS = [
     defaultRequired: true,
     lockedEnabled: true,
     lockedRequired: true,
-    sortOrder: 90,
+    sortOrder: 80,
   }),
 ];
 

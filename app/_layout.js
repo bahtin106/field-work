@@ -27,7 +27,6 @@ import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
 import {
   getLastPublicAuthRoute,
-  normalizePublicAuthRoute,
   rememberPublicAuthRoute,
   resetPublicAuthRoute,
 } from '../lib/authFlowNavigationState';
@@ -187,7 +186,7 @@ function _BrandedLoadingScreen({ theme, label }) {
 }
 
 function RootLayoutInner() {
-  const { isInitializing, isAuthenticated, user } = useAuthContext();
+  const { isInitializing, isSigningOut, isAuthenticated, user } = useAuthContext();
   const { t } = useTranslation();
   const toast = useToast();
   const { theme } = useTheme();
@@ -205,6 +204,10 @@ function RootLayoutInner() {
   const notificationIdsByOrderRef = useRef(new Map());
   const pendingInitialNotificationResponseRef = useRef(null);
   const initialNotificationCheckedRef = useRef(Platform.OS === 'web');
+  const previousAuthStateRef = useRef(isAuthenticated);
+  const returnToHomeAfterLogoutRef = useRef(false);
+  const authSnapshotRef = useRef({ isAuthenticated, userId: String(user?.id || '') });
+  authSnapshotRef.current = { isAuthenticated, userId: String(user?.id || '') };
   const [initialNotificationCheckPending, setInitialNotificationCheckPending] = useState(Platform.OS !== 'web');
   const [pendingNotificationLaunch, setPendingNotificationLaunch] = useState(false);
   const inAuthGroup = segments[0] === '(auth)';
@@ -226,6 +229,24 @@ function RootLayoutInner() {
     const target = String(targetPath || '').trim().replace(/\/+$/, '') || '/';
     return current === target;
   }, [pathname]);
+
+  const isAuthenticatedUserCurrent = useCallback((expectedUserId) => {
+    const snapshot = authSnapshotRef.current;
+    return (
+      snapshot.isAuthenticated === true &&
+      String(snapshot.userId || '') === String(expectedUserId || '')
+    );
+  }, []);
+
+  useEffect(() => {
+    if (previousAuthStateRef.current && !isAuthenticated) {
+      // A nested orders navigator can retain its last child (for example, Calendar).
+      // A fresh session after an explicit logout must always start at the home route.
+      returnToHomeAfterLogoutRef.current = true;
+      resetPublicAuthRoute();
+    }
+    previousAuthStateRef.current = isAuthenticated;
+  }, [isAuthenticated]);
 
   const hasAccessRelevantProfileChange = useCallback((payload) => {
     if (!payload || typeof payload !== 'object') return true;
@@ -299,24 +320,10 @@ function RootLayoutInner() {
       resetPublicAuthRoute();
       return;
     }
-    if (inAuthFlow) {
-      const currentAuthRoute = normalizePublicAuthRoute({ pathname, segments });
-      const rememberedAuthRoute = rememberPublicAuthRoute({ pathname, segments });
-      const preferredAuthRoute = getLastPublicAuthRoute('/(auth)/login');
-      if (
-        currentAuthRoute === '/(auth)/login' &&
-        rememberedAuthRoute &&
-        preferredAuthRoute &&
-        preferredAuthRoute !== currentAuthRoute
-      ) {
-        const frameId = requestAnimationFrame(() => {
-          router.replace(preferredAuthRoute);
-        });
-        return () => cancelAnimationFrame(frameId);
-      }
+    if (inAuthFlow && !isBlockedScreen) {
+      rememberPublicAuthRoute({ pathname, segments });
     }
-    return undefined;
-  }, [inAuthFlow, isAuthenticated, pathname, router, segments]);
+  }, [inAuthFlow, isAuthenticated, isBlockedScreen, pathname, segments]);
 
   useEffect(() => {
     if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return undefined;
@@ -356,8 +363,15 @@ function RootLayoutInner() {
   useEffect(() => {
     if (isInitializing) return;
     if (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen) return;
-    if (!isAuthenticated && !inAuthFlow && !isSamePath('/login') && !isSamePath('/(auth)/login')) {
-      router.replace(getLastPublicAuthRoute('/(auth)/login'));
+    if (isAuthenticated && returnToHomeAfterLogoutRef.current && !isBlockedScreen) {
+      if (isSamePath('/orders')) {
+        returnToHomeAfterLogoutRef.current = false;
+      } else {
+        router.replace('/orders');
+      }
+    } else if (!isAuthenticated && !inAuthFlow) {
+      const target = getLastPublicAuthRoute('/(auth)/login');
+      if (!isSamePath(target)) router.replace(target);
     } else if (isAuthenticated && inAuthFlow && !isBlockedScreen && !isSamePath('/orders')) {
       router.replace('/orders');
     }
@@ -398,6 +412,7 @@ function RootLayoutInner() {
 
   const enforceAccess = useCallback(async () => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
+    const expectedUserId = String(user.id);
     if (accessCheckInFlightRef.current) return;
     const now = Date.now();
     if (now - lastAccessCheckAtRef.current < ACCESS_CHECK_MIN_GAP_MS) return;
@@ -410,6 +425,7 @@ function RootLayoutInner() {
       const isBlockedScreen = inAuthGroup && seg[1] === 'blocked';
 
       const { data: accessData, error: accessError } = await supabase.rpc('get_my_access_state');
+      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
 
       if (!accessError) {
         const accessRow = Array.isArray(accessData) ? accessData[0] : accessData;
@@ -448,7 +464,8 @@ function RootLayoutInner() {
         return;
       }
 
-      const profile = await loadOwnAccessProfile(user.id);
+      const profile = await loadOwnAccessProfile(expectedUserId);
+      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
       if (!profile) {
         // Fail-open: transient profile lookup issues should not kick active users into a block loop.
         return;
@@ -482,7 +499,7 @@ function RootLayoutInner() {
     } finally {
       accessCheckInFlightRef.current = false;
     }
-  }, [isAuthenticated, isInitializing, isSamePath, loadOwnAccessProfile, router, t, user?.id]);
+  }, [isAuthenticated, isAuthenticatedUserCurrent, isInitializing, isSamePath, loadOwnAccessProfile, router, t, user?.id]);
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
@@ -844,9 +861,12 @@ function RootLayoutInner() {
   const openSupportFeedbackFromNotification = useCallback(
     async (feedbackId) => {
       if (!feedbackId || notificationOpenInFlightRef.current) return;
+      const expectedUserId = authSnapshotRef.current.userId;
+      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
       notificationOpenInFlightRef.current = true;
       try {
         const feedback = await getSupportRequestById(feedbackId);
+        if (!isAuthenticatedUserCurrent(expectedUserId)) return;
         if (!feedback?.id) {
           router.replace('/admin/feedbacks');
           return;
@@ -857,20 +877,25 @@ function RootLayoutInner() {
           params: { id: feedback.id },
         });
       } catch {
-        router.replace('/admin/feedbacks');
+        if (isAuthenticatedUserCurrent(expectedUserId)) {
+          router.replace('/admin/feedbacks');
+        }
       } finally {
         notificationOpenInFlightRef.current = false;
       }
     },
-    [router],
+    [isAuthenticatedUserCurrent, router],
   );
 
   const openOrderFromNotification = useCallback(
     async (orderId) => {
       const normalizedOrderId = String(orderId || '').trim();
       if (!normalizedOrderId || notificationOpenInFlightRef.current) return;
+      const expectedUserId = authSnapshotRef.current.userId;
+      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
       notificationOpenInFlightRef.current = true;
       try {
+        if (!isAuthenticatedUserCurrent(expectedUserId)) return;
         router.replace({
           pathname: `/orders/${normalizedOrderId}`,
           params: {
@@ -881,13 +906,15 @@ function RootLayoutInner() {
 
         dismissPresentedNotificationsForOrder(normalizedOrderId).catch(() => {});
       } catch {
-        toast.error(t('push_open_generic_error'));
-        router.replace('/orders');
+        if (isAuthenticatedUserCurrent(expectedUserId)) {
+          toast.error(t('push_open_generic_error'));
+          router.replace('/orders');
+        }
       } finally {
         notificationOpenInFlightRef.current = false;
       }
     },
-    [dismissPresentedNotificationsForOrder, router, t, toast],
+    [dismissPresentedNotificationsForOrder, isAuthenticatedUserCurrent, router, t, toast],
   );
 
   useEffect(() => {
@@ -917,6 +944,8 @@ function RootLayoutInner() {
 
     const handleResponse = async (response, Notifications) => {
       if (!active || !response) return;
+      const expectedUserId = authSnapshotRef.current.userId;
+      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
       const dedupeKey = getNotificationResponseKey(response);
       if (dedupeKey && lastHandledNotificationKeyRef.current === dedupeKey) return;
       if (dedupeKey) lastHandledNotificationKeyRef.current = dedupeKey;
@@ -942,7 +971,10 @@ function RootLayoutInner() {
     const init = async () => {
       try {
         const Notifications = await import('expo-notifications');
+        const expectedUserId = authSnapshotRef.current.userId;
+        if (!active || !isAuthenticatedUserCurrent(expectedUserId)) return;
         const presented = await Notifications.getPresentedNotificationsAsync?.();
+        if (!active || !isAuthenticatedUserCurrent(expectedUserId)) return;
         if (Array.isArray(presented)) {
           for (const item of presented) rememberNotificationIdentifier(item);
         }
@@ -1002,6 +1034,7 @@ function RootLayoutInner() {
     getNotificationResponseKey,
     hasNotificationNavigationTarget,
     isAuthenticated,
+    isAuthenticatedUserCurrent,
     isBlockedScreen,
     isInitializing,
     openSupportFeedbackFromNotification,
@@ -1032,7 +1065,11 @@ function RootLayoutInner() {
     pathname,
   ]);
 
-  if (isInitializing || initialNotificationCheckPending || (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen)) {
+  if (
+    (isInitializing && !isSigningOut) ||
+    initialNotificationCheckPending ||
+    (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen)
+  ) {
     return (
       <SafeAreaView
         edges={rootSafeEdges}
@@ -1075,50 +1112,71 @@ function RootLayoutInner() {
               >
                 <Stack.Screen name="(auth)" />
                 <Stack.Screen name="orders" />
-                <Stack.Screen
-                  name="app_settings/AppSettings"
-                  options={{ title: t('routes.app_settings/AppSettings') }}
-                />
-                <Stack.Screen
-                  name="company_settings/index"
-                  options={{ title: t('routes.company_settings/index') }}
-                />
-                <Stack.Screen
-                  name="company_settings/sections/telegram-bot"
-                  options={{ title: t('routes.company_settings/sections/telegram-bot') }}
-                />
-                <Stack.Screen
-                  name="company_settings/sections/max-bot"
-                  options={{ title: t('routes.company_settings/sections/max-bot') }}
-                />
-                <Stack.Screen
-                  name="company_settings/sections/order-feed-fields"
-                  options={{ title: t('settings_management_feed_fields') }}
-                />
-                <Stack.Screen name="users/index" options={{ title: t('routes.users/index') }} />
-                <Stack.Screen name="users/new" options={{ title: t('routes.users/new') }} />
-                <Stack.Screen name="users/[id]/index" options={{ title: t('routes.users/[id]/index') }} />
-                <Stack.Screen name="users/[id]/edit" options={{ title: t('routes.users/[id]/edit') }} />
-                <Stack.Screen name="clients/index" options={{ title: t('routes.clients/index') }} />
-                <Stack.Screen name="clients/new" options={{ title: t('routes.clients/new') }} />
-                <Stack.Screen name="clients/[id]/index" options={{ title: t('routes.clients/[id]/index') }} />
-                <Stack.Screen name="clients/[id]/edit" options={{ title: t('routes.clients/[id]/edit') }} />
-                <Stack.Screen name="billing/index" options={{ title: t('routes.billing/index') }} />
-                <Stack.Screen name="admin/index" />
-                <Stack.Screen name="admin/users/index" />
-                <Stack.Screen name="admin/users/[id]/index" />
-                <Stack.Screen name="admin/users/[id]/edit" />
-                <Stack.Screen name="admin/companies/index" />
-                <Stack.Screen name="admin/companies/details" />
-                <Stack.Screen name="admin/companies/edit" />
-                <Stack.Screen name="admin/feedbacks/index" />
-                <Stack.Screen name="admin/feedbacks/[id]/index" />
-                <Stack.Screen name="admin/promocodes/index" />
-                <Stack.Screen name="admin/storage/index" />
-                <Stack.Screen name="admin/server/index" />
+                  <Stack.Screen
+                    name="app_settings/AppSettings"
+                    options={{ title: t('routes.app_settings/AppSettings') }}
+                  />
+                  <Stack.Screen
+                    name="company_settings/index"
+                    options={{ title: t('routes.company_settings/index') }}
+                  />
+                  <Stack.Screen
+                    name="company_settings/sections/telegram-bot"
+                    options={{ title: t('routes.company_settings/sections/telegram-bot') }}
+                  />
+                  <Stack.Screen
+                    name="company_settings/sections/max-bot"
+                    options={{ title: t('routes.company_settings/sections/max-bot') }}
+                  />
+                  <Stack.Screen
+                    name="company_settings/sections/order-feed-fields"
+                    options={{ title: t('settings_management_feed_fields') }}
+                  />
+                  <Stack.Screen
+                    name="company_settings/sections/order-statuses"
+                    options={{ title: t('order_statuses_title') }}
+                  />
+                  <Stack.Screen name="users/index" options={{ title: t('routes.users/index') }} />
+                  <Stack.Screen name="users/new" options={{ title: t('routes.users/new') }} />
+                  <Stack.Screen name="users/[id]/index" options={{ title: t('routes.users/[id]/index') }} />
+                  <Stack.Screen name="users/[id]/edit" options={{ title: t('routes.users/[id]/edit') }} />
+                  <Stack.Screen name="clients/index" options={{ title: t('routes.clients/index') }} />
+                  <Stack.Screen name="clients/new" options={{ title: t('routes.clients/new') }} />
+                  <Stack.Screen name="clients/[id]/index" options={{ title: t('routes.clients/[id]/index') }} />
+                  <Stack.Screen name="clients/[id]/edit" options={{ title: t('routes.clients/[id]/edit') }} />
+                  <Stack.Screen name="billing/index" options={{ title: t('routes.billing/index') }} />
+                  <Stack.Screen name="admin/index" />
+                  <Stack.Screen name="admin/users/index" />
+                  <Stack.Screen name="admin/users/[id]/index" />
+                  <Stack.Screen name="admin/users/[id]/edit" />
+                  <Stack.Screen name="admin/companies/index" />
+                  <Stack.Screen name="admin/companies/details" />
+                  <Stack.Screen name="admin/companies/edit" />
+                  <Stack.Screen name="admin/feedbacks/index" />
+                  <Stack.Screen name="admin/feedbacks/[id]/index" />
+                  <Stack.Screen name="admin/promocodes/index" />
+                  <Stack.Screen name="admin/storage/index" />
+                  <Stack.Screen name="admin/server/index" />
                 <Stack.Screen name="stats" options={{ title: t('routes.stats') }} />
               </Stack>
             </View>
+            {isSigningOut || (!isAuthenticated && !inAuthFlow) ? (
+              <View
+                pointerEvents="auto"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  left: 0,
+                  zIndex: 100,
+                  elevation: 100,
+                  backgroundColor: theme.colors.background,
+                }}
+              >
+                <_BrandedLoadingScreen theme={theme} label={t('toast_loading_info')} />
+              </View>
+            ) : null}
             {isAuthenticated ? <RouteFreshnessBoundary /> : null}
             {isAuthenticated && !isBlockedScreen && <BottomNav />}
             {isAuthenticated && <LastSeenTracker />}

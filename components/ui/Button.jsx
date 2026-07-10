@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useTheme } from '../../theme';
+import { useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
 
 export default function Button({
   title,
@@ -19,8 +20,10 @@ export default function Button({
   disabled,
   loading,
   style,
+  formSubmit = false,
 }) {
   const { theme } = useTheme();
+  const formContext = useFormAutoScrollContext();
   const [autoLoading, setAutoLoading] = useState(false);
   const mountedRef = useRef(true);
   const pressLockedRef = useRef(false);
@@ -129,6 +132,7 @@ export default function Button({
   const s = styles(theme, palette, sizes, isDisabled);
   const handlePress = () => {
     if (isDisabled || pressLockedRef.current) return;
+    if (formSubmit) formContext?.beginValidationAttempt?.();
     const result = onPress?.();
     if (result && typeof result.then === 'function') {
       pressLockedRef.current = true;

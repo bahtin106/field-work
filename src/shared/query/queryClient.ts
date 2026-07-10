@@ -247,6 +247,9 @@ function isDurableOfflineQuery(queryKey: any): boolean {
   if (key0 === 'clients' || key0 === 'objects' || key0 === 'tags' || key0 === 'field-settings') {
     return true;
   }
+  if (key0 === 'company-order-statuses') {
+    return true;
+  }
   if (
     key0 === 'company' ||
     key0 === 'department' ||

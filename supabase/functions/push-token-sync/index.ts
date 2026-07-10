@@ -69,6 +69,12 @@ export async function handlePushTokenSyncRequest(req: Request) {
       quiet_start?: string | null;
       quiet_end?: string | null;
       quiet_timezone?: string | null;
+      prefs?: {
+        new_orders?: boolean;
+        feed_orders?: boolean;
+        reminders?: boolean;
+        reminder_delay_minutes?: number;
+      };
     };
 
     const action = String(body.action || 'upsert').trim();
@@ -144,6 +150,76 @@ export async function handlePushTokenSyncRequest(req: Request) {
       }
     };
 
+    const upsertEventPrefs = async (incoming: Record<string, unknown>) => {
+      const patch: {
+        new_orders?: boolean;
+        feed_orders?: boolean;
+        reminders?: boolean;
+        reminder_delay_minutes?: number;
+      } = {};
+
+      if (typeof incoming?.new_orders === 'boolean') patch.new_orders = incoming.new_orders;
+      if (typeof incoming?.feed_orders === 'boolean') patch.feed_orders = incoming.feed_orders;
+      if (typeof incoming?.reminders === 'boolean') patch.reminders = incoming.reminders;
+      const requestedDelay = Number(incoming?.reminder_delay_minutes);
+      if (Number.isFinite(requestedDelay)) {
+        patch.reminder_delay_minutes = Math.min(
+          30 * 24 * 60,
+          Math.max(1, Math.round(requestedDelay)),
+        );
+      }
+      if (!Object.keys(patch).length) throw new Error('No notification preferences supplied');
+
+      let supportsReminderDelay = true;
+      let prefs: {
+        allow?: boolean | null;
+        new_orders?: boolean | null;
+        feed_orders?: boolean | null;
+        reminders?: boolean | null;
+        reminder_delay_minutes?: number | null;
+      } | null = null;
+
+      const fullPrefs = await admin
+        .from('notification_prefs')
+        .select('allow, new_orders, feed_orders, reminders, reminder_delay_minutes')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (fullPrefs.error && isMissingReminderDelayColumnError(fullPrefs.error)) {
+        supportsReminderDelay = false;
+        const legacyPrefs = await admin
+          .from('notification_prefs')
+          .select('allow, new_orders, feed_orders, reminders')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (legacyPrefs.error) throw legacyPrefs.error;
+        prefs = legacyPrefs.data;
+      } else {
+        if (fullPrefs.error) throw fullPrefs.error;
+        prefs = fullPrefs.data;
+      }
+
+      const prefsRow: Record<string, unknown> = {
+        user_id: user.id,
+        allow: prefs?.allow !== false,
+        new_orders: patch.new_orders ?? prefs?.new_orders ?? true,
+        feed_orders: patch.feed_orders ?? prefs?.feed_orders ?? true,
+        reminders: patch.reminders ?? prefs?.reminders ?? true,
+      };
+      if (supportsReminderDelay) {
+        prefsRow.reminder_delay_minutes =
+          patch.reminder_delay_minutes ??
+          (Number.isFinite(prefs?.reminder_delay_minutes)
+            ? Number(prefs?.reminder_delay_minutes)
+            : 20);
+      }
+
+      const { error: prefsError } = await admin
+        .from('notification_prefs')
+        .upsert(prefsRow, { onConflict: 'user_id' });
+      if (prefsError) throw prefsError;
+    };
+
     if (action === 'upsert') {
       const pushToken = String(body.push_token || '').trim();
       if (!pushToken) return json(400, { ok: false, message: 'push_token is required' });
@@ -203,6 +279,15 @@ export async function handlePushTokenSyncRequest(req: Request) {
     if (action === 'set_allow') {
       const allow = body.allow === true;
       await upsertAllowPrefs(allow);
+      return json(200, { ok: true });
+    }
+
+    if (action === 'set_prefs') {
+      await upsertEventPrefs(
+        body.prefs && typeof body.prefs === 'object' && !Array.isArray(body.prefs)
+          ? body.prefs
+          : {},
+      );
       return json(200, { ok: true });
     }
 

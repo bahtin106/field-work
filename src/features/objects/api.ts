@@ -188,7 +188,7 @@ export async function listClientObjects(clientId: string) {
     if (!scopedCompanyId) return [];
     const canViewObjectPhones = await canCurrentUserViewObjectPhones();
     const { data, error } = await supabase
-      .from('client_objects')
+      .from('client_objects_secure')
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .eq('client_id', clientId)
       .eq('company_id', scopedCompanyId)
@@ -208,7 +208,7 @@ export async function listClientObjectsByCompany(companyId: string) {
     if (!companyId) return [];
     const canViewObjectPhones = await canCurrentUserViewObjectPhones();
     const { data, error } = await supabase
-      .from('client_objects')
+      .from('client_objects_secure')
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .eq('company_id', companyId)
       .order('is_primary', { ascending: false })
@@ -242,7 +242,7 @@ export async function getClientObjectById(objectId: string) {
     if (!scopedCompanyId) return null;
     const canViewObjectPhones = await canCurrentUserViewObjectPhones();
     const { data, error } = await supabase
-        .from('client_objects')
+        .from('client_objects_secure')
         .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
         .eq('id', key)
         .eq('company_id', scopedCompanyId)
@@ -363,7 +363,7 @@ export async function createClientObject(payload: Record<string, any>) {
     let query = supabase
       .from('client_objects')
       .insert(insertPayload)
-      .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+      .select('id')
       .single();
     let { data, error } = await query;
     if (error && isMissingLocationModeColumnError(error) && Object.prototype.hasOwnProperty.call(insertPayload, 'location_mode')) {
@@ -372,7 +372,7 @@ export async function createClientObject(payload: Record<string, any>) {
       query = supabase
         .from('client_objects')
         .insert(fallbackPayload)
-        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .select('id')
         .single();
       ({ data, error } = await query);
     }
@@ -380,7 +380,7 @@ export async function createClientObject(payload: Record<string, any>) {
       query = supabase
         .from('client_objects')
         .insert(omitObjectMediaLabelColumns(insertPayload))
-        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .select('id')
         .single();
       ({ data, error } = await query);
     }
@@ -390,12 +390,12 @@ export async function createClientObject(payload: Record<string, any>) {
       query = supabase
         .from('client_objects')
         .insert(fallbackPayload)
-        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .select('id')
         .single();
       ({ data, error } = await query);
     }
     if (error) throw error;
-    return normalizeClientObject(data);
+    return getClientObjectById(String(data?.id || ''));
   });
 }
 
@@ -444,7 +444,7 @@ export async function updateClientObject(objectId: string, patch: Record<string,
       .update(nextPatch)
       .eq('id', objectId)
       .eq('company_id', scopedCompanyId)
-      .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+      .select('id')
       .single();
     let { data, error }: any = await query;
     if (error && isMissingLocationModeColumnError(error) && Object.prototype.hasOwnProperty.call(nextPatch, 'location_mode')) {
@@ -455,7 +455,7 @@ export async function updateClientObject(objectId: string, patch: Record<string,
         .update(fallbackPatch)
         .eq('id', objectId)
         .eq('company_id', scopedCompanyId)
-        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .select('id')
         .single();
       ({ data, error } = await query);
     }
@@ -465,7 +465,7 @@ export async function updateClientObject(objectId: string, patch: Record<string,
         .update(omitObjectMediaLabelColumns(nextPatch))
         .eq('id', objectId)
         .eq('company_id', scopedCompanyId)
-        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .select('id')
         .single();
       ({ data, error } = await query);
     }
@@ -477,12 +477,12 @@ export async function updateClientObject(objectId: string, patch: Record<string,
         .update(fallbackPatch)
         .eq('id', objectId)
         .eq('company_id', scopedCompanyId)
-        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .select('id')
         .single();
       ({ data, error } = await query);
     }
     if (error) throw error;
-    return normalizeClientObject(data);
+    return getClientObjectById(String(data?.id || objectId));
   });
 }
 

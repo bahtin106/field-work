@@ -21,6 +21,7 @@ export default function EditScreenTemplate({
   scrollEventThrottle = 16,
   scrollEnabled = true,
   dismissKeyboardOnPress = true,
+  validateOnRightPress = true,
 }) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
@@ -42,6 +43,7 @@ export default function EditScreenTemplate({
     rightTextLabel,
     rightDisabled,
     onRightPress,
+    formSubmit: validateOnRightPress && typeof onRightPress === 'function',
     ...(headerOptions || {}),
   };
 

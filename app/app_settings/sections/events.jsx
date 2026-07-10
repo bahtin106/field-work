@@ -10,7 +10,7 @@ import { SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { TBL } from '../../../lib/constants';
-import { getUid } from '../../../lib/supabaseHelpers';
+import { getUid, saveNotificationPreferences } from '../../../lib/supabaseHelpers';
 import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
@@ -20,22 +20,6 @@ import { useTheme } from '../../../theme';
 const DEFAULT_REMINDER_DELAY_MINUTES = 20;
 const REMINDER_DELAY_MINUTES_MIN = 1;
 const REMINDER_DELAY_MINUTES_MAX = 30 * 24 * 60;
-
-function parseMissingNotifPrefsColumn(error) {
-  const message = String(error?.message || '').toLowerCase();
-  if (!message.includes('notification_prefs')) return null;
-
-  const quotedMatch = message.match(/column\s+"?([a-z_][a-z0-9_]*)"?\s+of relation\s+"?notification_prefs"?\s+does not exist/i);
-  if (quotedMatch?.[1]) return quotedMatch[1];
-
-  const dottedMatch = message.match(/column\s+(?:public\.)?notification_prefs\.([a-z_][a-z0-9_]*)\s+does not exist/i);
-  if (dottedMatch?.[1]) return dottedMatch[1];
-
-  const schemaCacheMatch = message.match(/could not find the\s+'([a-z_][a-z0-9_]*)'\s+column of\s+'notification_prefs'/i);
-  if (schemaCacheMatch?.[1]) return schemaCacheMatch[1];
-
-  return null;
-}
 
 const UNIT_CONFIG = Object.freeze({
   minutes: { factor: 1, max: 59, titleKey: 'settings_events_reminder_unit_minutes' },
@@ -97,7 +81,6 @@ export default function NotificationEventsScreen() {
   const s = React.useMemo(() => styles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const mountedRef = React.useRef(true);
-  const unsupportedColsRef = React.useRef(new Set());
   const lastErrorMessageRef = React.useRef(null);
 
   const [prefs, setPrefs] = React.useState({
@@ -194,37 +177,14 @@ export default function NotificationEventsScreen() {
   const savePrefs = React.useCallback(
     async (patch) => {
       try {
-        const uid = await getUid();
-        let saveErr = null;
-        for (let attempt = 0; attempt < 4; attempt += 1) {
-          const payload = { ...patch };
-          unsupportedColsRef.current.forEach((col) => {
-            delete payload[col];
-          });
-
-          const result = await supabase
-            .from(TBL.NOTIF_PREFS)
-            .upsert({ user_id: uid, ...payload }, { onConflict: 'user_id', returning: 'minimal' });
-          saveErr = result.error || null;
-          if (!saveErr) break;
-
-          const missingCol = parseMissingNotifPrefsColumn(saveErr);
-          if (!missingCol) break;
-
-          unsupportedColsRef.current.add(missingCol);
-        }
-
-        if (saveErr) {
-          let msg = t('errors_saveGeneric');
-          if (/permission denied/i.test(saveErr.message)) msg = t('errors_noSettingsAccess');
-          else if (/row level security|rls/i.test(saveErr.message)) msg = t('errors_rls');
-          else if (/timeout|network|failed to fetch/i.test(saveErr.message)) msg = t('errors_network');
-          return { ok: false, message: msg };
-        }
+        await saveNotificationPreferences(patch);
         await refetch();
         return { ok: true };
       } catch (e) {
         const normalized = String(e?.message || e || '').toLowerCase();
+        if (normalized.includes('no session') || normalized.includes('unauthorized')) {
+          return { ok: false, message: t('errors_noAuth') };
+        }
         if (normalized.includes('failed to fetch') || normalized.includes('network')) {
           return { ok: false, message: t('errors_network') };
         }

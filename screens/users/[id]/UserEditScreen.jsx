@@ -47,6 +47,7 @@ import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
 import { getEmailChangeRedirectUrl } from '../../../lib/authRedirects';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
+import { useClearResolvedFieldErrors } from '../../../src/shared/forms/useClearResolvedFieldErrors';
 import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../../../lib/personName';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
@@ -969,6 +970,11 @@ export default function EditUser() {
   );
   const emailValid = useMemo(() => isValidOptionalEmail(email), [email]);
   const hasAnyName = !!(firstName.trim() || middleName.trim() || lastName.trim());
+  useClearResolvedFieldErrors({
+    isResolved: hasAnyName,
+    fieldKeys: ['firstName', 'middleName', 'lastName'],
+    setFieldErrors,
+  });
   const shouldShowAnyNameError =
     shouldShowError('firstName') || shouldShowError('middleName') || shouldShowError('lastName');
   const firstNameError =
@@ -1829,14 +1835,6 @@ export default function EditUser() {
       showError(msg);
       if (isEmailTakenError(e) || isInvalidAuthEmailError(e)) {
         setFieldErrors({ email: { message: msg } });
-        ensureVisibleField({
-          fieldRef: emailRef,
-          scrollRef,
-          scrollYRef,
-          insetsBottom: insets.bottom ?? 0,
-          headerHeight,
-        });
-        emailRef.current?.focus?.();
       } else if (isSamePasswordError(e)) {
         scrollToTop();
         _showErrorToast(msg);
@@ -1879,14 +1877,6 @@ export default function EditUser() {
       const msg = mapEmailChangeErrorToMessage(e, t);
       setFieldErrors({ email: { message: msg } });
       showError(msg);
-      ensureVisibleField({
-        fieldRef: emailRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      emailRef.current?.focus?.();
     } finally {
       setSaving(false);
       setEmailChangeSending(false);
@@ -1908,14 +1898,6 @@ export default function EditUser() {
         middleName: { message: requiredMsg },
         lastName: { message: requiredMsg },
       });
-      ensureVisibleField({
-        fieldRef: firstNameRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      firstNameRef.current?.focus?.();
       return;
     }
     const emailFieldError = getEmailFieldError(email, {
@@ -1925,14 +1907,6 @@ export default function EditUser() {
     });
     if (fieldUi.isVisible('email') && emailFieldError) {
       setFieldErrors({ email: { message: emailFieldError } });
-      ensureVisibleField({
-        fieldRef: emailRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      emailRef.current?.focus?.();
       return;
     }
     const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
@@ -1954,14 +1928,6 @@ export default function EditUser() {
           : getMessageByCode(FEEDBACK_CODES.NETWORK_ERROR, t);
         setFieldErrors({ email: { message: msg } });
         showError(msg);
-        ensureVisibleField({
-          fieldRef: emailRef,
-          scrollRef,
-          scrollYRef,
-          insetsBottom: insets.bottom ?? 0,
-          headerHeight,
-        });
-        emailRef.current?.focus?.();
         return;
       } finally {
         setSubmitCheckingEmail(false);
@@ -1970,64 +1936,24 @@ export default function EditUser() {
     if (fieldUi.isVisible('email') && effectiveEmailCheckStatus === 'taken') {
       const emailTakenMessage = getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t);
       setFieldErrors({ email: { message: emailTakenMessage } });
-      ensureVisibleField({
-        fieldRef: emailRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      emailRef.current?.focus?.();
       return;
     }
     if (fieldUi.isVisible('email') && hasEmailChangeForValidation && effectiveEmailCheckStatus !== 'available') {
       const emailCheckMessage = getMessageByCode(FEEDBACK_CODES.NETWORK_ERROR, t);
       setFieldErrors({ email: { message: emailCheckMessage } });
       showError(emailCheckMessage);
-      ensureVisibleField({
-        fieldRef: emailRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      emailRef.current?.focus?.();
       return;
     }
     if (normalizedCurrentEmail && !normalizedNextEmail) {
       setFieldErrors({ email: { message: requiredMsg } });
-      ensureVisibleField({
-        fieldRef: emailRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      emailRef.current?.focus?.();
       return;
     }
     if (fieldUi.isVisible('phone') && fieldUi.isRequired('phone') && !hasPhoneValue(phone)) {
       setFieldErrors({ phone: { message: requiredMsg } });
-      ensureVisibleField({
-        fieldRef: phoneRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      phoneRef.current?.focus?.();
       return;
     }
     if (fieldUi.isVisible('phone') && hasPhoneValue(phone) && !isValidOptionalMobilePhone(String(phone || ''))) {
       setFieldErrors({ phone: { message: t('err_phone') } });
-      ensureVisibleField({
-        fieldRef: phoneRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      phoneRef.current?.focus?.();
       return;
     }
     if (fieldUi.isVisible('birthdate') && fieldUi.isRequired('birthdate') && !birthdate) {
@@ -2762,6 +2688,7 @@ export default function EditUser() {
               setFocusFirst(false);
               setTouched((prev) => ({ ...prev, firstName: true }));
             }}
+            required={false}
             forceValidation={submittedAttempt}
             error={firstNameError ? 'invalid' : undefined}
           />
@@ -2793,6 +2720,7 @@ export default function EditUser() {
             onBlur={() => {
               setTouched((prev) => ({ ...prev, middleName: true }));
             }}
+            required={false}
             forceValidation={submittedAttempt}
             error={middleNameError ? 'invalid' : undefined}
           />
@@ -2826,6 +2754,7 @@ export default function EditUser() {
               setFocusLast(false);
               setTouched((prev) => ({ ...prev, lastName: true }));
             }}
+            required={false}
             forceValidation={submittedAttempt}
             error={lastNameError ? 'invalid' : undefined}
           />

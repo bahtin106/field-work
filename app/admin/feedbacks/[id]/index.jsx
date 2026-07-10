@@ -8,6 +8,7 @@ import Card from '../../../../components/ui/Card';
 import { useToast } from '../../../../components/ui/ToastProvider';
 import { ConfirmModal } from '../../../../components/ui/modals';
 import { useRequireSuperAdmin } from '../../../../hooks/useRequireSuperAdmin';
+import { resolveAppLocale } from '../../../../lib/localeFormatting';
 import { useAuthContext } from '../../../../providers/SimpleAuthProvider';
 import {
   deleteSupportRequest,
@@ -24,7 +25,7 @@ function formatDateTime(value) {
   const d = new Date(value);
   if (!Number.isFinite(d.getTime())) return '—';
   try {
-    return d.toLocaleString('ru-RU', {
+    return d.toLocaleString(resolveAppLocale(), {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',

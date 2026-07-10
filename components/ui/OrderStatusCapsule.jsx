@@ -2,6 +2,8 @@ import { memo, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { getOrderStatusPalette } from '../../src/features/orders/statusPresentation';
+import { getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
 function createStyles(theme) {
@@ -26,17 +28,20 @@ function createStyles(theme) {
   });
 }
 
-function OrderStatusCapsuleImpl({ status, style, textStyle, numberOfLines = 1 }) {
+function OrderStatusCapsuleImpl({ status, companyId = null, style, textStyle, numberOfLines = 1 }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
+  const { isEnabled, statuses } = useCompanyOrderStatuses(companyId);
   const palette = useMemo(() => getOrderStatusPalette(status, theme), [status, theme]);
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const label = useMemo(() => getOrderStatusLabel(status, statuses, t), [status, statuses, t]);
 
-  if (!status) return null;
+  if (!isEnabled || !status || !label) return null;
 
   return (
     <View style={[styles.capsule, { backgroundColor: palette.bg }, style]}>
       <Text numberOfLines={numberOfLines} style={[styles.text, { color: palette.fg }, textStyle]}>
-        {status}
+        {label}
       </Text>
     </View>
   );

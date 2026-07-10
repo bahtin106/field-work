@@ -1082,12 +1082,18 @@ function CalendarScreenContent() {
           height: layoutMetrics.dayCellSize,
           borderRadius: layoutMetrics.dayCellSize / 2,
         },
+        dayCellUnselected: {
+          backgroundColor: 'transparent',
+          borderWidth: 0,
+        },
         dayCellSelectedOutline: {
+          backgroundColor: 'transparent',
           borderWidth: 2,
           borderColor: theme.colors.primary,
         },
         dayCellSelectedFilled: {
           backgroundColor: theme.colors.primary,
+          borderWidth: 0,
         },
         dayContent: {
           width: '100%',

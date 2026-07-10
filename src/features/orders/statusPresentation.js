@@ -26,6 +26,14 @@ export function getOrderStatusVariant(status) {
   ) {
     return 'done';
   }
+  if (
+    normalized === 'waiting' ||
+    normalized === 'pending' ||
+    normalized.includes('ожидан') ||
+    normalized.includes('wait')
+  ) {
+    return 'default';
+  }
   return 'default';
 }
 

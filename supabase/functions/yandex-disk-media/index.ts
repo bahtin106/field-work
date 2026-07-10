@@ -388,6 +388,7 @@ async function getCallerAndOrderContext(
   return {
     userId: user.id,
     companyId: String(profile.company_id),
+    role: String(profile.role || '').toLowerCase(),
     companyName: String(company.name || 'Company'),
     mediaProvider: String(company.media_provider || 'beget_s3'),
     order: {
@@ -399,6 +400,36 @@ async function getCallerAndOrderContext(
       created_at: order.created_at || null,
     },
   };
+}
+
+async function assertOrderMediaActionAllowed(
+  admin: SupabaseAdminClient,
+  caller: { companyId: string; role: string },
+  action: string,
+) {
+  const normalizedAction = String(action || '').trim();
+  const requiredKeys =
+    normalizedAction === 'resolve_urls' || normalizedAction === 'inspect_urls'
+      ? ['canViewOrderPhotos']
+      : normalizedAction === 'delete' || normalizedAction === 'cleanup_order'
+        ? ['canEditOrders']
+        : ['canAddGalleryPhotos', 'canAddCameraPhotos'];
+
+  const checks = await Promise.all(
+    requiredKeys.map(async (key) => {
+      const { data, error } = await admin.rpc('order_role_has_permission', {
+        p_company_id: caller.companyId,
+        p_role: caller.role,
+        p_key: key,
+      });
+      if (error) throw error;
+      return data === true;
+    }),
+  );
+
+  const allowed =
+    requiredKeys.length === 1 ? checks[0] === true : checks.some((value) => value === true);
+  if (!allowed) throw new Error('Forbidden');
 }
 
 async function createYandexFolder(accessToken: string, path: string) {
@@ -655,6 +686,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
     }
 
     const ctx = await getCallerAndOrderContext(admin, token, orderId);
+    await assertOrderMediaActionAllowed(admin, ctx, action);
     const connState = await getValidAccessToken(admin, ctx.companyId);
     const accessToken = connState.accessToken;
     const rootFolder = connState.folderPath;

@@ -34,15 +34,10 @@ export const SETTINGS_SECTIONS = {
         route: '/company_settings/sections/field-editor',
       },
       {
-        key: 'feed_fields',
-        label: T('settings_management_feed_fields'),
-        route: '/company_settings/sections/order-feed-fields',
-        companyOnly: true,
-      },
-      {
         key: 'finance_rules',
         label: T('company_settings_sections_management_items_finance_rules'),
         route: '/company_settings/sections/finance-rules',
+        companyOnly: true,
       },
       // `work_types` and `departments` moved to REFERENCE section
     ],
@@ -72,6 +67,11 @@ export const SETTINGS_SECTIONS = {
         key: 'work_types',
         label: T('company_settings_sections_management_items_work_types'),
         route: '/company_settings/sections/WorkTypesSettings',
+      },
+      {
+        key: 'order_statuses',
+        label: T('settings_reference_order_statuses'),
+        route: '/company_settings/sections/order-statuses',
       },
       {
         key: 'departments',

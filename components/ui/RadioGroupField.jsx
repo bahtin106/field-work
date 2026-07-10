@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useAutoScrollOnInvalid } from '../../src/shared/forms/FormAutoScrollContext';
+import { useAutoScrollOnInvalid, useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
 import { getFieldValidationState } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme';
 
@@ -9,7 +9,7 @@ export default function RadioGroupField({
   value,
   onChange,
   error,
-  required = false,
+  required,
   forceValidation = false,
   disabled = false,
   style,
@@ -17,12 +17,13 @@ export default function RadioGroupField({
   fullBleed = true,
 }) {
   const { theme } = useTheme();
+  const formContext = useFormAutoScrollContext();
   const containerRef = useRef(null);
   const validationState = getFieldValidationState({
     value,
     error,
     required,
-    forceValidation,
+    forceValidation: forceValidation || (formContext?.validationAttempt ?? 0) > 0,
     touched: false,
   });
   const styles = useMemo(() => createStyles(theme, validationState.isInvalid), [theme, validationState.isInvalid]);
@@ -30,7 +31,6 @@ export default function RadioGroupField({
     fieldRef: containerRef,
     isInvalid: validationState.isInvalid,
     shouldAutoScroll: true,
-    focus: false,
   });
   return (
     <View ref={containerRef} style={[styles.container, style]}>

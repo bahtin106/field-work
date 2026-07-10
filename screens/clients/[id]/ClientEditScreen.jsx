@@ -52,6 +52,7 @@ import { useSetClientTagsMutation } from '../../../src/features/tags/queries';
 import { resolveTagErrorMessage } from '../../../src/features/tags/errors';
 import { CLIENT_COMMENT_MAX_LENGTH } from '../../../src/features/clients/constants';
 import { FEEDBACK_CODES, FieldErrorText, getMessageByCode } from '../../../src/shared/feedback';
+import { useClearResolvedFieldErrors } from '../../../src/shared/forms/useClearResolvedFieldErrors';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -290,6 +291,7 @@ export default function EditClientScreen() {
   const [touched, setTouched] = React.useState({});
 
   const allowLeaveRef = React.useRef(false);
+  const pendingNavigationActionRef = React.useRef(null);
   const cameraIconSize = React.useMemo(() => {
     const iconSm = theme.icons?.sm ?? 18;
     return Math.max(
@@ -382,6 +384,11 @@ export default function EditClientScreen() {
   const cleanLastName = String(lastName || '').trim();
   const cleanMiddleName = String(middleName || '').trim();
   const hasAnyName = !!(cleanFirstName || cleanLastName || cleanMiddleName);
+  useClearResolvedFieldErrors({
+    isResolved: hasAnyName,
+    fieldKeys: ['first_name', 'middle_name', 'last_name'],
+    setFieldErrors,
+  });
   const shouldShowAnyNameError =
     (shouldShowError('first_name') || shouldShowError('last_name') || shouldShowError('middle_name')) &&
     !hasAnyName;
@@ -827,6 +834,7 @@ export default function EditClientScreen() {
   }, [navigation, router]);
 
   const handleCancelPress = React.useCallback(() => {
+    pendingNavigationActionRef.current = null;
     if (isDirty) {
       setCancelKey((v) => v + 1);
       setCancelVisible(true);
@@ -837,8 +845,15 @@ export default function EditClientScreen() {
 
   const handleLeaveWithoutSaving = React.useCallback(() => {
     setCancelVisible(false);
+    const pendingAction = pendingNavigationActionRef.current;
+    pendingNavigationActionRef.current = null;
+    allowLeaveRef.current = true;
+    if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
+      navigation.dispatch(pendingAction);
+      return;
+    }
     goBack();
-  }, [goBack]);
+  }, [goBack, navigation]);
 
   const openDuplicateClient = React.useCallback(() => {
     if (!duplicateClient?.id) return;
@@ -867,6 +882,7 @@ export default function EditClientScreen() {
     const sub = navigation.addListener('beforeRemove', (e) => {
       if (allowLeaveRef.current || !isDirty) return;
       e.preventDefault();
+      pendingNavigationActionRef.current = e?.data?.action || null;
       setCancelKey((v) => v + 1);
       setCancelVisible(true);
     });
@@ -1169,6 +1185,7 @@ export default function EditClientScreen() {
               : t('header_save')
         }
         onRightPress={selectMode && flowKey ? handleChooseClient : saveClient}
+        validateOnRightPress={!(selectMode && flowKey)}
         onBack={handleCancelPress}
       >
         <Card style={styles.headerCard}>
@@ -1370,7 +1387,10 @@ export default function EditClientScreen() {
       <ConfirmModal
         key={`cancel-${cancelKey}`}
         visible={cancelVisible}
-        onClose={() => setCancelVisible(false)}
+        onClose={() => {
+          pendingNavigationActionRef.current = null;
+          setCancelVisible(false);
+        }}
         title={t('dlg_leave_title')}
         message={t('dlg_leave_msg')}
         confirmLabel={t('dlg_leave_confirm')}

@@ -21,7 +21,8 @@ import PhoneInput from '../../components/ui/PhoneInput';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
-import { useFormAutoScroll } from '../../src/shared/forms/useFormAutoScroll';
+import { FormAutoScrollProvider } from '../../src/shared/forms/FormAutoScrollContext';
+import { useClearResolvedFieldErrors } from '../../src/shared/forms/useClearResolvedFieldErrors';
 import { useTheme } from '../../theme';
 import { useDepartmentsQuery } from '../../src/features/employees/queries';
 import {
@@ -330,14 +331,9 @@ export default function NewUserScreen() {
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const allowLeaveRef = useRef(false);
+  const pendingNavigationActionRef = useRef(null);
   const emailCheckTimeoutRef = useRef(null);
   const headerHeight = theme?.components?.header?.height ?? 56;
-  const { scrollToFirstInvalid } = useFormAutoScroll({
-    scrollRef,
-    scrollYRef,
-    insetsBottom: insets.bottom ?? 0,
-    headerHeight,
-  });
 
   const _MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
   const MEDIA_QUALITY = typeof theme.media?.quality === 'number' ? theme.media.quality : 0.85;
@@ -475,6 +471,11 @@ export default function NewUserScreen() {
     () => !!(firstName.trim() || lastName.trim() || middleName.trim()),
     [firstName, lastName, middleName],
   );
+  useClearResolvedFieldErrors({
+    isResolved: hasAnyName,
+    fieldKeys: ['firstName', 'middleName', 'lastName'],
+    setFieldErrors,
+  });
   const shouldShowAnyNameError =
     shouldShowError('firstName') || shouldShowError('middleName') || shouldShowError('lastName');
   const firstNameError =
@@ -603,6 +604,7 @@ export default function NewUserScreen() {
               clearFieldError('firstName');
             }}
             onBlur={() => setTouched((prev) => ({ ...prev, firstName: true }))}
+            required={false}
             forceValidation={submittedAttempt}
             error={firstNameError ? 'invalid' : undefined}
           />
@@ -622,6 +624,7 @@ export default function NewUserScreen() {
               clearFieldError('middleName');
             }}
             onBlur={() => setTouched((prev) => ({ ...prev, middleName: true }))}
+            required={false}
             forceValidation={submittedAttempt}
             error={middleNameError ? 'invalid' : undefined}
           />
@@ -641,6 +644,7 @@ export default function NewUserScreen() {
               clearFieldError('lastName');
             }}
             onBlur={() => setTouched((prev) => ({ ...prev, lastName: true }))}
+            required={false}
             forceValidation={submittedAttempt}
             error={lastNameError ? 'invalid' : undefined}
           />
@@ -819,6 +823,7 @@ export default function NewUserScreen() {
     const sub = navigation.addListener('beforeRemove', (e) => {
       if (allowLeaveRef.current || isEmptyForm || !isDirty) return;
       e.preventDefault();
+      pendingNavigationActionRef.current = e?.data?.action || null;
       setCancelVisible(true);
     });
     return sub;
@@ -944,11 +949,6 @@ export default function NewUserScreen() {
         ...(missingBirthdate ? { birthdate: { message: requiredMsg } } : {}),
       }));
       }
-      scrollToFirstInvalid([
-        { invalid: missingAnyName, ref: firstNameRef, fallbackY: 0 },
-        { invalid: missingEmail || invalidEmail, ref: emailRef, fallbackY: 0 },
-        { invalid: missingPhone, ref: phoneRef, fallbackY: 0 },
-      ]);
       return;
     }
     if (fieldUi.isVisible('phone') && hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)) {
@@ -959,7 +959,6 @@ export default function NewUserScreen() {
           message: getMessageByCode(FEEDBACK_CODES.INVALID_PHONE, t),
         },
       }));
-      scrollToFirstInvalid([{ invalid: true, ref: phoneRef, fallbackY: 0 }]);
       return;
     }
 
@@ -982,7 +981,6 @@ export default function NewUserScreen() {
     t,
     willCreateBlockedByLicense,
     showBanner,
-    scrollToFirstInvalid,
     phone,
     fieldUi,
   ]);
@@ -1122,6 +1120,12 @@ export default function NewUserScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       edges={['left', 'right']}
     >
+      <FormAutoScrollProvider
+        scrollRef={scrollRef}
+        scrollYRef={scrollYRef}
+        insetsBottom={insets.bottom ?? 0}
+        headerHeight={headerHeight}
+      >
       <AppHeader
         back
         options={{
@@ -1129,6 +1133,7 @@ export default function NewUserScreen() {
           title: t('routes.users/new'),
           rightTextLabel: submitting ? t('toast_saving') : t('btn_create'),
           onRightPress: handleCreate,
+          formSubmit: true,
         }}
       />
       <KeyboardAwareScrollView
@@ -1258,7 +1263,10 @@ export default function NewUserScreen() {
 
         <ConfirmModal
           visible={cancelVisible}
-          onClose={() => setCancelVisible(false)}
+          onClose={() => {
+            pendingNavigationActionRef.current = null;
+            setCancelVisible(false);
+          }}
           title={t('dlg_leave_title')}
           message={t('dlg_leave_msg')}
           confirmLabel={t('dlg_leave_confirm')}
@@ -1267,6 +1275,12 @@ export default function NewUserScreen() {
           onConfirm={() => {
             allowLeaveRef.current = true;
             setCancelVisible(false);
+            const pendingAction = pendingNavigationActionRef.current;
+            pendingNavigationActionRef.current = null;
+            if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
+              navigation.dispatch(pendingAction);
+              return;
+            }
             router.back();
           }}
         />
@@ -1552,6 +1566,7 @@ export default function NewUserScreen() {
           </View>
         </View>
       )}
+      </FormAutoScrollProvider>
     </SafeAreaView>
   );
 }

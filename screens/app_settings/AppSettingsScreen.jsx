@@ -24,6 +24,7 @@ import { supabase } from '../../lib/supabase';
 import {
   deletePushToken as deletePushTokenHelper,
   getUid,
+  saveNotificationPreferences,
   setNotificationAllow as setNotificationAllowHelper,
   savePushToken as savePushTokenHelper,
 } from '../../lib/supabaseHelpers';
@@ -39,22 +40,6 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 const TIME_PICKER_MINUTE_STEP = Number(APP_DEFAULTS?.timeStep) || 5;
 const DEFAULT_REMINDER_DELAY_MINUTES = 20;
 const DEFAULT_QUIET_TIMEZONE = 'UTC';
-
-function parseMissingNotifPrefsColumn(error) {
-  const message = String(error?.message || '').toLowerCase();
-  if (!message.includes('notification_prefs')) return null;
-
-  const quotedMatch = message.match(/column\s+"?([a-z_][a-z0-9_]*)"?\s+of relation\s+"?notification_prefs"?\s+does not exist/i);
-  if (quotedMatch?.[1]) return quotedMatch[1];
-
-  const dottedMatch = message.match(/column\s+(?:public\.)?notification_prefs\.([a-z_][a-z0-9_]*)\s+does not exist/i);
-  if (dottedMatch?.[1]) return dottedMatch[1];
-
-  const schemaCacheMatch = message.match(/could not find the\s+'([a-z_][a-z0-9_]*)'\s+column of\s+'notification_prefs'/i);
-  if (schemaCacheMatch?.[1]) return schemaCacheMatch[1];
-
-  return null;
-}
 
 function isTransientPushSyncError(message) {
   const normalized = String(message || '').toLowerCase();
@@ -327,7 +312,6 @@ export default function AppSettings() {
   const mounted = useRef(false);
   const reopenTimer = useRef(null);
   const quietPickerAppliedRef = useRef(false);
-  const unsupportedColsRef = useRef(new Set());
   const lastPrefsErrorMessageRef = useRef(null);
   useEffect(() => {
     mounted.current = true;
@@ -488,53 +472,15 @@ export default function AppSettings() {
 
   const savePrefs = useCallback(async (patch) => {
     try {
-      const uid = await getUid();
-      let error = null;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const snapshot = currentPrefsRef.current || {};
-        const basePayload = {
-          allow: snapshot.allow !== false,
-          new_orders: snapshot.new_orders !== false,
-          feed_orders: snapshot.feed_orders !== false,
-          reminders: snapshot.reminders !== false,
-          reminder_delay_minutes: Number(snapshot.reminder_delay_minutes) || DEFAULT_REMINDER_DELAY_MINUTES,
-        };
-        const payload = { ...patch };
-        unsupportedColsRef.current.forEach((col) => {
-          delete payload[col];
-        });
-
-        const result = await supabase
-          .from(TBL.NOTIF_PREFS)
-          .upsert({ user_id: uid, ...basePayload, ...payload }, { onConflict: 'user_id', returning: 'minimal' });
-        error = result.error || null;
-        if (!error) break;
-
-        const missingCol = parseMissingNotifPrefsColumn(error);
-        if (!missingCol) break;
-        unsupportedColsRef.current.add(missingCol);
-      }
-
-      if (error) {
-        let msg = t('errors_saveGeneric');
-        if (/permission denied/i.test(error.message)) msg = t('errors_noSettingsAccess');
-        else if (/row level security|rls/i.test(error.message)) msg = t('errors_rls');
-        else if (/timeout|network|failed to fetch/i.test(error.message)) msg = t('errors_network');
-        return {
-          ok: false,
-          message: msg,
-          rawMessage: String(error?.message || ''),
-          rawCode: error?.code ? String(error.code) : null,
-          rawDetails: error?.details ? String(error.details) : null,
-          rawHint: error?.hint ? String(error.hint) : null,
-        };
-      }
+      await saveNotificationPreferences(patch);
       await refreshPrefs();
       return { ok: true };
     } catch (e) {
       const m = String(e?.message || e || '').toLowerCase();
       let msg = t('errors_saveShort');
-      if (m.includes('no_auth')) msg = t('errors_noAuth');
+      if (m.includes('no_auth') || m.includes('no session') || m.includes('unauthorized')) {
+        msg = t('errors_noAuth');
+      }
       else if (m.includes('failed to fetch') || m.includes('network')) msg = t('errors_network');
       return {
         ok: false,
@@ -982,10 +928,6 @@ export default function AppSettings() {
           onPress: item.switch ? undefined : resolvePressHandler(section.key, item.key),
           onValueChange: item.switch ? resolveToggleHandler(section.key, item.key) : undefined,
         };
-        // Mark language row as a future feature (no hardcoded locale here)
-        if (section.key === 'appearance' && item.key === 'language') {
-          mapped.comingSoon = true;
-        }
         return mapped;
       }),
     }));
@@ -1017,8 +959,7 @@ export default function AppSettings() {
             return { ...it, value: toTimeStr(prefs.quiet_end) || t('common_off') };
           }
           if (sec.key === 'appearance' && it.key === 'language') {
-            // Show first available locale as the default (no hardcoded 'ru')
-            return { ...it, value: t(`language_${availableLocales[0]}`), disabled: true };
+            return { ...it, value: t(`language_${currentLocale}`), disabled: false };
           }
           if (sec.key === 'appearance' && it.key === 'theme') {
             return { ...it, value: currentThemeLabel };
@@ -1026,7 +967,7 @@ export default function AppSettings() {
           return it;
         }),
       })),
-    [visibleSectionBase, prefs, isLoadingPrefs, currentThemeLabel, t],
+    [visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, t],
   );
 
   return (

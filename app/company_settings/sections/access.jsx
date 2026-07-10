@@ -7,6 +7,7 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import { START_PRESET, usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -20,6 +21,8 @@ const ACCESS_SECTIONS = [
     permissions: [
       { key: 'canCreateOrders', labelKey: 'access_settings_perm_create_orders' },
       { key: 'canEditOrders', labelKey: 'access_settings_perm_edit_orders' },
+      { key: 'canCompleteOwnOrders', labelKey: 'access_settings_perm_complete_own_orders' },
+      { key: 'canCompleteOtherOrders', labelKey: 'access_settings_perm_complete_other_orders' },
       { key: 'canViewAllOrders', labelKey: 'access_settings_perm_view_all_orders' },
       { key: 'canDeleteOrders', labelKey: 'access_settings_perm_delete_orders' },
       { key: 'canViewOrderPhotos', labelKey: 'access_settings_perm_view_order_photos' },
@@ -361,95 +364,105 @@ export default function AccessSettingsScreen() {
   return (
     <Screen
       background="background"
+      scroll={false}
       headerOptions={{ title: t('settings_management_access') }}
-      contentContainerStyle={s.screenContent}
     >
-      <Button
-        title={t('access_settings_apply_defaults')}
-        onPress={onApplyDefaults}
-        loading={resettingDefaults}
-        disabled={loading || !cloudReady || saving}
-        variant="secondary"
-      />
+      <KeyboardAwareScrollView
+        contentContainerStyle={s.screenContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
+        showsVerticalScrollIndicator={false}
+        bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 40}
+        extraKeyboardSpace={theme.components?.keyboardAware?.extraKeyboardSpace ?? 0}
+      >
+        <Button
+          title={t('access_settings_apply_defaults')}
+          onPress={onApplyDefaults}
+          loading={resettingDefaults}
+          disabled={loading || !cloudReady || saving}
+          variant="secondary"
+        />
 
-      {ACCESS_SECTIONS.map((section) => (
-        <React.Fragment key={section.id}>
-          <SectionHeader topSpacing={0}>{t(section.titleKey)}</SectionHeader>
-          <Card paddedXOnly>
-            {loading ? (
-              <View style={s.loadingWrap}>
-                <ActivityIndicator color={theme.colors.primary} />
-                <Text style={s.loadingText}>{t('access_settings_loading')}</Text>
-              </View>
-            ) : (
-              <>
-                <View
-                  style={[
-                    s.row,
-                    s.headerRow,
-                    {
-                      marginHorizontal: -cardPadX,
-                      paddingHorizontal: theme.spacing.md + cardPadX,
-                    },
-                  ]}
-                >
-                  <Text
+        {ACCESS_SECTIONS.map((section) => (
+          <React.Fragment key={section.id}>
+            <SectionHeader topSpacing={0}>{t(section.titleKey)}</SectionHeader>
+            <Card paddedXOnly>
+              {loading ? (
+                <View style={s.loadingWrap}>
+                  <ActivityIndicator color={theme.colors.primary} />
+                  <Text style={s.loadingText}>{t('access_settings_loading')}</Text>
+                </View>
+              ) : (
+                <>
+                  <View
                     style={[
-                      base.label,
-                      s.permissionHeader,
-                      { flex: permissionColumnFlex },
+                      s.row,
+                      s.headerRow,
+                      {
+                        marginHorizontal: -cardPadX,
+                        paddingHorizontal: theme.spacing.md + cardPadX,
+                      },
                     ]}
                   >
-                    {t('access_settings_column_permissions')}
-                  </Text>
-                  {ROLE_IDS.map((roleId) => (
-                    <View key={`header-${section.id}-${roleId}`} style={[s.roleCol, { flex: roleColumnFlex }]}>
-                      <Text style={s.roleHeaderText}>{t(ROLE_LABEL_KEYS[roleId])}</Text>
+                    <Text
+                      style={[
+                        base.label,
+                        s.permissionHeader,
+                        { flex: permissionColumnFlex },
+                      ]}
+                    >
+                      {t('access_settings_column_permissions')}
+                    </Text>
+                    {ROLE_IDS.map((roleId) => (
+                      <View key={`header-${section.id}-${roleId}`} style={[s.roleCol, { flex: roleColumnFlex }]}>
+                        <Text style={s.roleHeaderText}>{t(ROLE_LABEL_KEYS[roleId])}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {section.permissions.map((perm, rowIndex) => (
+                    <View key={`${section.id}-${perm.key}`}>
+                      {rowIndex > 0 ? <View style={base.sep} /> : null}
+                      <View style={s.row}>
+                        <Text
+                          style={[
+                            base.label,
+                            s.permissionLabel,
+                            { flex: permissionColumnFlex },
+                          ]}
+                        >
+                          {t(perm.labelKey)}
+                        </Text>
+                        {ROLE_IDS.map((roleId) => (
+                          <View key={`${section.id}-${roleId}-${perm.key}`} style={[s.roleCol, { flex: roleColumnFlex }]}>
+                            <ThemedSwitch
+                              value={!!permMatrix[roleId]?.[perm.key]}
+                              onValueChange={() => onToggle(roleId, perm.key)}
+                            />
+                          </View>
+                        ))}
+                      </View>
                     </View>
                   ))}
-                </View>
+                </>
+              )}
+            </Card>
+          </React.Fragment>
+        ))}
 
-                {section.permissions.map((perm, rowIndex) => (
-                  <View key={`${section.id}-${perm.key}`}>
-                    {rowIndex > 0 ? <View style={base.sep} /> : null}
-                    <View style={s.row}>
-                      <Text
-                        style={[
-                          base.label,
-                          s.permissionLabel,
-                          { flex: permissionColumnFlex },
-                        ]}
-                      >
-                        {t(perm.labelKey)}
-                      </Text>
-                      {ROLE_IDS.map((roleId) => (
-                        <View key={`${section.id}-${roleId}-${perm.key}`} style={[s.roleCol, { flex: roleColumnFlex }]}>
-                          <ThemedSwitch
-                            value={!!permMatrix[roleId]?.[perm.key]}
-                            onValueChange={() => onToggle(roleId, perm.key)}
-                          />
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                ))}
-              </>
-            )}
-          </Card>
-        </React.Fragment>
-      ))}
-
-      {!cloudReady && !loading ? (
-        <Text style={s.hintText}>{t('access_settings_table_missing_hint')}</Text>
-      ) : null}
-
-      <Button
-        title={t('access_settings_save')}
-        onPress={onSave}
-        loading={saving}
-        disabled={loading || !cloudReady || resettingDefaults}
-        style={s.saveButton}
-      />
+        {!cloudReady && !loading ? (
+          <Text style={s.hintText}>{t('access_settings_table_missing_hint')}</Text>
+        ) : null}
+      </KeyboardAwareScrollView>
+      <View style={s.footerBar}>
+        <Button
+          title={t('access_settings_save')}
+          onPress={onSave}
+          loading={saving}
+          disabled={loading || !cloudReady || resettingDefaults}
+          style={s.footerButton}
+        />
+      </View>
     </Screen>
   );
 }
@@ -459,6 +472,7 @@ const styles = (theme) =>
     screenContent: {
       paddingHorizontal: theme.spacing.lg,
       paddingTop: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
       gap: theme.spacing.md,
     },
     loadingWrap: {
@@ -513,8 +527,16 @@ const styles = (theme) =>
       fontSize: theme?.typography?.sizes?.xs ?? 12,
       lineHeight: Math.round((theme?.typography?.sizes?.xs ?? 12) * (theme?.typography?.lineHeights?.relaxed ?? 1.5)),
     },
-    saveButton: {
-      marginTop: theme.spacing.sm,
+    footerBar: {
+      paddingHorizontal: theme.spacing.lg,
+      paddingTop: theme.spacing.sm,
+      paddingBottom: theme.spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      backgroundColor: theme.colors.background,
+    },
+    footerButton: {
+      width: '100%',
     },
   });
 

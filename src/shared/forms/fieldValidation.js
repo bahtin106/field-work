@@ -29,11 +29,11 @@ export function getFieldValidationState({
   label,
   value,
   error,
-  required = false,
+  required,
   touched = false,
   forceValidation = false,
 } = {}) {
-  const isRequired = !!required || hasRequiredMarker(label);
+  const isRequired = required === true || (required !== false && hasRequiredMarker(label));
   const shouldShowValidation = !!(touched || forceValidation);
   const requiredEmpty = isRequired && shouldShowValidation && isValueEmpty(value);
   // Explicit validation errors come from the parent form state and must be rendered
