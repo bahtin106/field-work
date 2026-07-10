@@ -77,7 +77,7 @@ export default function EditScreenTemplate({
       scrollEventThrottle={scrollEventThrottle}
     >
       {dismissKeyboardOnPress ? (
-        <DismissKeyboardArea>
+        <DismissKeyboardArea style={{ flex: 1 }}>
           <View>{children}</View>
         </DismissKeyboardArea>
       ) : (
@@ -111,7 +111,7 @@ export function useEditFormStyles() {
     () => ({
       card: {
         backgroundColor: theme.colors.surface,
-        borderRadius: theme.radii.lg,
+        borderRadius: theme.components.card.radius,
         padding: theme.spacing.md,
         borderColor: theme.colors.border,
         borderWidth: theme.components.card.borderWidth,

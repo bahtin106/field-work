@@ -1225,7 +1225,7 @@ export default function EditClientScreen() {
           </View>
         </Card>
 
-        {canShowPersonalSection ? <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader> : null}
+        {canShowPersonalSection ? <SectionHeader>{t('section_personal')}</SectionHeader> : null}
         {canShowPersonalSection ? (
         <Card paddedXOnly>
           {orderedPersonalFieldKeys.map((fieldKey) => (
@@ -1244,7 +1244,7 @@ export default function EditClientScreen() {
           ) : null}
         </Card>
         ) : null}
-        {canShowContactSection ? <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
+        {canShowContactSection ? <SectionHeader>{t('clients_contacts_section')}</SectionHeader> : null}
         {canShowContactSection ? (
         <Card paddedXOnly>
           {orderedContactFieldKeys
@@ -1314,7 +1314,7 @@ export default function EditClientScreen() {
         </Card>
         ) : null}
 
-        <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
+        <SectionHeader>{t('clients_objects_section')}</SectionHeader>
         <Card paddedXOnly>
           {canViewObjects && sortedObjects.length ? (
             sortedObjects.map((objectItem, index) => {

@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatPersonName } from '../../lib/personName';
 import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
+import { getCardSurfaceStyle } from '../../theme/surfaceStyles';
 
 /**
  * UserCard - Отдельный компонент для карточки пользователя
@@ -26,33 +27,20 @@ function UserCardContent({
   const rad = theme.radii;
 
   // Получаем тени из темы для текущей платформы
-  const cardShadows = useMemo(
-    () =>
-      Platform.OS === 'ios'
-        ? (theme.shadows?.card?.ios ?? {})
-        : (theme.shadows?.card?.android ?? {}),
-    [theme],
-  );
-
   const styles = useMemo(
     () =>
       StyleSheet.create({
         card: {
-          backgroundColor: c.surface,
-          borderRadius: rad.lg,
-          borderWidth: theme.components.card.borderWidth,
-          borderColor: c.border,
+          ...getCardSurfaceStyle(theme),
           padding: sz.md,
           marginBottom: sz.sm,
           position: 'relative',
           minHeight: sz.xl * 4,
-          ...cardShadows,
         },
         cardSuspended: {
           backgroundColor: theme.colors.surfaceMutedDanger,
           borderWidth: 0,
           borderColor: 'transparent',
-          ...cardShadows,
         },
         cardRow: {
           flexDirection: 'row',
@@ -110,13 +98,9 @@ function UserCardContent({
       }),
     [
       theme,
-      cardShadows,
-      c.border,
       c.danger,
-      c.surface,
       c.text,
       c.textSecondary,
-      rad.lg,
       rad.md,
       sz.md,
       sz.sm,

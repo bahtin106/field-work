@@ -1,8 +1,7 @@
 // components/layout/Screen.jsx
-import { useRoute } from '@react-navigation/native';
+import { useIsFocused, useRoute } from '@react-navigation/native';
 import { useNavigation, usePathname, useSegments } from 'expo-router';
 import React from 'react';
-import { View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { useI18nVersion } from '../../src/i18n';
@@ -25,6 +24,7 @@ export default function Screen({
   const { theme } = useTheme();
   const nav = useNavigation();
   const route = useRoute();
+  const isScreenFocused = useIsFocused();
   const pathname = usePathname() || '';
   const segments = useSegments();
   const inAuthGroup = Array.isArray(segments) && segments[0] === '(auth)';
@@ -88,6 +88,7 @@ export default function Screen({
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="none"
             showsVerticalScrollIndicator={false}
+            enableAutomaticScroll={isScreenFocused}
             bottomOffset={keyboardBottomOffset}
             extraKeyboardSpace={extraKeyboardSpace}
             onScroll={(event) => {
@@ -97,14 +98,16 @@ export default function Screen({
             scrollEventThrottle={scrollEventThrottle}
           >
             {showHeader && <GlobalCurrencyRecalcBanner />}
-            <DismissKeyboardArea style={{ flex: 1 }} enabled={false}>
+            <DismissKeyboardArea style={{ flex: 1 }}>
               {children}
             </DismissKeyboardArea>
           </KeyboardAwareScrollView>
         ) : (
           <>
             {showHeader && <GlobalCurrencyRecalcBanner />}
-            <View style={{ flex: 1 }}>{children}</View>
+            <DismissKeyboardArea style={{ flex: 1 }}>
+              {children}
+            </DismissKeyboardArea>
           </>
         )}
       </FormAutoScrollProvider>

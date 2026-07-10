@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatPersonName } from '../../lib/personName';
 import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -16,6 +16,7 @@ import {
   filterOrderAddressByObjectFieldSettings,
 } from '../../src/features/requests/addressing';
 import { withAlpha } from '../../theme/colors';
+import { getCardSurfaceStyle } from '../../theme/surfaceStyles';
 
 export default function ObjectCard({ item, onPress, canViewClients: canViewClientsProp = null }) {
   const { has } = usePermissions();
@@ -23,26 +24,15 @@ export default function ObjectCard({ item, onPress, canViewClients: canViewClien
   const c = theme.colors;
   const sz = theme.spacing;
   const ty = theme.typography;
-  const rad = theme.radii;
-
-  const cardShadows = useMemo(
-    () => (Platform.OS === 'ios' ? theme.shadows?.card?.ios ?? {} : theme.shadows?.card?.android ?? {}),
-    [theme],
-  );
-
   const styles = useMemo(
     () =>
       StyleSheet.create({
         card: {
-          backgroundColor: c.surface,
-          borderRadius: rad.lg,
-          borderWidth: theme.components.card.borderWidth,
-          borderColor: c.border,
+          ...getCardSurfaceStyle(theme),
           padding: sz.md,
           marginBottom: sz.sm,
           position: 'relative',
           minHeight: (sz.xl || 24) * 4,
-          ...cardShadows,
         },
         row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
         cardTextWrap: { flexShrink: 1 },
@@ -50,7 +40,7 @@ export default function ObjectCard({ item, onPress, canViewClients: canViewClien
         owner: { fontSize: ty.sizes.sm, fontWeight: ty.weight.regular, color: c.text, marginTop: 2 },
         subtitle: { fontSize: ty.sizes.sm, color: c.textSecondary, marginTop: 2 },
       }),
-    [theme, c.surface, c.border, c.text, c.textSecondary, rad.lg, sz, ty, cardShadows],
+    [theme, c.text, c.textSecondary, sz, ty],
   );
 
   const name = String(item?.name || '').trim();

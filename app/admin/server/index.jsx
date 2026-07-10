@@ -34,10 +34,12 @@ export default function AdminServerScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     content: {
-      padding: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     card: {
-      borderRadius: theme.radii.md,
+      borderRadius: theme.components.card.radius,
       borderWidth: theme.components.card.borderWidth,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,

@@ -18,7 +18,7 @@ export default function NotificationsSettingsPlaceholderScreen() {
   return (
     <Screen background="background">
       <ScrollView contentContainerStyle={styles(theme).content}>
-        <Card style={styles(theme).card}>
+        <Card style={styles(theme).cardContent}>
           <Text style={styles(theme).title}>{t('settings_management_notifications')}</Text>
           <Text style={styles(theme).text}>{t('company_notifications_placeholder')}</Text>
         </Card>
@@ -30,15 +30,10 @@ export default function NotificationsSettingsPlaceholderScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     content: {
-      padding: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
-    card: {
-      borderRadius: theme.radii.md,
-      borderWidth: theme.components.card.borderWidth,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      gap: theme.spacing.xs,
-    },
+    cardContent: { gap: theme.spacing.xs },
     title: {
       color: theme.colors.text,
       fontSize: theme.typography.sizes.lg,

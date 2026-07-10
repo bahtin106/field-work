@@ -596,21 +596,18 @@ export default function AdminCompanyDetailsScreen() {
           {data ? (
             <>
             <SectionHeader>{t('admin_company_about_title')}</SectionHeader>
-            <Card paddedXOnly>
+            <Card paddedXOnly separated>
               <LabelValueRow label={t('admin_companies_name')} value={data.name || ''} />
-              <View style={base.sep} />
               <LabelValueRow
                 label={t('admin_company_company_status')}
                 value={companyIsActive ? t('admin_company_status_active') : t('admin_company_status_inactive')}
               />
-              <View style={base.sep} />
               <LabelValueRow label={t('admin_company_created_at')} value={createdAt ? formatDateTime(createdAt, companyTimeZone) : ''} />
-              <View style={base.sep} />
               <LabelValueRow label={t('admin_companies_employees')} value={String(employeesCount)} />
             </Card>
 
             <SectionHeader>{t('admin_company_subscription_licenses_title')}</SectionHeader>
-            <Card paddedXOnly>
+            <Card paddedXOnly separated>
               <LabelValueRow
                 label={t('admin_company_license')}
                 valueComponent={(
@@ -624,23 +621,18 @@ export default function AdminCompanyDetailsScreen() {
                   </Text>
                 )}
               />
-              <View style={base.sep} />
               <LabelValueRow
                 label={t('admin_company_period_end')}
                 value={periodEnd ? formatDateTime(periodEnd, companyTimeZone) : ''}
               />
-              <View style={base.sep} />
               <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
-              <View style={base.sep} />
               <LabelValueRow label={t('admin_company_used_seats')} value={String(usedSeats)} />
-              <View style={base.sep} />
               <LabelValueRow label={t('billing_free_seats')} value={String(freeSeats)} />
-              <View style={base.sep} />
               <LabelValueRow label={t('admin_company_blocked_by_license')} value={String(blockedByLicense)} />
             </Card>
 
             <SectionHeader>{t('admin_company_subscription_manage_title')}</SectionHeader>
-            <Card paddedXOnly>
+            <Card paddedXOnly separated>
               <ActionRow
                 label={t('admin_company_period_end')}
                 value=""
@@ -648,7 +640,6 @@ export default function AdminCompanyDetailsScreen() {
                 disabled={mutation.isPending}
                 theme={theme}
               />
-              <View style={base.sep} />
               <ActionRow
                 label={t('admin_company_add_days')}
                 value=""
@@ -659,7 +650,6 @@ export default function AdminCompanyDetailsScreen() {
                 disabled={mutation.isPending}
                 theme={theme}
               />
-              <View style={base.sep} />
               <ActionRow
                 label={t('admin_company_paid_seats_total')}
                 value=""
@@ -670,7 +660,6 @@ export default function AdminCompanyDetailsScreen() {
                 disabled={mutation.isPending}
                 theme={theme}
               />
-              <View style={base.sep} />
               <ActionRow
                 label={t('admin_company_cancel_subscription')}
                 value=""
@@ -680,7 +669,6 @@ export default function AdminCompanyDetailsScreen() {
                 disabled={mutation.isPending}
                 theme={theme}
               />
-              <View style={base.sep} />
               <ActionRow
                 label={
                   companyIsActive
@@ -913,8 +901,8 @@ export default function AdminCompanyDetailsScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     content: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     muted: {
       color: theme.colors.textSecondary,

@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import SeparatedList from '../../../components/ui/SeparatedList';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField, { SelectField } from '../../../components/ui/TextField';
@@ -362,7 +363,7 @@ export default function YandexDiskIntegrationScreen() {
     >
       <ScrollView contentContainerStyle={styles.container} style={styles.scroll} keyboardShouldPersistTaps="handled">
         <SectionHeader>{t('company_integrations_storage_provider_title')}</SectionHeader>
-        <Card padded={false}>
+        <Card padded={false} separated>
           <SelectField
             label={t('company_integrations_media_orders_label')}
             value={providerLabel}
@@ -373,7 +374,6 @@ export default function YandexDiskIntegrationScreen() {
             disabled={loading}
             style={{ paddingHorizontal: separatorInset }}
           />
-          <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
           <LabelValueRow
             label={t('company_integrations_profile_photos_label')}
             value={profileProviderLabel}
@@ -385,31 +385,30 @@ export default function YandexDiskIntegrationScreen() {
         <Card padded={false}>
           {connected ? (
             <>
-              <LabelValueRow
-                label={t('company_integrations_yandex_account_label')}
-                value={yandexName}
-                style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
-              />
-              <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
-              <LabelValueRow
-                label={t('company_integrations_yandex_health_prefix')}
-                valueComponent={<Text style={[base.value, { color: statusColor }]}>{healthLabel}</Text>}
-                style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
-              />
-              <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
-              <LabelValueRow
-                label={t('company_integrations_yandex_used_space_prefix')}
-                valueComponent={<Text style={[base.value, { color: usedSpaceColor }]}>{usedSpaceValue}</Text>}
-                style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
-              />
-              <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
-              <SelectField
-                label={t('company_integrations_yandex_folder')}
-                value={folderPath || defaultFolder}
-                onPress={() => setFolderModalVisible(true)}
-                disabled={loading}
-                style={{ paddingHorizontal: separatorInset }}
-              />
+              <SeparatedList>
+                <LabelValueRow
+                  label={t('company_integrations_yandex_account_label')}
+                  value={yandexName}
+                  style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
+                />
+                <LabelValueRow
+                  label={t('company_integrations_yandex_health_prefix')}
+                  valueComponent={<Text style={[base.value, { color: statusColor }]}>{healthLabel}</Text>}
+                  style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
+                />
+                <LabelValueRow
+                  label={t('company_integrations_yandex_used_space_prefix')}
+                  valueComponent={<Text style={[base.value, { color: usedSpaceColor }]}>{usedSpaceValue}</Text>}
+                  style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
+                />
+                <SelectField
+                  label={t('company_integrations_yandex_folder')}
+                  value={folderPath || defaultFolder}
+                  onPress={() => setFolderModalVisible(true)}
+                  disabled={loading}
+                  style={{ paddingHorizontal: separatorInset }}
+                />
+              </SeparatedList>
               <View style={styles.actionsWrap}>
                 <UIButton
                   title={t('company_integrations_disconnect')}
@@ -433,19 +432,18 @@ export default function YandexDiskIntegrationScreen() {
         <SectionHeader>{t('company_integrations_google_section_title')}</SectionHeader>
         <Card padded={false}>
           {isGoogleConnected ? (
-            <>
+            <SeparatedList>
               <LabelValueRow
                 label={t('company_integrations_google_account_label')}
                 value={t('company_integrations_google_account_unknown')}
                 style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
               />
-              <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
               <LabelValueRow
                 label={t('company_integrations_google_health_label')}
                 value={t('company_integrations_google_health_unknown')}
                 style={[styles.infoRow, { paddingHorizontal: separatorInset }]}
               />
-            </>
+            </SeparatedList>
           ) : (
             <View style={styles.actionsWrap}>
               <UIButton
@@ -459,15 +457,13 @@ export default function YandexDiskIntegrationScreen() {
         </Card>
 
         <SectionHeader>{t('company_integrations_yandex_rules_title')}</SectionHeader>
-        <Card padded={false}>
+        <Card padded={false} separated>
           <View style={[base.row, styles.ruleRow, { paddingHorizontal: separatorInset }]}>
             <Text style={styles.ruleItem}>{t('company_integrations_yandex_rule_disconnect')}</Text>
           </View>
-          <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
           <View style={[base.row, styles.ruleRow, { paddingHorizontal: separatorInset }]}>
             <Text style={styles.ruleItem}>{t('company_integrations_yandex_rule_quota')}</Text>
           </View>
-          <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
           <View style={[base.row, styles.ruleRow, { paddingHorizontal: separatorInset }]}>
             <Text style={styles.ruleItem}>{t('company_integrations_yandex_rule_deleted_remote')}</Text>
           </View>
@@ -546,13 +542,9 @@ function createStyles(theme) {
       flex: 1,
     },
     container: {
-      paddingHorizontal: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
       paddingTop: theme.spacing.xs,
-      paddingBottom: theme.spacing.xl,
-    },
-    separator: {
-      height: theme.components?.listItem?.dividerWidth || 1,
-      backgroundColor: theme.colors.border,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     infoRow: {
       minHeight: theme.components?.listItem?.height ?? 48,

@@ -16,6 +16,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../../theme';
 import { useToast } from '../ToastProvider';
+import {
+  notifyIOSModalDismissed,
+  registerIOSModal,
+  releaseIOSModal,
+  requestIOSModalPresentation,
+  unregisterIOSModal,
+} from './iosModalCoordinator';
 
 // M3 emphasized-decelerate (enter) / emphasized-accelerate (exit)
 const EASE_IN = Easing.bezier(0.05, 0.7, 0.1, 1.0);
@@ -35,6 +42,10 @@ export default function AnimatedFullscreenModal({
   const [mounted, setMounted] = useState(false);
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
   const dismissNotifiedRef = useRef(false);
+  const iosModalIdRef = useRef(null);
+  const iosSuspendedRef = useRef(false);
+  const openRef = useRef(null);
+  const suspendRef = useRef(null);
   const opacity = useSharedValue(0);
   const translateY = useSharedValue(0);
 
@@ -59,26 +70,59 @@ export default function AnimatedFullscreenModal({
     }
   }, [animation, opacity, translateY]);
 
-  useEffect(() => {
-    if (visible) {
-      // Set invisible starting position before mount
-      dismissNotifiedRef.current = false;
-      setNativeDismissPending(false);
-      opacity.value = 0;
-      if (animation === 'slide') translateY.value = 60;
-      setMounted(true);
-      // Animation triggered by <Modal onShow>
-    } else if (mounted) {
-      // Animate out: accelerate away
-      const screenH = Dimensions.get('window').height;
-      opacity.value = withTiming(0, { duration: exitDuration, easing: EASE_OUT }, (fin) => {
-        if (fin) runOnJS(doUnmount)();
-      });
-      if (animation === 'slide') {
-        translateY.value = withTiming(screenH * 0.4, { duration: 250, easing: EASE_OUT });
-      }
+  const open = useCallback(() => {
+    dismissNotifiedRef.current = false;
+    setNativeDismissPending(false);
+    opacity.value = 0;
+    if (animation === 'slide') translateY.value = 60;
+    setMounted(true);
+  }, [animation, opacity, translateY]);
+
+  const close = useCallback(() => {
+    const screenH = Dimensions.get('window').height;
+    opacity.value = withTiming(0, { duration: exitDuration, easing: EASE_OUT }, (fin) => {
+      if (fin) runOnJS(doUnmount)();
+    });
+    if (animation === 'slide') {
+      translateY.value = withTiming(screenH * 0.4, { duration: 250, easing: EASE_OUT });
     }
-  }, [animation, doUnmount, exitDuration, mounted, opacity, translateY, visible]);
+  }, [animation, doUnmount, exitDuration, opacity, translateY]);
+
+  openRef.current = open;
+  suspendRef.current = () => {
+    if (!mounted) return;
+    iosSuspendedRef.current = true;
+    setNativeDismissPending(true);
+    setMounted(false);
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return undefined;
+    const id = registerIOSModal({
+      present: () => openRef.current?.(),
+      suspend: () => suspendRef.current?.(),
+    });
+    iosModalIdRef.current = id;
+    return () => {
+      unregisterIOSModal(id);
+      iosModalIdRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      const id = iosModalIdRef.current;
+      if (!id) return;
+      if (visible) requestIOSModalPresentation(id);
+      else {
+        releaseIOSModal(id);
+        if (mounted) close();
+      }
+      return;
+    }
+    if (visible) open();
+    else if (mounted) close();
+  }, [close, mounted, open, visible]);
 
   const animStyle = useAnimatedStyle(() => {
     if (animation === 'fade') {
@@ -103,8 +147,13 @@ export default function AnimatedFullscreenModal({
       onRequestClose={onRequestClose}
       onShow={runOpenAnimation}
       onDismiss={() => {
+        const wasSuspended = iosSuspendedRef.current;
+        iosSuspendedRef.current = false;
         setNativeDismissPending(false);
-        notifyDismiss();
+        if (Platform.OS === 'ios' && iosModalIdRef.current != null) {
+          notifyIOSModalDismissed(iosModalIdRef.current, { suspended: wasSuspended });
+        }
+        if (!wasSuspended) notifyDismiss();
       }}
       {...rest}
     >

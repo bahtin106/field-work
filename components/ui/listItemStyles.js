@@ -18,6 +18,7 @@ export const listItemStyles = (theme) => {
     theme.spacing?.md ?? theme.spacing?.xs ?? 12,
   );
   const rowPaddingY = resolveSpacing(theme, listItem.padY, theme.spacing?.xs ?? 4);
+  const dividerInsetX = resolveSpacing(theme, listItem.dividerInsetX, rowPaddingX);
   const sectionMarginLeft = resolveSpacing(
     theme,
     sectionTitle.ml,
@@ -68,14 +69,14 @@ export const listItemStyles = (theme) => {
     },
     sep: {
       height: listItem.dividerWidth ?? 1,
-      backgroundColor: theme.colors.border,
-      marginLeft: rowPaddingX,
-      marginRight: rowPaddingX,
+      backgroundColor: theme.colors[listItem.dividerColor] ?? theme.colors.border,
+      marginLeft: dividerInsetX,
+      marginRight: dividerInsetX,
     },
     sectionTitle: {
       color: theme.colors.text,
-      fontSize: theme.typography.sizes.sm,
-      fontWeight: theme.typography.weight?.bold || '700',
+      fontSize: sectionTitle.fontSize ?? theme.typography.sizes.sm,
+      fontWeight: sectionTitle.fontWeight ?? theme.typography.weight?.bold ?? '700',
       marginLeft: sectionMarginLeft,
       marginTop: 0,
       marginBottom: 0,

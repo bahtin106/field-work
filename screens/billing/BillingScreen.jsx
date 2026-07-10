@@ -13,6 +13,7 @@ import Animated, {
 import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
 import LabelValueRow from '../../components/ui/LabelValueRow';
+import SeparatedList from '../../components/ui/SeparatedList';
 import AnimatedChevron from '../../components/ui/AnimatedChevron';
 import Button from '../../components/ui/Button';
 import {
@@ -913,17 +914,15 @@ export default function BillingScreen() {
         {entitlements ? (
           <>
             <SectionHeader>{t('billing_section_status')}</SectionHeader>
-            <Card paddedXOnly>
+            <Card paddedXOnly separated>
               <LabelValueRow
                 label={t('billing_subscription_status')}
                 valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: statusColor }]}>{statusLabel}</Text>}
               />
-              <View style={base.sep} />
               <LabelValueRow
                 label={t('billing_period_end')}
                 valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: daysLeftColor }]}>{periodEndLabel}</Text>}
               />
-              <View style={base.sep} />
               <LabelValueRow
                 label={t('billing_remaining_label')}
                 valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: daysLeftColor }]}>{remainingLabel || `${daysLeft} ${t('billing_days_left_unit')}`}</Text>}
@@ -934,7 +933,7 @@ export default function BillingScreen() {
                 {showLicensesSection ? (
                   <>
                     <SectionHeader>{t('billing_license_pool_title')}</SectionHeader>
-                    <Card paddedXOnly>
+                    <Card paddedXOnly separated>
                       <Pressable
                         onPress={() => setLicensesExpanded((v) => !v)}
                         style={({ pressed }) => [base.row, pressed ? styles(theme).pressed : null]}
@@ -952,15 +951,10 @@ export default function BillingScreen() {
                       </Pressable>
                       {licensesExpanded ? (
                         <>
-                          <View style={base.sep} />
                           <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
-                          <View style={base.sep} />
                           <LabelValueRow label={t('billing_used_seats')} value={String(usedSeatsTotal)} />
-                          <View style={base.sep} />
                           <LabelValueRow label={t('billing_free_seats')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: freeSeatsColor }]}>{freeSeatsTotal}</Text>} />
-                          <View style={base.sep} />
                           <LabelValueRow label={t('billing_total_employees')} value={String(totalEmployees)} />
-                          <View style={base.sep} />
                           <LabelValueRow label={t('billing_blocked_by_license_count')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: blockedByLicenseColor }]}>{blockedByLicenseCount}</Text>} />
                         </>
                       ) : null}
@@ -968,7 +962,7 @@ export default function BillingScreen() {
                   </>
                 ) : null}
                 <SectionHeader>{t('billing_storage_title')}</SectionHeader>
-                <Card paddedXOnly>
+                <Card paddedXOnly separated>
                   <View style={base.row}>
                     <Text style={base.label}>{t('billing_storage_used_space_label')}</Text>
                     <View style={[base.rightWrap, styles(theme).issuedWrap]}>
@@ -977,7 +971,6 @@ export default function BillingScreen() {
                       </Text>
                     </View>
                   </View>
-                  <View style={base.sep} />
                   <View style={styles(theme).storageBarWrap}>
                     <View style={styles(theme).storageBarTrack}>
                       <View
@@ -1004,7 +997,6 @@ export default function BillingScreen() {
                   </View>
                   {storageError ? (
                     <>
-                      <View style={base.sep} />
                       <Text style={styles(theme).error}>
                         {String(storageError?.message || t('billing_unknown_error'))}
                       </Text>
@@ -1048,11 +1040,10 @@ export default function BillingScreen() {
           </View>
         }
       >
-        <View style={styles(theme).manageSummaryWrap}>
+        <SeparatedList style={styles(theme).manageSummaryWrap}>
           <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
-          <View style={base.sep} />
           <LabelValueRow label={t('billing_manage_selected_count')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: displayedSelectedCount <= paidSeatsTotal ? theme.colors.success : theme.colors.danger }]}>{displayedSelectedCount}</Text>} />
-        </View>
+        </SeparatedList>
         <SearchFiltersBar
           value={manageSearch}
           onChangeText={setManageSearch}
@@ -1268,8 +1259,8 @@ export default function BillingScreen() {
 
 const styles = (theme) => StyleSheet.create({
   content: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
+    paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+    paddingBottom: theme.components.screenLayout.contentPaddingBottom,
   },
   billingActions: { marginTop: theme.spacing.sm, gap: theme.spacing.sm },
   sectionGapLg: { gap: theme.spacing.sm },
@@ -1282,13 +1273,13 @@ const styles = (theme) => StyleSheet.create({
   badge: { alignSelf: 'flex-start', borderRadius: theme.radii.pill, borderWidth: theme.components.card.borderWidth, paddingHorizontal: theme.spacing.sm, paddingVertical: theme.spacing.xs, backgroundColor: theme.colors.surface },
   badgeText: { fontSize: theme.typography.sizes.xs, fontWeight: theme.typography.weight.bold },
   pressed: { opacity: theme.components.listItem.disabledOpacity },
-  memberRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.radii.lg, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface },
+  memberRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.components.card.radius, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface },
   memberName: { color: theme.colors.text, fontWeight: theme.typography.weight.bold, fontSize: theme.typography.sizes.md },
   memberMeta: { marginTop: theme.spacing.xs, color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm },
   modalFooterRow: { flexDirection: 'row', gap: theme.spacing.sm, width: '100%' },
   footerBtnWrap: { flex: 1 },
   footerBtn: { width: '100%' },
-  manageSummaryWrap: { borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.radii.lg, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface, marginBottom: theme.spacing.sm },
+  manageSummaryWrap: { borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.components.card.radius, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface, marginBottom: theme.spacing.sm },
   manageErrorWrap: {
     borderWidth: theme.components.card.borderWidth,
     borderColor: withAlpha(theme.colors.danger, theme.components?.pill?.borderAlpha ?? 0.18),
@@ -1335,7 +1326,7 @@ const styles = (theme) => StyleSheet.create({
   manageRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, borderWidth: theme.components.card.borderWidth, borderRadius: theme.radii.lg, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm },
   bulkBtn: { marginTop: theme.spacing.sm, marginBottom: theme.spacing.sm, borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.radii.md, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface },
   bulkBtnText: { color: theme.colors.text, fontWeight: theme.typography.weight.semibold, fontSize: theme.typography.sizes.sm },
-  conflictCard: { borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.radii.lg, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface, gap: theme.spacing.sm },
+  conflictCard: { borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.components.card.radius, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface, gap: theme.spacing.sm },
   toggleRow: { flexDirection: 'row', gap: theme.spacing.sm },
   toggleOption: { flex: 1, borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.radii.md, paddingVertical: theme.spacing.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.surface },
   toggleOptionSelected: { borderColor: theme.colors.primary, backgroundColor: withAlpha(theme.colors.primary, theme.components?.pill?.backgroundAlpha ?? 0.08) },

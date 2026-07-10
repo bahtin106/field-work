@@ -1,5 +1,5 @@
 ﻿import React, { memo, useCallback, useMemo, useRef } from 'react';
-import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 
 import { formatCurrency } from '../lib/currency';
 import { formatPersonName, formatPersonNameParts } from '../lib/personName';
@@ -25,6 +25,7 @@ import {
 import { isOrderFinanceEnabledFromMap } from '../src/features/fieldSettings/orderFinance';
 import OrderStatusCapsule from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
+import { getCardSurfaceStyle } from '../theme/surfaceStyles';
 
 /* ===== Utils ===== */
 
@@ -710,30 +711,14 @@ function DynamicOrderCard({
       delayPressOut={0}
       onPress={handlePress}
       style={{
+        ...getCardSurfaceStyle(theme, { shadow: context !== 'calendar' }),
         backgroundColor: theme.colors.card,
-        borderRadius: 14,
         padding: cardPadding,
         minHeight: 132,
         marginHorizontal: 0,
         alignSelf: 'stretch',
         width: '100%',
         marginVertical: 8,
-        ...(context === 'calendar'
-          ? {
-              shadowColor: 'transparent',
-              shadowOpacity: 0,
-              shadowRadius: 0,
-              elevation: 0,
-            }
-          : theme.shadows?.level1?.[Platform.OS] || {
-              shadowColor:
-                theme.colors.shadow ||
-                theme.colors.cardShadow ||
-                theme.shadows?.card?.ios?.shadowColor,
-              shadowOpacity: theme.mode === 'dark' ? 0.25 : 0.05,
-              shadowRadius: 4,
-              elevation: 1,
-            }),
       }}
     >
       {/* Header */}

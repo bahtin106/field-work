@@ -24,6 +24,8 @@ import { withAlpha } from '../../../theme/colors';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { BaseModal } from '../../../components/ui/modals';
 import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
+import ListSeparator from '../../../components/ui/ListSeparator';
+import SeparatedList from '../../../components/ui/SeparatedList';
 import ToastProvider, { useToast } from '../../../components/ui/ToastProvider';
 
 const VIEWER_BG = '#000000';
@@ -33,6 +35,7 @@ const ICON_BTN_SIZE = 40;
 const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
 const DATA_IMAGE_URI_RE = /^data:image\//i;
 const REMOTE_URI_RE = /^https?:\/\//i;
+const imageSizeCache = new Map();
 
 const haptic = (style = 'Light') =>
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(() => {});
@@ -63,6 +66,36 @@ const measureImage = (uri) =>
     );
   });
 
+const getCachedImageSize = (uri) => {
+  if (!uri) return Promise.resolve(null);
+
+  const cached = imageSizeCache.get(uri);
+  if (cached) return cached;
+
+  const pending = measureImage(uri).then((size) => {
+    if (!size) imageSizeCache.delete(uri);
+    return size;
+  });
+  imageSizeCache.set(uri, pending);
+  return pending;
+};
+
+const fitImageInsideViewport = (imageSize, viewportWidth, viewportHeight) => {
+  if (!imageSize?.width || !imageSize?.height || !viewportWidth || !viewportHeight) {
+    return { width: viewportWidth, height: viewportHeight };
+  }
+
+  const fitScale = Math.min(
+    viewportWidth / imageSize.width,
+    viewportHeight / imageSize.height,
+  );
+
+  return {
+    width: imageSize.width * fitScale,
+    height: imageSize.height * fitScale,
+  };
+};
+
 const getImageExtension = (uri) => {
   const path = String(uri || '').trim().split('?')[0].split('#')[0];
   const match = path.match(/\.(jpe?g|png|gif|webp)$/i);
@@ -74,17 +107,32 @@ const GalleryPhoto = memo(function GalleryPhoto({
   viewportWidth,
   viewportHeight,
 }) {
+  const [imageSize, setImageSize] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    setImageSize(null);
+
+    getCachedImageSize(uri).then((size) => {
+      if (active) setImageSize(size);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [uri]);
+
+  const fittedSize = fitImageInsideViewport(imageSize, viewportWidth, viewportHeight);
+
   return (
-    <View style={[styles.galleryPhotoFrame, { width: viewportWidth, height: viewportHeight }]}>
-      <ExpoImage
-        source={{ uri }}
-        contentFit="contain"
-        cachePolicy="memory-disk"
-        transition={0}
-        recyclingKey={uri}
-        style={styles.galleryPhoto}
-      />
-    </View>
+    <ExpoImage
+      source={{ uri }}
+      contentFit="contain"
+      cachePolicy="memory-disk"
+      transition={0}
+      recyclingKey={uri}
+      style={[styles.galleryPhoto, fittedSize]}
+    />
   );
 });
 
@@ -92,14 +140,8 @@ const styles = StyleSheet.create({
   rootFill: {
     flex: 1,
   },
-  galleryPhotoFrame: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: VIEWER_BG,
-  },
   galleryPhoto: {
-    width: '100%',
-    height: '100%',
+    backgroundColor: VIEWER_BG,
   },
 });
 
@@ -113,6 +155,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   categoryLabel,
   capturePreviewMode = false,
   onDismiss,
+  embedded = false,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -205,10 +248,6 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         alignItems: 'center',
         paddingVertical: spacing.lg,
         paddingHorizontal: spacing.xl,
-      },
-      menuRowBorder: {
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: withAlpha(colors.textSecondary, 0.2),
       },
       menuRowLabel: {
         fontSize: typography.sizes.md,
@@ -571,19 +610,24 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const counter = localImages.length ? `${currentIndex + 1} / ${localImages.length}` : '0 / 0';
   const counterLabel = categoryLabel ? `${categoryLabel} · ${counter}` : counter;
 
+  const ViewerContainer = embedded ? View : Modal;
+  const viewerContainerProps = embedded
+    ? { style: styles.rootFill }
+    : {
+        visible,
+        transparent: false,
+        animationType: 'fade',
+        presentationStyle: 'fullScreen',
+        statusBarTranslucent: true,
+        hardwareAccelerated: true,
+        onRequestClose: requestClose,
+      };
+
   if (!visible || !localImages.length) return null;
 
   return (
     <>
-      <Modal
-        visible={visible}
-        transparent={false}
-        animationType="fade"
-        presentationStyle="fullScreen"
-        statusBarTranslucent
-        hardwareAccelerated
-        onRequestClose={requestClose}
-      >
+      <ViewerContainer {...viewerContainerProps}>
         <GestureHandlerRootView style={styles.rootFill}>
           <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
           <View style={ds.modalRoot}>
@@ -693,9 +737,102 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
             ) : null}
           </View>
         </GestureHandlerRootView>
-      </Modal>
+      </ViewerContainer>
 
-      {!capturePreviewMode ? (
+      {embedded && !capturePreviewMode && (menuOpen || infoOpen || confirmDelete) ? (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            { justifyContent: 'flex-end', zIndex: 100, elevation: 100 },
+          ]}
+        >
+          <Pressable
+            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.56)' }]}
+            onPress={() => {
+              setMenuOpen(false);
+              setInfoOpen(false);
+              setConfirmDelete(false);
+            }}
+          />
+          <View
+            style={{
+              backgroundColor: theme.colors.surface,
+              borderTopLeftRadius: theme.radii.xl,
+              borderTopRightRadius: theme.radii.xl,
+              paddingBottom: (insets.bottom || 0) + theme.spacing.md,
+            }}
+          >
+            {menuOpen ? (
+              <>
+                <View style={ds.header}>
+                  <Text style={[ds.menuRowLabel, { marginLeft: 0 }]}>{t('viewer_more')}</Text>
+                </View>
+                <Pressable
+                  onPress={handleSave}
+                  disabled={busy || deleting}
+                  style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}
+                >
+                  <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
+                  <Text style={ds.menuRowLabel}>{t('viewer_save_to_device')}</Text>
+                </Pressable>
+                <ListSeparator />
+                <Pressable onPress={handleShowInfo} style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}>
+                  <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
+                  <Text style={ds.menuRowLabel}>{t('viewer_info_title')}</Text>
+                </Pressable>
+              </>
+            ) : null}
+            {infoOpen ? (
+              <>
+                <View style={ds.header}>
+                  <Pressable onPress={() => setInfoOpen(false)} style={ds.iconBtn}>
+                    <Feather name="chevron-left" size={theme.icons.md} color={theme.colors.text} />
+                  </Pressable>
+                  <Text style={[ds.menuRowLabel, { marginLeft: 0 }]}>{t('viewer_info_title')}</Text>
+                  <View style={ds.iconBtn} />
+                </View>
+                <SeparatedList>
+                  {infoRows.map((row, index) => (
+                    <View key={index} style={ds.infoRow}>
+                      <Text style={ds.infoLabel}>{row.label}</Text>
+                      <Text style={ds.infoValue}>{row.value}</Text>
+                    </View>
+                  ))}
+                </SeparatedList>
+              </>
+            ) : null}
+            {confirmDelete ? (
+              <>
+                <View style={ds.header}>
+                  <Text style={[ds.menuRowLabel, { marginLeft: 0 }]}>{t('order_photos_delete_single_title')}</Text>
+                </View>
+                <Text style={[ds.infoLabel, { paddingHorizontal: theme.spacing.xl, paddingBottom: theme.spacing.lg }]}>
+                  {t('order_photos_delete_single_message')}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: theme.spacing.md, paddingHorizontal: theme.spacing.xl }}>
+                  <Pressable
+                    onPress={() => setConfirmDelete(false)}
+                    style={{ flex: 1, alignItems: 'center', paddingVertical: theme.spacing.md }}
+                  >
+                    <Text style={ds.menuRowLabel}>{t('order_photos_delete_single_cancel')}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleDeleteConfirm}
+                    disabled={deleting}
+                    style={{ flex: 1, alignItems: 'center', paddingVertical: theme.spacing.md }}
+                  >
+                    <Text style={[ds.menuRowLabel, { color: theme.colors.danger }]}>
+                      {t('order_photos_delete_single_confirm')}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+
+      {!capturePreviewMode && !embedded ? (
         <>
           <BaseModal
             visible={menuOpen}
@@ -706,11 +843,12 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
             <Pressable
               onPress={handleSave}
               disabled={busy || deleting}
-              style={({ pressed }) => [ds.menuRow, ds.menuRowBorder, pressed && { opacity: 0.6 }]}
+              style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}
             >
               <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
               <Text style={ds.menuRowLabel}>{t('viewer_save_to_device')}</Text>
             </Pressable>
+            <ListSeparator />
             <Pressable onPress={handleShowInfo} style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}>
               <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
               <Text style={ds.menuRowLabel}>{t('viewer_info_title')}</Text>
@@ -723,12 +861,14 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
             title={t('viewer_info_title')}
             maxHeightRatio={0.3}
           >
-            {infoRows.map((row, index) => (
-              <View key={index} style={ds.infoRow}>
-                <Text style={ds.infoLabel}>{row.label}</Text>
-                <Text style={ds.infoValue}>{row.value}</Text>
-              </View>
-            ))}
+            <SeparatedList>
+              {infoRows.map((row, index) => (
+                <View key={index} style={ds.infoRow}>
+                  <Text style={ds.infoLabel}>{row.label}</Text>
+                  <Text style={ds.infoValue}>{row.value}</Text>
+                </View>
+              ))}
+            </SeparatedList>
           </BaseModal>
 
           <BaseModal
@@ -781,6 +921,7 @@ function FullscreenImageViewer({
   categoryLabel,
   capturePreviewMode = false,
   onDismiss,
+  embedded = false,
 }) {
   if (!visible || !images?.length) return null;
 
@@ -796,6 +937,7 @@ function FullscreenImageViewer({
         categoryLabel={categoryLabel}
         capturePreviewMode={capturePreviewMode}
         onDismiss={onDismiss}
+        embedded={embedded}
       />
     </ToastProvider>
   );

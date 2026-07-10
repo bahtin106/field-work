@@ -215,7 +215,7 @@ export default function PhoneVisibilitySettingsScreen() {
         : t('phone_visibility_rule_delay_after_departure');
 
     return (
-      <Card paddedXOnly>
+      <Card paddedXOnly separated>
         <SelectField
           label={t('phone_visibility_rule_condition')}
           value={conditionLabel}
@@ -223,7 +223,6 @@ export default function PhoneVisibilitySettingsScreen() {
         />
         {hasStatus ? (
           <>
-            <View style={styles.separator} />
             <SelectField
               label={t('phone_visibility_rule_status')}
               value={statusLabel}
@@ -233,7 +232,6 @@ export default function PhoneVisibilitySettingsScreen() {
         ) : null}
         {hasDelay ? (
           <>
-            <View style={styles.separator} />
             <View style={styles.delayControl}>
               <View style={styles.delayValueBlock}>
                 <Text style={styles.fieldLabel}>{delayLabel}</Text>
@@ -271,7 +269,7 @@ export default function PhoneVisibilitySettingsScreen() {
       contentContainerStyle={styles.screenContent}
     >
       <View style={styles.content}>
-        <SectionHeader topSpacing={0}>{t('phone_visibility_start_section')}</SectionHeader>
+        <SectionHeader>{t('phone_visibility_start_section')}</SectionHeader>
         {renderRule('start', startRule)}
 
         <SectionHeader>{t('phone_visibility_stop_section')}</SectionHeader>
@@ -318,15 +316,10 @@ function createStyles(theme) {
       paddingTop: 0,
     },
     content: {
-      paddingHorizontal: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
       paddingTop: theme.spacing.lg,
-      paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
-      gap: theme.spacing.sm,
-    },
-    separator: {
-      height: theme.components?.listItem?.dividerWidth ?? StyleSheet.hairlineWidth,
-      backgroundColor: theme.colors.border,
-      opacity: 0.7,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
+      gap: theme.components.screenLayout.sectionGap,
     },
     delayControl: {
       flexDirection: 'row',

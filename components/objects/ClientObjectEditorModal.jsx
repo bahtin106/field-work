@@ -386,7 +386,7 @@ export default function ClientObjectEditorModal({
           : null}
         {searchSuggestionsVisible ? (
           <>
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+            <SectionHeader>
               {t('order_object_search_title')}
             </SectionHeader>
             <Text style={styles.suggestionHint}>
@@ -418,7 +418,7 @@ export default function ClientObjectEditorModal({
         ) : null}
         {enableAdditionalPhones && hasEnabledAdditionalPhoneFields ? (
           <>
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+            <SectionHeader>
               {t('clients_contacts_section')}
             </SectionHeader>
             {visibleAdditionalPhoneSlots.map((slotId) => {
@@ -479,7 +479,7 @@ export default function ClientObjectEditorModal({
         ) : null}
         {orderedAdditionalFields.length ? (
           <>
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+            <SectionHeader>
               {t('objects_additional_info_section')}
             </SectionHeader>
             {orderedAdditionalFields.map((field) => (

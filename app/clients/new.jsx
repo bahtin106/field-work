@@ -735,7 +735,7 @@ export default function NewClientScreen() {
           </Pressable>
         </View>
 
-        {canShowPersonalSection ? <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader> : null}
+        {canShowPersonalSection ? <SectionHeader>{t('section_personal')}</SectionHeader> : null}
         {canShowPersonalSection ? (
         <Card paddedXOnly>
           {orderedPersonalFieldKeys.map((fieldKey) => (
@@ -754,7 +754,7 @@ export default function NewClientScreen() {
           ) : null}
         </Card>
         ) : null}
-        {canShowContactSection ? <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
+        {canShowContactSection ? <SectionHeader>{t('clients_contacts_section')}</SectionHeader> : null}
         {canShowContactSection ? (
         <Card paddedXOnly>
           {orderedContactFieldKeys

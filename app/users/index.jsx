@@ -170,12 +170,15 @@ function UsersIndexContent() {
           borderWidth: 1,
           paddingHorizontal: sz.sm,
           paddingVertical: sz.xs,
-          borderRadius: rad.md,
+          borderRadius: theme.components.card.radius,
         },
         errorText: { color: c.danger, fontSize: ty.sizes.sm },
         listContent: {
-          paddingHorizontal: sz.lg,
-          paddingBottom: scrollPaddingBottom,
+          paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+          paddingBottom: Math.max(
+            scrollPaddingBottom,
+            theme.components.screenLayout.contentPaddingBottom,
+          ),
         },
         rolePill: {
           paddingHorizontal: sz.sm,

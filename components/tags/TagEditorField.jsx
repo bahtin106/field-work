@@ -3,9 +3,11 @@ import { Feather } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useToast } from '../ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
+import { getCardSurfaceStyle } from '../../theme/surfaceStyles';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import TagCapsule from './TagCapsule';
 import TextField from '../ui/TextField';
+import SeparatedList from '../ui/SeparatedList';
 import { MAX_TAG_LENGTH, MAX_TAGS_PER_ENTITY, TAG_SUGGESTIONS_LIMIT } from './tagConfig';
 import { useTagSuggestions } from '../../src/features/tags/queries';
 
@@ -205,19 +207,21 @@ export default function TagEditorField({
                   suggestionsPlacement === 'top' ? styles.suggestionsTop : styles.suggestionsBottom,
                 ]}
               >
-                {visibleSuggestions.map((item) => (
-                  <Pressable
-                    key={String(item.id || item.value)}
-                    style={styles.suggestionItem}
-                    onPress={() => {
-                      clearBlurTimer();
-                      addTag(item.value, { fromSuggestion: true });
-                      inputRef.current?.focus?.();
-                    }}
-                  >
-                    <Text style={styles.suggestionText}>{item.value}</Text>
-                  </Pressable>
-                ))}
+                <SeparatedList>
+                  {visibleSuggestions.map((item) => (
+                    <Pressable
+                      key={String(item.id || item.value)}
+                      style={styles.suggestionItem}
+                      onPress={() => {
+                        clearBlurTimer();
+                        addTag(item.value, { fromSuggestion: true });
+                        inputRef.current?.focus?.();
+                      }}
+                    >
+                      <Text style={styles.suggestionText}>{item.value}</Text>
+                    </Pressable>
+                  ))}
+                </SeparatedList>
               </View>
             ) : null}
 
@@ -252,19 +256,21 @@ export default function TagEditorField({
                 suggestionsPlacement === 'top' ? styles.suggestionsTop : styles.suggestionsBottom,
               ]}
             >
-              {visibleSuggestions.map((item) => (
-                <Pressable
-                  key={String(item.id || item.value)}
-                  style={styles.suggestionItem}
-                  onPress={() => {
-                    clearBlurTimer();
-                    addTag(item.value, { fromSuggestion: true });
-                    inputRef.current?.focus?.();
-                  }}
-                >
-                  <Text style={styles.suggestionText}>{item.value}</Text>
-                </Pressable>
-              ))}
+              <SeparatedList>
+                {visibleSuggestions.map((item) => (
+                  <Pressable
+                    key={String(item.id || item.value)}
+                    style={styles.suggestionItem}
+                    onPress={() => {
+                      clearBlurTimer();
+                      addTag(item.value, { fromSuggestion: true });
+                      inputRef.current?.focus?.();
+                    }}
+                  >
+                    <Text style={styles.suggestionText}>{item.value}</Text>
+                  </Pressable>
+                ))}
+              </SeparatedList>
             </View>
           ) : null}
           <TextField
@@ -283,6 +289,8 @@ export default function TagEditorField({
 function createStyles(theme) {
   const insetKey = theme.components?.input?.separator?.insetX ?? 'md';
   const inset = Number(theme.spacing?.[insetKey] ?? theme.spacing.md);
+  const dividerInsetKey = theme.components.listItem.dividerInsetX;
+  const dividerInset = Number(theme.spacing[dividerInsetKey] ?? theme.spacing.md);
 
   return StyleSheet.create({
     labelRow: {
@@ -324,16 +332,13 @@ function createStyles(theme) {
       marginTop: 2,
     },
     suggestionsWrap: {
+      ...getCardSurfaceStyle(theme),
       position: 'absolute',
       left: inset,
       right: inset,
       borderRadius: theme.radii.md,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
       overflow: 'hidden',
       zIndex: 20,
-      elevation: 6,
     },
     suggestionsTop: {
       bottom: '100%',
@@ -349,8 +354,6 @@ function createStyles(theme) {
     suggestionItem: {
       paddingHorizontal: theme.spacing.md,
       paddingVertical: theme.spacing.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border,
     },
     suggestionText: {
       color: theme.colors.text,
@@ -358,9 +361,10 @@ function createStyles(theme) {
       fontWeight: theme.typography.weight.medium,
     },
     separator: {
-      height: theme.components?.input?.separator?.height ?? 1,
-      marginHorizontal: inset,
-      backgroundColor: theme.colors.border,
+      height: theme.components.listItem.dividerWidth,
+      marginHorizontal: dividerInset,
+      backgroundColor:
+        theme.colors[theme.components.listItem.dividerColor] ?? theme.colors.border,
     },
   });
 }

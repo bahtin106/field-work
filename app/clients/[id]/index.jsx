@@ -250,7 +250,7 @@ export default function ClientViewScreen() {
         <>
           {settings?.enable_client_tags && client?.tags?.length ? (
             <>
-              <SectionHeader topSpacing="xs">{t('tags_field_label')}</SectionHeader>
+              <SectionHeader>{t('tags_field_label')}</SectionHeader>
               <Card style={{ paddingVertical: theme.spacing.md }}>
                 <TagList
                   tags={client.tags}
@@ -265,16 +265,15 @@ export default function ClientViewScreen() {
             </>
           ) : null}
 
-          {canShowPersonalSection ? <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader> : null}
+          {canShowPersonalSection ? <SectionHeader>{t('section_personal')}</SectionHeader> : null}
           {canShowPersonalSection ? (
-          <Card paddedXOnly>
+          <Card paddedXOnly separated>
             {showFullNameRow ? (
               <>
                 <LabelValueRow
                   label={t('label_full_name')}
                   value={fullName}
                 />
-                {showCommentRow ? <View style={base.sep} /> : null}
               </>
             ) : null}
             {showCommentRow ? (
@@ -282,9 +281,9 @@ export default function ClientViewScreen() {
             ) : null}
           </Card>
           ) : null}
-          {canShowContactSection ? <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
+          {canShowContactSection ? <SectionHeader>{t('clients_contacts_section')}</SectionHeader> : null}
           {canShowContactSection ? (
-          <Card paddedXOnly>
+          <Card paddedXOnly separated>
             {isClientFieldVisible('email') ? (
               <>
                 <LabelValueRow
@@ -322,7 +321,6 @@ export default function ClientViewScreen() {
                 ) : null
               }
                 />
-                {isClientFieldVisible('phone') || visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
               </>
             ) : null}
             {isClientFieldVisible('phone') ? (
@@ -362,12 +360,10 @@ export default function ClientViewScreen() {
                 ) : null
               }
                 />
-                {visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
               </>
             ) : null}
             {visibleAdditionalPhones.map((item, index) => {
               const rowLabel = buildAdditionalPhoneDisplayLabel(t, item?.label);
-              const isLast = index === visibleAdditionalPhones.length - 1;
               return (
                 <React.Fragment key={`additional-phone-row-${index + 1}`}>
                   <LabelValueRow
@@ -405,21 +401,19 @@ export default function ClientViewScreen() {
                       </IconButton>
                     }
                   />
-                  {!isLast ? <View style={base.sep} /> : null}
                 </React.Fragment>
               );
             })}
           </Card>
           ) : null}
 
-          <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
-          <Card paddedXOnly>
+          <SectionHeader>{t('clients_objects_section')}</SectionHeader>
+          <Card paddedXOnly separated>
             {sortedObjects.length ? (
               sortedObjects.map((objectItem, index) => {
                 const isPrimary = !!objectItem?.is_primary || index === 0;
                 return (
                   <React.Fragment key={objectItem.id}>
-                    {index > 0 ? <View style={base.sep} /> : null}
                     <Pressable
                       style={base.row}
                       disabled={!canViewObjects}

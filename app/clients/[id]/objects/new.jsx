@@ -321,7 +321,7 @@ export default function NewClientObjectScreen() {
         <Text style={styles.clientName}>{t('routes_clients_client')}</Text>
       </Card>
 
-      <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader>
+      <SectionHeader>{t('section_personal')}</SectionHeader>
       <Card paddedXOnly>
         <TextField
           label={withRequiredLabel('name', t('objects_field_name'))}
@@ -336,7 +336,7 @@ export default function NewClientObjectScreen() {
         <FieldErrorText message={fieldErrors?.name || null} />
       </Card>
 
-      <SectionHeader topSpacing="xs">{t('objects_address_section')}</SectionHeader>
+      <SectionHeader>{t('objects_address_section')}</SectionHeader>
       <Card paddedXOnly>
         <View style={styles.locationModeRow}>
           <Pressable
@@ -408,7 +408,7 @@ export default function NewClientObjectScreen() {
           />
         ) : null}
       </Card>
-      {canShowContactSection ? <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
+      {canShowContactSection ? <SectionHeader>{t('clients_contacts_section')}</SectionHeader> : null}
       {canShowContactSection ? (
         <Card paddedXOnly>
           {visibleAdditionalPhoneSlots.filter((slotId) => orderedContactFieldKeys.includes(`additional_phone_${slotId}`)).map((slotId) => {

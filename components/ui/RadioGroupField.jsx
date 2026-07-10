@@ -133,14 +133,12 @@ function createStyles(t, isError = false) {
     Math.max(t.components?.radio?.dotMin ?? 6, Math.round(RADIO_SIZE / 2 - 3));
   const ROW_HEIGHT = t.components?.input?.height ?? t.components?.listItem?.height ?? 48;
   const SEP_H =
-    t.components?.input?.separator?.height ??
     t.components?.listItem?.dividerWidth ??
     StyleSheet.hairlineWidth;
   const cardPadXKey = t.components?.card?.padX ?? 'lg';
   const CARD_PADX = Number(t.spacing?.[cardPadXKey] ?? 0) || 0;
-  const CARD_RADIUS = t.radii?.xl ?? 16;
-  const SEP_ALPHA = t.components?.input?.separator?.alpha ?? 0.18;
-  const insetKey = t.components?.input?.separator?.insetX ?? 'lg';
+  const CARD_RADIUS = t.components?.card?.radius ?? t.radii?.xl;
+  const insetKey = t.components?.listItem?.dividerInsetX ?? 'md';
   const ML = Number(t.spacing?.[insetKey] ?? 0) || 0;
   const MR = Number(t.spacing?.[insetKey] ?? 0) || 0;
   return StyleSheet.create({
@@ -222,8 +220,9 @@ function createStyles(t, isError = false) {
     },
     separator: {
       height: SEP_H,
-      backgroundColor: isError ? t.colors.danger : t.colors.border,
-      opacity: isError ? 1 : SEP_ALPHA,
+      backgroundColor: isError
+        ? t.colors.danger
+        : t.colors[t.components?.listItem?.dividerColor] ?? t.colors.border,
       marginLeft: ML,
       marginRight: MR,
     },

@@ -1,23 +1,44 @@
 // app/company_settings/sections/NotificationSettings.jsx
-import { View, Text } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import Screen from '../../../components/layout/Screen';
+import Card from '../../../components/ui/Card';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 export default function NotificationSettings() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const styles = createStyles(theme);
+
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background, padding: 16 }}>
-      <View style={{ backgroundColor: theme.colors.surface, borderRadius: 16, padding: 16 }}>
-        <Text
-          style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}
-        >
+    <Screen background="background">
+      <View style={styles.content}>
+        <Card>
+          <Text style={styles.title}>
           {t('notification_settings_placeholder_title')}
-        </Text>
-        <Text style={{ fontSize: 14, color: theme.colors.textSecondary }}>
-          {t('notification_settings_placeholder_body')}
-        </Text>
+          </Text>
+          <Text style={styles.body}>{t('notification_settings_placeholder_body')}</Text>
+        </Card>
       </View>
-    </View>
+    </Screen>
   );
 }
+
+const createStyles = (theme) =>
+  StyleSheet.create({
+    content: {
+      flex: 1,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
+    },
+    title: {
+      marginBottom: theme.spacing.sm,
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.lg,
+      fontWeight: theme.typography.weight.semibold,
+    },
+    body: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+    },
+  });

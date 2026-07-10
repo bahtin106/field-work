@@ -14,6 +14,7 @@ export default function SelectModal({
   items = [],
   onSelect,
   onClose,
+  onDismiss,
   searchable = true,
   renderItem,
   footer,
@@ -162,6 +163,7 @@ export default function SelectModal({
     <BaseModal
       visible={visible}
       onClose={onClose}
+      onDismiss={onDismiss}
       title={title}
       maxHeightRatio={maxHeightRatio}
       minTopGapFromStatusBar={minTopGapFromStatusBar}
@@ -207,11 +209,6 @@ export default function SelectModal({
           paddingBottom: bottomInset,
         }}
         style={{ flexGrow: 0, flexShrink: 1, minHeight: 0, paddingRight: theme.spacing.xs }}
-        scrollIndicatorInsets={{
-          top: theme.spacing.sm,
-          bottom: bottomInset,
-          right: 0,
-        }}
         ListFooterComponent={listFooter || <View style={{ height: bottomInset }} />}
         ListEmptyComponent={
           loading ? (

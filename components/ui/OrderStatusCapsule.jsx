@@ -2,7 +2,7 @@ import { memo, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { getOrderStatusPalette } from '../../src/features/orders/statusPresentation';
-import { getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
+import { getOrderStatusColor, getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
@@ -32,7 +32,8 @@ function OrderStatusCapsuleImpl({ status, companyId = null, style, textStyle, nu
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { isEnabled, statuses } = useCompanyOrderStatuses(companyId);
-  const palette = useMemo(() => getOrderStatusPalette(status, theme), [status, theme]);
+  const color = useMemo(() => getOrderStatusColor(status, statuses), [status, statuses]);
+  const palette = useMemo(() => getOrderStatusPalette(status, theme, color), [color, status, theme]);
   const styles = useMemo(() => createStyles(theme), [theme]);
   const label = useMemo(() => getOrderStatusLabel(status, statuses, t), [status, statuses, t]);
 

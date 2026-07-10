@@ -23,6 +23,7 @@ import {
   usePullToRefreshFeedback,
 } from '../components/ui/PullToRefreshFeedback';
 import AnimatedFullscreenModal from '../components/ui/modals/AnimatedFullscreenModal';
+import SectionHeader from '../components/ui/SectionHeader';
 import { useCompanySettings } from '../hooks/useCompanySettings';
 import { useCompanyOrderStatuses } from '../lib/orderStatuses';
 import { usePermissions } from '../lib/permissions';
@@ -33,6 +34,7 @@ import { supabase } from '../lib/supabase';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useScreenRefreshRegistration } from '../src/shared/query/screenRefreshRegistry';
 import { useTheme } from '../theme/ThemeProvider';
+import { getCardSurfaceStyle } from '../theme/surfaceStyles';
 import DeferredScreen from '../src/shared/perf/DeferredScreen';
 
 // ------- Periods -------
@@ -118,7 +120,7 @@ function StatsScreenContent() {
     [theme, mode],
   );
   const ui = React.useMemo(() => {
-    const screenPadding = theme.spacing.lg;
+    const screenPadding = theme.components.screenLayout.contentPaddingX;
     const cardGap = theme.spacing.md;
     const gridWidth = Math.max(0, screenWidth - screenPadding * 2 - cardGap);
     return {
@@ -126,7 +128,7 @@ function StatsScreenContent() {
       sectionGap: theme.spacing.lg,
       cardGap,
       cardWidth: Math.floor(gridWidth / 2),
-      cardRadius: theme.radii.xl,
+      cardRadius: theme.components.card.radius,
       controlRadius: theme.radii.lg,
       controlRadiusSm: theme.radii.sm,
       controlPaddingX: theme.spacing.md,
@@ -134,9 +136,9 @@ function StatsScreenContent() {
       cardPadding: theme.spacing.lg,
       smallGap: theme.spacing.xs,
       mediumGap: theme.spacing.md,
-      bottomInset: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
+      bottomInset: theme.components.screenLayout.contentPaddingBottom,
       headerTitleSize: theme.typography.sizes.xxl,
-      sectionTitleSize: theme.typography.sizes.lg,
+      modalTitleSize: theme.typography.sizes.lg,
       statValueSize: theme.typography.sizes.xl,
       metricValueSize: theme.typography.sizes.lg,
       bodySize: theme.typography.sizes.md,
@@ -202,12 +204,9 @@ function StatsScreenContent() {
           gap: ui.cardGap,
         },
         statCard: {
+          ...getCardSurfaceStyle(theme),
           width: ui.cardWidth,
-          backgroundColor: TOK.SURFACE,
-          borderRadius: ui.cardRadius,
           padding: ui.cardPadding,
-          borderWidth: 1,
-          borderColor: TOK.CARD_BORDER,
         },
         statValue: {
           fontSize: ui.statValueSize,
@@ -284,18 +283,10 @@ function StatsScreenContent() {
           marginBottom: ui.sectionGap,
           paddingHorizontal: ui.screenPadding,
         },
-        sectionTitle: {
-          fontSize: ui.sectionTitleSize,
-          fontWeight: '700',
-          color: TOK.TEXT,
-          marginBottom: ui.sectionGap,
-        },
+        sectionTitle: { marginLeft: 0 },
         chartCard: {
-          backgroundColor: TOK.SURFACE,
-          borderRadius: ui.cardRadius,
+          ...getCardSurfaceStyle(theme),
           padding: ui.cardPadding,
-          borderWidth: 1,
-          borderColor: TOK.CARD_BORDER,
         },
 
         // Status Breakdown
@@ -344,12 +335,9 @@ function StatsScreenContent() {
           gap: ui.cardGap,
         },
         metricCard: {
+          ...getCardSurfaceStyle(theme),
           width: ui.cardWidth,
-          backgroundColor: TOK.SURFACE,
-          borderRadius: ui.controlRadius,
           padding: ui.cardPadding,
-          borderWidth: 1,
-          borderColor: TOK.CARD_BORDER,
         },
         metricValue: {
           fontSize: ui.metricValueSize,
@@ -378,8 +366,8 @@ function StatsScreenContent() {
           borderBottomColor: TOK.OUTLINE,
         },
         modalTitle: {
-          fontSize: ui.sectionTitleSize,
-          fontWeight: '700',
+          fontSize: ui.modalTitleSize,
+          fontWeight: theme.typography.weight.bold,
           color: TOK.TEXT,
         },
         closeButton: {
@@ -629,17 +617,12 @@ function StatsScreenContent() {
       const netProfit = orders?.reduce((sum, o) => sum + getNet(o), 0) || 0;
 
       // Status breakdown
-      const statusColors = {
-        done: TOK.SUCCESS,
-        in_progress: TOK.WARNING,
-        new: TOK.INFO,
-      };
       const statusRows = statusSystem.isEnabled
         ? statusSystem.regularStatuses.map((status) => ({
             key: status.status_key,
             aliases: getStatusDbAliases(status.status_key),
             label: status.name,
-            color: statusColors[status.status_key] || TOK.PRIMARY,
+            color: status.color || TOK.PRIMARY,
           }))
         : [];
       const statusBreakdown = statusRows
@@ -929,7 +912,9 @@ function StatsScreenContent() {
         {/* Status Breakdown */}
         {stats.statusBreakdown.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('stats_by_status')}</Text>
+            <SectionHeader style={styles.sectionTitle}>
+              {t('stats_by_status')}
+            </SectionHeader>
             <View style={styles.chartCard}>
               {stats.statusBreakdown.map((item) => (
                 <View key={item.status} style={styles.statusItem}>
@@ -951,7 +936,9 @@ function StatsScreenContent() {
 
         {/* Performance Metrics */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('stats_efficiency')}</Text>
+          <SectionHeader style={styles.sectionTitle}>
+            {t('stats_efficiency')}
+          </SectionHeader>
           <View style={styles.metricGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>
@@ -976,7 +963,9 @@ function StatsScreenContent() {
 
         {/* Financial Summary */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('stats_finance')}</Text>
+          <SectionHeader style={styles.sectionTitle}>
+            {t('stats_finance')}
+          </SectionHeader>
           <View style={styles.chartCard}>
             <View style={styles.statusItem}>
               <Text style={styles.statusName}>{t('stats_total_revenue')}</Text>
@@ -997,7 +986,9 @@ function StatsScreenContent() {
 
         {stats.expenseByRecipient.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('stats_expenses_by_recipient')}</Text>
+            <SectionHeader style={styles.sectionTitle}>
+              {t('stats_expenses_by_recipient')}
+            </SectionHeader>
             <View style={styles.chartCard}>
               {stats.expenseByRecipient.map((item, index) => (
                 <View

@@ -7,6 +7,7 @@ import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import Button from '../../../components/ui/Button';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
+import SeparatedList from '../../../components/ui/SeparatedList';
 import TextField, { SelectField, SwitchField } from '../../../components/ui/TextField';
 import BaseModal from '../../../components/ui/modals/BaseModal';
 import DateTimeModal from '../../../components/ui/modals/DateTimeModal';
@@ -226,8 +227,10 @@ export default function AdminPromoCodesScreen() {
                     </Text>
                   </View>
                 </View>
-                <LabelValueRow label={t('admin_promocode_discount_label')} value={formatDiscount(row, locale)} />
-                <LabelValueRow label={t('admin_promocode_valid_until_label')} value={formatDateTime(row.valid_until, t, locale)} />
+                <SeparatedList>
+                  <LabelValueRow label={t('admin_promocode_discount_label')} value={formatDiscount(row, locale)} />
+                  <LabelValueRow label={t('admin_promocode_valid_until_label')} value={formatDateTime(row.valid_until, t, locale)} />
+                </SeparatedList>
                 {row.comment ? <Text style={styles(theme).comment}>{row.comment}</Text> : null}
               </Card>
             </Pressable>
@@ -306,19 +309,21 @@ export default function AdminPromoCodesScreen() {
         title={t('admin_promocode_discount_type_label')}
         maxHeightRatio={0.45}
       >
-        {discountTypes.map((item) => (
-          <Pressable
-            key={item.value}
-            style={styles(theme).optionRow}
-            onPress={() => {
-              setForm((p) => ({ ...p, discountType: item.value }));
-              setDiscountTypeVisible(false);
-            }}
-          >
-            <Text style={styles(theme).optionText}>{item.label}</Text>
-            {form.discountType === item.value ? <Feather name="check" size={18} color={theme.colors.primary} /> : null}
-          </Pressable>
-        ))}
+        <SeparatedList>
+          {discountTypes.map((item) => (
+            <Pressable
+              key={item.value}
+              style={styles(theme).optionRow}
+              onPress={() => {
+                setForm((p) => ({ ...p, discountType: item.value }));
+                setDiscountTypeVisible(false);
+              }}
+            >
+              <Text style={styles(theme).optionText}>{item.label}</Text>
+              {form.discountType === item.value ? <Feather name="check" size={18} color={theme.colors.primary} /> : null}
+            </Pressable>
+          ))}
+        </SeparatedList>
       </BaseModal>
 
       <ConfirmModal
@@ -339,7 +344,12 @@ export default function AdminPromoCodesScreen() {
 
 const styles = (theme) =>
   StyleSheet.create({
-    content: { padding: theme.spacing.lg, gap: theme.spacing.md },
+    content: {
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
+      gap: theme.spacing.md,
+    },
     promoCard: { gap: theme.spacing.sm },
     cardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.spacing.sm },
     cardTitleWrap: { flex: 1, minWidth: 0 },
@@ -368,13 +378,11 @@ const styles = (theme) =>
     generateText: { color: theme.colors.primary, fontSize: theme.typography.sizes.xs, fontWeight: theme.typography.weight.bold },
     clearDate: { color: theme.colors.primary, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.semibold, paddingHorizontal: theme.spacing.md },
     optionRow: {
-      minHeight: 52,
+      minHeight: theme.components.listItem.height,
       paddingHorizontal: theme.spacing.md,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      borderBottomWidth: theme.components.listItem.dividerWidth,
-      borderBottomColor: theme.colors.border,
     },
     optionText: { color: theme.colors.text, fontSize: theme.typography.sizes.md, fontWeight: theme.typography.weight.medium },
   });

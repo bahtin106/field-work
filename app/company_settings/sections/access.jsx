@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import SeparatedList from '../../../components/ui/SeparatedList';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
@@ -385,7 +386,7 @@ export default function AccessSettingsScreen() {
 
         {ACCESS_SECTIONS.map((section) => (
           <React.Fragment key={section.id}>
-            <SectionHeader topSpacing={0}>{t(section.titleKey)}</SectionHeader>
+            <SectionHeader>{t(section.titleKey)}</SectionHeader>
             <Card paddedXOnly>
               {loading ? (
                 <View style={s.loadingWrap}>
@@ -393,7 +394,7 @@ export default function AccessSettingsScreen() {
                   <Text style={s.loadingText}>{t('access_settings_loading')}</Text>
                 </View>
               ) : (
-                <>
+                <SeparatedList>
                   <View
                     style={[
                       s.row,
@@ -420,9 +421,8 @@ export default function AccessSettingsScreen() {
                     ))}
                   </View>
 
-                  {section.permissions.map((perm, rowIndex) => (
+                  {section.permissions.map((perm) => (
                     <View key={`${section.id}-${perm.key}`}>
-                      {rowIndex > 0 ? <View style={base.sep} /> : null}
                       <View style={s.row}>
                         <Text
                           style={[
@@ -444,7 +444,7 @@ export default function AccessSettingsScreen() {
                       </View>
                     </View>
                   ))}
-                </>
+                </SeparatedList>
               )}
             </Card>
           </React.Fragment>
@@ -471,9 +471,9 @@ export default function AccessSettingsScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     screenContent: {
-      paddingHorizontal: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
       paddingTop: theme.spacing.lg,
-      paddingBottom: theme.spacing.xxl,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
       gap: theme.spacing.md,
     },
     loadingWrap: {
@@ -498,8 +498,6 @@ const styles = (theme) =>
       gap: theme.spacing.xs,
     },
     headerRow: {
-      borderBottomWidth: theme.components?.listItem?.dividerWidth,
-      borderBottomColor: theme.colors.border,
       backgroundColor: theme.colors.background,
       borderTopLeftRadius: theme.radii.xl,
       borderTopRightRadius: theme.radii.xl,

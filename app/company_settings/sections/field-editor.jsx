@@ -983,8 +983,11 @@ function createStyles(theme) {
 
   return StyleSheet.create({
     content: {
-      padding: theme.spacing.lg,
-      paddingBottom: theme.spacing.xxl + 88,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom:
+        theme.components.screenLayout.contentPaddingBottom +
+        theme.components.screenLayout.floatingActionClearance,
       gap: 0,
     },
     center: {
@@ -999,7 +1002,7 @@ function createStyles(theme) {
     },
     fieldHeaderCard: {
       backgroundColor: theme.colors.surface,
-      borderRadius: theme.radii.lg,
+      borderRadius: theme.components.card.radius,
       borderBottomLeftRadius: 0,
       borderBottomRightRadius: 0,
       borderBottomWidth: 0,
@@ -1011,7 +1014,7 @@ function createStyles(theme) {
       elevation: 0,
     },
     fieldBodyCard: {
-      borderRadius: theme.radii.lg,
+      borderRadius: theme.components.card.radius,
       borderTopLeftRadius: 0,
       borderTopRightRadius: 0,
       borderTopWidth: 0,

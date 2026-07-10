@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import SeparatedList from '../../../components/ui/SeparatedList';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
@@ -15,12 +16,15 @@ import MultiSelectModal from '../../../components/ui/modals/MultiSelectModal';
 import { useToast } from '../../../components/ui/ToastProvider';
 import {
   ORDER_STATUS_LIMIT,
+  ORDER_STATUS_COLOR_PALETTE,
   createCompanyOrderStatus,
   deleteCompanyOrderStatus,
   getCompanyOrderStatusUsage,
   getOrderStatusLabel,
+  getDefaultOrderStatusColor,
+  getRandomOrderStatusColor,
   invalidateCompanyOrderStatuses,
-  renameCompanyOrderStatus,
+  updateCompanyOrderStatus,
   setCompanyFeedStatusEnabled,
   setCompanyOrderStatusesEnabled,
   useCompanyOrderStatuses,
@@ -45,6 +49,7 @@ function resolveError(error, t) {
   const raw = String(error?.message || error || '').trim();
   const lower = raw.toLowerCase();
   if (lower.includes('company_order_statuses_limit_reached')) return t('order_statuses_error_limit');
+  if (lower.includes('company_order_status_color_invalid')) return t('common_unexpected_error');
   if (lower.includes('duplicate') || lower.includes('company_order_statuses_company_name_unique')) return t('order_statuses_error_duplicate');
   if (lower.includes('forbidden') || lower.includes('row-level security')) return t('order_statuses_error_forbidden');
   if (lower.includes('replacement_status_not_available') || lower.includes('company_order_status_replacement_required')) {
@@ -80,8 +85,9 @@ export default function OrderStatusesScreen() {
   const [feedFieldsModalVisible, setFeedFieldsModalVisible] = React.useState(false);
   const [feedFieldsBusy, setFeedFieldsBusy] = React.useState(false);
   const [feedDisableBlocked, setFeedDisableBlocked] = React.useState({ visible: false, count: 0 });
-  const [createModal, setCreateModal] = React.useState({ visible: false, name: '', error: '' });
-  const [editModal, setEditModal] = React.useState({ visible: false, row: null, name: '', error: '' });
+  const [createModal, setCreateModal] = React.useState({ visible: false, name: '', color: '', error: '' });
+  const [editModal, setEditModal] = React.useState({ visible: false, row: null, name: '', color: '', error: '' });
+  const [feedColorModal, setFeedColorModal] = React.useState({ visible: false, color: '', error: '' });
   const [deleteModal, setDeleteModal] = React.useState(emptyDeleteState);
   const [replacementPickerVisible, setReplacementPickerVisible] = React.useState(false);
   const [busyId, setBusyId] = React.useState(null);
@@ -216,8 +222,12 @@ export default function OrderStatusesScreen() {
     }
     setBusyId('create');
     try {
-      await createCompanyOrderStatus(companyId, { name, sortOrder: regularStatuses.length + 1 });
-      setCreateModal({ visible: false, name: '', error: '' });
+      await createCompanyOrderStatus(companyId, {
+        name,
+        color: createModal.color,
+        sortOrder: regularStatuses.length + 1,
+      });
+      setCreateModal({ visible: false, name: '', color: '', error: '' });
       refresh();
       toast.success(t('order_statuses_created'));
     } catch (error) {
@@ -225,7 +235,7 @@ export default function OrderStatusesScreen() {
     } finally {
       setBusyId(null);
     }
-  }, [canAdd, companyId, createModal.name, refresh, regularStatuses.length, t, toast, validateName]);
+  }, [canAdd, companyId, createModal.color, createModal.name, refresh, regularStatuses.length, t, toast, validateName]);
 
   const renameStatus = React.useCallback(async () => {
     const row = editModal.row;
@@ -238,8 +248,8 @@ export default function OrderStatusesScreen() {
     }
     setBusyId(row.id);
     try {
-      await renameCompanyOrderStatus(companyId, row.id, name);
-      setEditModal({ visible: false, row: null, name: '', error: '' });
+      await updateCompanyOrderStatus(companyId, row.id, { name, color: editModal.color });
+      setEditModal({ visible: false, row: null, name: '', color: '', error: '' });
       refresh();
       toast.success(t('order_statuses_renamed'));
     } catch (error) {
@@ -247,7 +257,22 @@ export default function OrderStatusesScreen() {
     } finally {
       setBusyId(null);
     }
-  }, [companyId, editModal.name, editModal.row, refresh, t, toast, validateName]);
+  }, [companyId, editModal.color, editModal.name, editModal.row, refresh, t, toast, validateName]);
+
+  const saveFeedColor = React.useCallback(async () => {
+    if (!companyId || !feedStatus?.id || !canManage) return;
+    setBusyId(feedStatus.id);
+    try {
+      await updateCompanyOrderStatus(companyId, feedStatus.id, { color: feedColorModal.color });
+      setFeedColorModal({ visible: false, color: '', error: '' });
+      refresh();
+      toast.success(t('order_statuses_color_saved'));
+    } catch (error) {
+      setFeedColorModal((prev) => ({ ...prev, error: resolveError(error, t) }));
+    } finally {
+      setBusyId(null);
+    }
+  }, [canManage, companyId, feedColorModal.color, feedStatus?.id, refresh, t, toast]);
 
   const openDelete = React.useCallback(async (row) => {
     if (!row?.id || busyId) return;
@@ -306,7 +331,7 @@ export default function OrderStatusesScreen() {
   return (
     <Screen background="background" headerOptions={{ title: t('order_statuses_title') }} scroll={false}>
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-        <SectionHeader topSpacing="xs" bottomSpacing="xs">{t('order_statuses_title')}</SectionHeader>
+        <SectionHeader>{t('order_statuses_title')}</SectionHeader>
         <Card padded={false}>
           <View style={s.row}>
             <View style={s.textWrap}>
@@ -326,15 +351,23 @@ export default function OrderStatusesScreen() {
         {isEnabled ? <>
           {!isSoloAdmin ? <>
             <SectionHeader>{t('order_statuses_feed_section')}</SectionHeader>
-            <Card padded={false}>
+            <Card padded={false} separated>
               <View style={s.row}>
+                <View style={[s.colorDot, { backgroundColor: feedStatus?.color || getDefaultOrderStatusColor('feed') }]} />
                 <View style={s.textWrap}>
                   <Text style={s.title}>{feedStatus ? getOrderStatusLabel(feedStatus.status_key, [feedStatus], t) : t('order_status_in_feed')}</Text>
                   <Text style={s.hint}>{t('order_statuses_feed_hint')}</Text>
                 </View>
+                <Pressable
+                  disabled={!canManage || !feedStatus || busyId === feedStatus?.id}
+                  onPress={() => setFeedColorModal({ visible: true, color: feedStatus?.color || getDefaultOrderStatusColor('feed'), error: '' })}
+                  style={({ pressed }) => [s.iconButton, pressed && s.pressed]}
+                  accessibilityLabel={t('order_statuses_change_color')}
+                >
+                  <Feather name="edit-2" size={18} color={theme.colors.textSecondary} />
+                </Pressable>
                 {feedBusy ? <ActivityIndicator color={theme.colors.primary} /> : <ThemedSwitch value={feedEnabled} onValueChange={changeFeed} disabled={!canManage || !feedStatus} />}
               </View>
-              <View style={s.separator} />
               <Pressable
                 disabled={!feedEnabled || !canManage || feedFieldsBusy}
                 onPress={() => setFeedFieldsModalVisible(true)}
@@ -359,38 +392,43 @@ export default function OrderStatusesScreen() {
 
           <SectionHeader>{t('order_statuses_regular_section')}</SectionHeader>
           <Card padded={false}>
-            {regularStatuses.map((row, index) => <View key={row.id}>
-              {index > 0 ? <View style={s.separator} /> : null}
-              <View style={s.row}>
-                <Text style={s.statusName} numberOfLines={1}>{getOrderStatusLabel(row.status_key, regularStatuses, t)}</Text>
-                <View style={s.actions}>
-                  {busyId === row.id ? <ActivityIndicator color={theme.colors.primary} /> : null}
-                  <Pressable disabled={!canManage || busyId === row.id} onPress={() => setEditModal({ visible: true, row, name: row.name, error: '' })} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_edit')}>
-                    <Feather name="edit-2" size={18} color={theme.colors.textSecondary} />
-                  </Pressable>
-                  <Pressable disabled={!canManage || busyId === row.id} onPress={() => openDelete(row)} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_delete')}>
-                    <Feather name="trash-2" size={18} color={theme.colors.danger} />
-                  </Pressable>
-                </View>
-              </View>
-            </View>)}
-            {!regularStatuses.length ? <View style={s.empty}><Text style={s.hint}>{t('order_statuses_empty')}</Text></View> : null}
-            <View style={s.separator} />
-            <Pressable disabled={!canAdd} onPress={() => setCreateModal({ visible: true, name: '', error: '' })} style={({ pressed }) => [s.addRow, !canAdd && s.disabled, pressed && s.pressed]}>
-              <Feather name="plus-circle" size={18} color={theme.colors.primary} />
-              <Text style={s.addText}>{t('order_statuses_add')}</Text>
-            </Pressable>
+            <SeparatedList>
+              {regularStatuses.map((row) => <View key={row.id} style={s.row}>
+                  <View style={[s.colorDot, { backgroundColor: row.color }]} />
+                  <Text style={s.statusName} numberOfLines={1}>{getOrderStatusLabel(row.status_key, regularStatuses, t)}</Text>
+                  <View style={s.actions}>
+                    {busyId === row.id ? <ActivityIndicator color={theme.colors.primary} /> : null}
+                    <Pressable disabled={!canManage || busyId === row.id} onPress={() => setEditModal({ visible: true, row, name: row.name, color: row.color, error: '' })} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_edit')}>
+                      <Feather name="edit-2" size={18} color={theme.colors.textSecondary} />
+                    </Pressable>
+                    <Pressable disabled={!canManage || busyId === row.id} onPress={() => openDelete(row)} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_delete')}>
+                      <Feather name="trash-2" size={18} color={theme.colors.danger} />
+                    </Pressable>
+                  </View>
+                </View>)}
+              {!regularStatuses.length ? <View style={s.empty}><Text style={s.hint}>{t('order_statuses_empty')}</Text></View> : null}
+              <Pressable disabled={!canAdd} onPress={() => setCreateModal({ visible: true, name: '', color: getRandomOrderStatusColor(regularStatuses.map((row) => row.color)), error: '' })} style={({ pressed }) => [s.addRow, !canAdd && s.disabled, pressed && s.pressed]}>
+                <Feather name="plus-circle" size={18} color={theme.colors.primary} />
+                <Text style={s.addText}>{t('order_statuses_add')}</Text>
+              </Pressable>
+            </SeparatedList>
             <Text style={s.limit}>{t('order_statuses_limit_hint').replace('{count}', String(ORDER_STATUS_LIMIT - regularStatuses.length))}</Text>
           </Card>
         </> : null}
       </ScrollView>
 
-      <BaseModal visible={createModal.visible} onClose={() => setCreateModal({ visible: false, name: '', error: '' })} title={t('order_statuses_create_title')} feedback={createModal.error ? { message: createModal.error, type: 'warning' } : null} footer={<Actions t={t} onCancel={() => setCreateModal({ visible: false, name: '', error: '' })} onConfirm={createStatus} confirmTitle={t('btn_create')} loading={busyId === 'create'} disabled={!normalizeName(createModal.name)} />}>
+      <BaseModal visible={createModal.visible} onClose={() => setCreateModal({ visible: false, name: '', color: '', error: '' })} title={t('order_statuses_create_title')} feedback={createModal.error ? { message: createModal.error, type: 'warning' } : null} footer={<Actions t={t} onCancel={() => setCreateModal({ visible: false, name: '', color: '', error: '' })} onConfirm={createStatus} confirmTitle={t('btn_create')} loading={busyId === 'create'} disabled={!normalizeName(createModal.name) || !createModal.color} />}>
         <TextInput value={createModal.name} onChangeText={(name) => setCreateModal((prev) => ({ ...prev, name }))} placeholder={t('order_statuses_name_placeholder')} placeholderTextColor={theme.colors.inputPlaceholder} maxLength={MAX_NAME_LENGTH} style={s.input} returnKeyType="done" onSubmitEditing={createStatus} />
+        <ColorSelector value={createModal.color} onChange={(color) => setCreateModal((prev) => ({ ...prev, color }))} t={t} s={s} />
       </BaseModal>
 
-      <BaseModal visible={editModal.visible} onClose={() => setEditModal({ visible: false, row: null, name: '', error: '' })} title={t('order_statuses_edit_title')} feedback={editModal.error ? { message: editModal.error, type: 'warning' } : null} footer={<Actions t={t} onCancel={() => setEditModal({ visible: false, row: null, name: '', error: '' })} onConfirm={renameStatus} confirmTitle={t('btn_save')} loading={busyId === editModal.row?.id} disabled={!normalizeName(editModal.name)} />}>
+      <BaseModal visible={editModal.visible} onClose={() => setEditModal({ visible: false, row: null, name: '', color: '', error: '' })} title={t('order_statuses_edit_title')} feedback={editModal.error ? { message: editModal.error, type: 'warning' } : null} footer={<Actions t={t} onCancel={() => setEditModal({ visible: false, row: null, name: '', color: '', error: '' })} onConfirm={renameStatus} confirmTitle={t('btn_save')} loading={busyId === editModal.row?.id} disabled={!normalizeName(editModal.name) || !editModal.color} />}>
         <TextInput value={editModal.name} onChangeText={(name) => setEditModal((prev) => ({ ...prev, name }))} placeholder={t('order_statuses_name_placeholder')} placeholderTextColor={theme.colors.inputPlaceholder} maxLength={MAX_NAME_LENGTH} style={s.input} returnKeyType="done" onSubmitEditing={renameStatus} />
+        <ColorSelector value={editModal.color} onChange={(color) => setEditModal((prev) => ({ ...prev, color }))} defaultColor={getDefaultOrderStatusColor(editModal.row?.status_key)} t={t} s={s} />
+      </BaseModal>
+
+      <BaseModal visible={feedColorModal.visible} onClose={() => setFeedColorModal({ visible: false, color: '', error: '' })} title={t('order_statuses_change_color')} feedback={feedColorModal.error ? { message: feedColorModal.error, type: 'warning' } : null} footer={<Actions t={t} onCancel={() => setFeedColorModal({ visible: false, color: '', error: '' })} onConfirm={saveFeedColor} confirmTitle={t('btn_save')} loading={busyId === feedStatus?.id} disabled={!feedColorModal.color} />}>
+        <ColorSelector value={feedColorModal.color} onChange={(color) => setFeedColorModal((prev) => ({ ...prev, color }))} defaultColor={getDefaultOrderStatusColor('feed')} t={t} s={s} />
       </BaseModal>
 
       <BaseModal visible={deleteModal.visible} onClose={() => setDeleteModal(emptyDeleteState())} title={t('order_statuses_delete_title')} feedback={deleteModal.error ? { message: deleteModal.error, type: 'warning' } : null} footer={<Actions t={t} onCancel={() => setDeleteModal(emptyDeleteState())} onConfirm={deleteStatus} confirmTitle={t('btn_delete')} destructive loading={deleteModal.loading} disabled={deleteModal.usageCount > 0 && !deleteModal.replacement} />}>
@@ -445,16 +483,42 @@ function Actions({ t, onCancel, onConfirm, confirmTitle, destructive = false, lo
   </View>;
 }
 
+function ColorSelector({ value, onChange, defaultColor = null, t, s }) {
+  return <View style={s.colorSection}>
+    <View style={s.colorHeader}>
+      <Text style={s.colorLabel}>{t('order_statuses_color_label')}</Text>
+      {defaultColor && value !== defaultColor ? (
+        <Pressable onPress={() => onChange(defaultColor)} accessibilityRole="button">
+          <Text style={s.resetColor}>{t('order_statuses_color_reset')}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+    <View style={s.colorGrid}>
+      {ORDER_STATUS_COLOR_PALETTE.map((color) => {
+        const selected = color === value;
+        return <Pressable key={color} onPress={() => onChange(color)} style={[s.colorSwatchWrap, selected && s.colorSwatchSelected]} accessibilityRole="radio" accessibilityState={{ selected }} accessibilityLabel={color}>
+          <View style={[s.colorSwatch, { backgroundColor: color }]}>
+            {selected ? <Feather name="check" size={18} color="#FFFFFF" /> : null}
+          </View>
+        </Pressable>;
+      })}
+    </View>
+  </View>;
+}
+
 function styles(theme) {
   return StyleSheet.create({
-    content: { paddingHorizontal: theme.spacing.lg, paddingBottom: theme.spacing.xxl },
+    content: {
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
+    },
     loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     row: { minHeight: theme.components?.listItem?.height ?? 52, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, paddingVertical: theme.spacing.sm },
     textWrap: { flex: 1, minWidth: 0, gap: theme.spacing.xxs },
     title: { color: theme.colors.text, fontSize: theme.typography.sizes.md, fontWeight: theme.typography.weight.medium },
     hint: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm, lineHeight: Math.round(theme.typography.sizes.sm * 1.35) },
     statusName: { flex: 1, color: theme.colors.text, fontSize: theme.typography.sizes.md },
-    separator: { height: 1, backgroundColor: theme.colors.border, marginHorizontal: theme.spacing.lg },
+    colorDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: theme.colors.border },
     actions: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xxs },
     iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
     addRow: { minHeight: theme.components?.listItem?.height ?? 52, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, paddingHorizontal: theme.spacing.lg },
@@ -467,5 +531,13 @@ function styles(theme) {
     input: { minHeight: theme.components?.input?.height ?? 48, borderWidth: 1, borderColor: theme.colors.inputBorder, borderRadius: theme.radii.md, paddingHorizontal: theme.spacing.md, color: theme.colors.text, fontSize: theme.typography.sizes.md, backgroundColor: theme.colors.inputBg },
     modalText: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.md, lineHeight: Math.round(theme.typography.sizes.md * 1.4) },
     replacementField: { marginTop: theme.spacing.md },
+    colorSection: { marginTop: theme.spacing.lg, gap: theme.spacing.sm },
+    colorHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.spacing.sm },
+    colorLabel: { color: theme.colors.text, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.medium },
+    resetColor: { color: theme.colors.primary, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.medium },
+    colorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
+    colorSwatchWrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
+    colorSwatchSelected: { borderColor: theme.colors.text },
+    colorSwatch: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   });
 }

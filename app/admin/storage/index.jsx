@@ -3,6 +3,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
+import SeparatedList from '../../../components/ui/SeparatedList';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
@@ -121,32 +122,29 @@ export default function AdminStorageScreen() {
                 <View style={styles(theme).remainingWrap}>
                   <Text style={[styles(theme).remainingPercent, { color: tone }]}>{`${usedPercent.toFixed(2)}%`}</Text>
                 </View>
-                <View style={styles(theme).details}>
-                  <View style={styles(theme).barTrack}>
-                    <View
-                      style={[
-                        styles(theme).barFill,
-                        {
-                          width: `${usedPercent}%`,
-                          backgroundColor: tone,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <View style={styles(theme).scaleRow}>
-                    <Text style={styles(theme).scaleText}>0</Text>
-                    <Text style={styles(theme).scaleText}>{formatBytes(quota)}</Text>
+                <SeparatedList style={styles(theme).details}>
+                  <View>
+                    <View style={styles(theme).barTrack}>
+                      <View
+                        style={[
+                          styles(theme).barFill,
+                          {
+                            width: `${usedPercent}%`,
+                            backgroundColor: tone,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <View style={styles(theme).scaleRow}>
+                      <Text style={styles(theme).scaleText}>0</Text>
+                      <Text style={styles(theme).scaleText}>{formatBytes(quota)}</Text>
+                    </View>
                   </View>
                   <LabelValueRow label={t('admin_storage_used')} value={formatBytes(used)} />
-                  <View style={styles(theme).sep} />
                   <LabelValueRow label={t('admin_storage_system_used')} value={formatBytes(systemUsed)} />
-                  <View style={styles(theme).sep} />
                   <LabelValueRow label={t('admin_storage_media_used')} value={formatBytes(mediaUsed)} />
-                  <View style={styles(theme).sep} />
                   <LabelValueRow label={t('admin_storage_remaining')} value={formatBytes(remaining)} />
-                  <View style={styles(theme).sep} />
                   <LabelValueRow label={t('admin_storage_quota')} value={formatBytes(quota)} />
-                  <View style={styles(theme).sep} />
                   <LabelValueRow label={t('admin_storage_last_update')} value={measuredLabel} />
                   <LabelValueRow
                     label={t('admin_storage_delta_24h')}
@@ -172,7 +170,7 @@ export default function AdminStorageScreen() {
                       </Text>
                     }
                   />
-                </View>
+                </SeparatedList>
               </Card>
             </View>
           );
@@ -184,7 +182,13 @@ export default function AdminStorageScreen() {
 
 const styles = (theme) =>
   StyleSheet.create({
-    content: { flexGrow: 1, padding: theme.spacing.lg, gap: theme.spacing.sm, paddingBottom: theme.spacing.xl },
+    content: {
+      flexGrow: 1,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
+      gap: theme.spacing.sm,
+    },
     sectionWrap: { gap: 0 },
     fill: { flex: 1 },
     headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, paddingTop: theme.spacing.sm },
@@ -216,12 +220,6 @@ const styles = (theme) =>
       color: theme.colors.text,
       fontSize: theme.typography.sizes.md,
       fontWeight: theme.typography.weight.bold,
-    },
-    sep: {
-      height: theme.components?.listItem?.dividerWidth ?? 1,
-      backgroundColor: theme.colors.border,
-      marginLeft: theme.spacing.xs,
-      marginRight: theme.spacing.xs,
     },
     error: { color: theme.colors.danger, fontSize: theme.typography.sizes.md, fontWeight: theme.typography.weight.semibold },
     scaleRow: { marginTop: theme.spacing.xs, flexDirection: 'row', justifyContent: 'space-between' },

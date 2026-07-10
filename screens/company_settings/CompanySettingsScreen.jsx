@@ -14,7 +14,9 @@ import {
 } from 'react-native';
 import Screen from '../../components/layout/Screen';
 import UIButton from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
 import Checkbox from '../../components/ui/Checkbox';
+import SectionHeader from '../../components/ui/SectionHeader';
 import { BaseModal, SelectModal } from '../../components/ui/modals';
 import ModalActionsRow from '../../components/ui/modals/ModalActionsRow';
 import TextField, { SelectField } from '../../components/ui/TextField';
@@ -1169,8 +1171,8 @@ export default function CompanySettings() {
       >
         {/* COMPANY */}
         <View style={s.sectionWrap}>
-          <Text style={s.sectionTitle}>{sectionTitles.GENERAL}</Text>
-          <View style={s.card}>
+          <SectionHeader>{sectionTitles.GENERAL}</SectionHeader>
+          <Card paddedXOnly separated>
             {!isSoloAdmin ? (
               <>
                 <SelectField
@@ -1182,7 +1184,6 @@ export default function CompanySettings() {
                     setCompanyNameOpen(true);
                   }}
                 />
-                <View style={s.sep} />
               </>
             ) : null}
             <SelectField
@@ -1191,7 +1192,6 @@ export default function CompanySettings() {
               onPress={() => setTzOpen(true)}
             />
 
-            <View style={s.sep} />
             <SelectField
               label={t('settings_company_work_mode')}
               value={currentWorkModeLabel}
@@ -1200,7 +1200,6 @@ export default function CompanySettings() {
 
             {isAdmin ? (
               <>
-                <View style={s.sep} />
                 <SelectField
                   label={
                     isSoloAdmin
@@ -1215,46 +1214,42 @@ export default function CompanySettings() {
               </>
             ) : null}
 
-            <View style={s.sep} />
             <SelectField
               label={t('settings_company_exchange_orders')}
               showValue={false}
               disabled
               onDisabledPress={onSoonPress}
             />
-            <View style={s.sep} />
             {/* moved: work types / departments now live in reference section */}
-          </View>
+          </Card>
         </View>
 
 
         {isSoloAdmin ? (
           <View style={s.sectionWrap}>
-            <Text style={s.sectionTitle}>{sectionTitles.APPEARANCE}</Text>
-            <View style={s.card}>
+            <SectionHeader>{sectionTitles.APPEARANCE}</SectionHeader>
+            <Card paddedXOnly separated>
               <SelectField
                 label={t('settings_sections_appearance_items_theme')}
                 value={currentThemeLabel}
                 onPress={() => setThemeOpen(true)}
               />
-              <View style={s.sep} />
               <SelectField
                 label={t('settings_sections_appearance_items_language')}
                 value={t(`language_${currentLocale}`)}
                 onPress={() => setLangOpen(true)}
               />
-            </View>
+            </Card>
           </View>
         ) : null}
 
         <View style={s.sectionWrap}>
-          <Text style={s.sectionTitle}>{t('settings_sections_reference_title')}</Text>
-          <View style={s.card}>
+          <SectionHeader>{t('settings_sections_reference_title')}</SectionHeader>
+          <Card paddedXOnly separated>
             {SETTINGS_SECTIONS.REFERENCE.items
               .filter((it) => !(isSoloAdmin && ['employees', 'departments'].includes(String(it?.key || ''))))
-              .map((it, idx) => (
+              .map((it) => (
               <React.Fragment key={it.key}>
-                {idx > 0 ? <View style={s.sep} /> : null}
                 <SelectField
                   label={t(it.labelKey)}
                   showValue={false}
@@ -1264,16 +1259,15 @@ export default function CompanySettings() {
                 />
               </React.Fragment>
             ))}
-          </View>
+          </Card>
         </View>
 
         {/* INTEGRATIONS */}
         <View style={s.sectionWrap}>
-          <Text style={s.sectionTitle}>{sectionTitles.INTEGRATIONS}</Text>
-          <View style={s.card}>
-            {SETTINGS_SECTIONS.INTEGRATIONS.items.map((it, idx) => (
+          <SectionHeader>{sectionTitles.INTEGRATIONS}</SectionHeader>
+          <Card paddedXOnly separated>
+            {SETTINGS_SECTIONS.INTEGRATIONS.items.map((it) => (
               <React.Fragment key={it.key}>
-                {idx > 0 ? <View style={s.sep} /> : null}
                 <SelectField
                   label={t(`settings_integrations_${it.key}`)}
                   showValue={false}
@@ -1283,21 +1277,20 @@ export default function CompanySettings() {
                 />
               </React.Fragment>
             ))}
-          </View>
+          </Card>
         </View>
 
         {/* MANAGEMENT */}
         <View style={s.sectionWrap}>
-          <Text style={s.sectionTitle}>{sectionTitles.MANAGEMENT}</Text>
-          <View style={s.card}>
+          <SectionHeader>{sectionTitles.MANAGEMENT}</SectionHeader>
+          <Card paddedXOnly separated>
             {SETTINGS_SECTIONS.MANAGEMENT.items
               .filter((it) =>
                 !['work_types', 'departments'].includes(it.key) &&
                 !(isSoloAdmin && it?.companyOnly === true),
               )
-              .map((it, idx) => (
+              .map((it) => (
                 <React.Fragment key={it.key}>
-                  {idx > 0 ? <View style={s.sep} /> : null}
                   <SelectField
                     label={t(`settings_management_${it.key}`)}
                     showValue={false}
@@ -1307,27 +1300,27 @@ export default function CompanySettings() {
                   />
                 </React.Fragment>
               ))}
-          </View>
+          </Card>
         </View>
 
         {/* DEPARTURE */}
         {!isSoloAdmin ? (
           <View style={s.sectionWrap}>
-            <Text style={s.sectionTitle}>{sectionTitles.DEPARTURE}</Text>
-            <View style={s.card}>
+            <SectionHeader>{sectionTitles.DEPARTURE}</SectionHeader>
+            <Card paddedXOnly separated>
               <SelectField
                 label={t('settings_phone_mode')}
                 showValue={false}
                 onPress={go('/company_settings/sections/phone')}
               />
-            </View>
+            </Card>
           </View>
         ) : null}
 
         {/* FINANCES */}
         <View style={s.sectionWrap}>
-          <Text style={s.sectionTitle}>{t('company_settings_sections_finances_title')}</Text>
-          <View style={s.card}>
+          <SectionHeader>{t('company_settings_sections_finances_title')}</SectionHeader>
+          <Card paddedXOnly separated>
             <SelectField
               label={t('settings_company_currency_label')}
               value={fixedCurrencyLabel}
@@ -1335,7 +1328,7 @@ export default function CompanySettings() {
               disabled
               onDisabledPress={onSoonPress}
             />
-          </View>
+          </Card>
         </View>
       </ScrollView>
 
@@ -2244,24 +2237,11 @@ export default function CompanySettings() {
 
 const styles = (t) =>
   StyleSheet.create({
-    contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
+    contentWrap: {
+      paddingHorizontal: t.components.screenLayout.contentPaddingX,
+      paddingBottom: t.components.screenLayout.contentPaddingBottom,
+    },
     sectionWrap: { marginBottom: 0 },
-    sectionTitle: {
-      fontWeight: t.typography.weight.bold,
-      marginBottom: t.spacing[t.components.sectionTitle.mb],
-      marginLeft: t.spacing[t.components.sectionTitle.ml],
-      color: t.colors.text,
-    },
-    card: {
-      backgroundColor: t.colors.surface,
-      borderRadius: t.radii.md,
-      borderWidth: t.components.card.borderWidth,
-      borderColor: t.colors.border,
-      paddingHorizontal: t.spacing[t.components.card.padX || 'md'],
-      paddingVertical: 0,
-      marginBottom: t.spacing.md,
-    },
-    sep: { height: t.components.listItem.dividerWidth, backgroundColor: t.colors.border },
     row: {
       flexDirection: 'row',
       alignItems: 'center',

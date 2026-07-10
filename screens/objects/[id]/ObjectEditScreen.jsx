@@ -1370,7 +1370,7 @@ export default function EditObjectScreen() {
           </View>
         </Card>
 
-        <SectionHeader topSpacing="xs">{t('section_general')}</SectionHeader>
+        <SectionHeader>{t('section_general')}</SectionHeader>
         <Card paddedXOnly>
           <TextField
             label={withRequiredLabel('name', t('objects_field_name'))}

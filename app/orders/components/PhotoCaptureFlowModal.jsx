@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
+  ActivityIndicator,
   View,
   Text,
   Pressable,
@@ -47,7 +48,6 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import Button from '../../../components/ui/Button';
 import FullscreenImageViewer from './FullscreenImageViewer';
-import { BaseModal, AnimatedFullscreenModal } from '../../../components/ui/modals';
 
 // ─── Haptic helpers ───────────────────────────────────────────────
 const hapticShutter = () =>
@@ -105,26 +105,26 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     if (!visible) return;
     let active = true;
 
-    if (!permissionPromptedForThisOpenRef.current) {
-      permissionPromptedForThisOpenRef.current = true;
-      requestPermission().catch(() => {});
-    }
-
-    const syncPermission = async ({ promptIfPossible = false } = {}) => {
+    const syncPermission = async ({ requestIfNeeded = false } = {}) => {
       try {
         const latest = (await getPermission?.()) || permission;
-        const granted = latest?.granted === true;
-        if (promptIfPossible && !granted) {
+        if (!active || latest?.granted === true) return;
+        if (
+          requestIfNeeded &&
+          latest?.canAskAgain !== false &&
+          !permissionPromptedForThisOpenRef.current
+        ) {
+          permissionPromptedForThisOpenRef.current = true;
           await requestPermission();
         }
       } catch {}
     };
 
-    syncPermission({ promptIfPossible: false }).catch(() => {});
+    syncPermission({ requestIfNeeded: true }).catch(() => {});
 
     const sub = AppState.addEventListener('change', (state) => {
       if (!active || state !== 'active') return;
-      syncPermission({ promptIfPossible: false }).catch(() => {});
+      syncPermission({ requestIfNeeded: false }).catch(() => {});
     });
 
     return () => {
@@ -234,14 +234,6 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     setPreviewIndex(Math.min(idx, next.length - 1));
   }, []);
 
-  const handleModalRequestClose = useCallback(() => {
-    if (previewIndexRef.current >= 0) {
-      setPreviewIndex(-1);
-      return;
-    }
-    handleDiscard();
-  }, [handleDiscard]);
-
   // ── Thumbnail strip FlatList ───────────────────────────────
   const thumbListRef = useRef(null);
 
@@ -277,10 +269,20 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   // ── No permission ──────────────────────────────────────────
   if (!visible) return null;
 
-  if (!permission || !permission.granted) {
+  if (!permission) {
+    return (
+      <View style={[s.root, s.cameraLoadingRoot]}>
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+        <ActivityIndicator size="large" color={theme.colors.onPrimary} />
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
     const canAskAgain = permission?.canAskAgain !== false;
     return (
-      <BaseModal visible={visible} onClose={onClose} title={t('order_photos_no_camera_title')}>
+      <View style={[s.root, s.permissionRoot]}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
         <View style={s.permContent}>
           <Feather name="camera-off" size={theme.icons.lg * 2} color={theme.colors.textSecondary} />
           <Text style={s.permHint}>
@@ -312,17 +314,13 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
             onPress={onClose}
           />
         </View>
-      </BaseModal>
+      </View>
     );
   }
 
   // ── Main camera UI ─────────────────────────────────────────
   return (
-    <AnimatedFullscreenModal
-      visible={visible}
-      animation="slide"
-      onRequestClose={handleModalRequestClose}
-    >
+    <>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <View style={s.root}>
         {!previewVisible ? (
@@ -335,6 +333,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
               flash={cameraFacing === 'back' && torch ? 'on' : 'off'}
               enableTorch={cameraFacing === 'back' && torch}
               mode="picture"
+              active={!previewVisible}
               onCameraReady={() => setCameraReady(true)}
             />
 
@@ -428,7 +427,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
         onDelete={handleDeleteFromPreview}
         capturePreviewMode
       />
-    </AnimatedFullscreenModal>
+    </>
   );
 }
 
@@ -554,6 +553,16 @@ function buildStyles(theme, insets) {
       alignItems: 'center',
       paddingVertical: sp.xl,
       gap: sp.lg,
+    },
+    permissionRoot: {
+      justifyContent: 'center',
+      paddingHorizontal: sp.xl,
+      backgroundColor: cl.background,
+    },
+    cameraLoadingRoot: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#000000',
     },
     permHint: {
       textAlign: 'center',

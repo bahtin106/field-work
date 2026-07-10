@@ -425,7 +425,7 @@ export default function ObjectViewScreen() {
 
         {settings?.enable_object_tags && objectItem?.tags?.length ? (
           <>
-            <SectionHeader topSpacing="xs">{t('tags_field_label')}</SectionHeader>
+            <SectionHeader>{t('tags_field_label')}</SectionHeader>
             <Card style={{ paddingVertical: theme.spacing.md }}>
               <TagList
                 tags={objectItem.tags}
@@ -442,11 +442,10 @@ export default function ObjectViewScreen() {
         ) : null}
 
         <SectionHeader>{t('section_general')}</SectionHeader>
-        <Card paddedXOnly>
+        <Card paddedXOnly separated>
           {showObjectName ? (
             <LabelValueRow label={t('objects_field_name')} value={objectItem?.name || ''} />
           ) : null}
-          {showObjectName && objectItem?.is_primary ? <View style={base.sep} /> : null}
           {showObjectName && objectItem?.is_primary ? (
             <LabelValueRow
               label={t('objects_primary_client_flag')}
@@ -454,7 +453,6 @@ export default function ObjectViewScreen() {
               hideWhenEmpty={false}
             />
           ) : null}
-          {(showObjectName || objectItem?.is_primary) && showClientRow ? <View style={base.sep} /> : null}
           {showClientRow ? (
             <LabelValueRow
               label={t('routes_clients_client')}
@@ -479,7 +477,6 @@ export default function ObjectViewScreen() {
               }
             />
           ) : null}
-          {showObjectName || objectItem?.is_primary || showClientRow ? <View style={base.sep} /> : null}
           {isCoordinatesMode ? (
             <LabelValueRow
               label={t('objects_location_coordinates')}
@@ -526,10 +523,9 @@ export default function ObjectViewScreen() {
         {canShowContactSection ? (
           <>
             <SectionHeader>{t('clients_contacts_section')}</SectionHeader>
-            <Card paddedXOnly>
+            <Card paddedXOnly separated>
               {visibleAdditionalPhones.map((item, index) => {
                 const rowLabel = buildAdditionalPhoneDisplayLabel(t, item?.label);
-                const isLast = index === visibleAdditionalPhones.length - 1;
                 return (
                   <React.Fragment key={`object-additional-phone-${index + 1}`}>
                     <LabelValueRow
@@ -567,7 +563,6 @@ export default function ObjectViewScreen() {
                         </IconButton>
                       }
                     />
-                    {!isLast ? <View style={base.sep} /> : null}
                   </React.Fragment>
                 );
               })}
@@ -577,7 +572,7 @@ export default function ObjectViewScreen() {
 
         {visibleMediaFields.length > 0 ? (
           <>
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+            <SectionHeader>
               {t('order_details_photos_section')}
             </SectionHeader>
             <Card paddedXOnly>
@@ -610,10 +605,9 @@ export default function ObjectViewScreen() {
         {additionalInfoItems.length ? (
           <>
             <SectionHeader>{t('objects_additional_info_section')}</SectionHeader>
-            <Card paddedXOnly>
+            <Card paddedXOnly separated>
               {additionalInfoItems.map((item, index) => (
                 <React.Fragment key={`${item.label}-${index}`}>
-                  {index > 0 ? <View style={base.sep} /> : null}
                   <LabelValueRow label={item.label} value={item.value} />
                 </React.Fragment>
               ))}

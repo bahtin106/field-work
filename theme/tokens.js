@@ -80,6 +80,8 @@ const light = {
   components: {
     card: {
       borderWidth: 1,
+      radius: 'xl',
+      shadow: 'card',
       padX: 'lg', // 16px - стандарт iOS/Material
       padY: 'md', // 12px - компактный вертикальный паддинг
     },
@@ -136,6 +138,7 @@ const light = {
         enabled: true,
         insetX: 'md', // 12px - компактный инсет
         height: 1,
+        color: 'border',
         alpha: 0.18,
         errorAlpha: 0.28,
       },
@@ -146,6 +149,8 @@ const light = {
       padX: 'md',
       padY: 'xs',
       dividerWidth: 1,
+      dividerInsetX: 'md',
+      dividerColor: 'border',
       disabledOpacity: 0.5,
       chevronSize: 20,
       chevronGap: 8,
@@ -181,12 +186,18 @@ const light = {
     },
     sectionTitle: {
       ml: 'lg',
-      mt: 'xs',
-      mb: 'xs',
+      fontSize: 'sm',
+      fontWeight: 'bold',
     },
     sectionHeader: {
       top: 'md',
       bottom: 'xs',
+    },
+    screenLayout: {
+      contentPaddingX: 'lg',
+      contentPaddingBottom: 'xxl',
+      sectionGap: 'sm',
+      floatingActionClearance: 88,
     },
     header: {
       height: 56,

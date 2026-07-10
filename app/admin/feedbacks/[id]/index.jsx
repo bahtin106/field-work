@@ -134,15 +134,11 @@ export default function AdminFeedbackDetailsScreen() {
 
         {data ? (
           <>
-            <Card style={styles(theme).card}>
+            <Card style={styles(theme).card} separated>
               <LabelValue theme={theme} label={t('admin_feedback_created_at')} value={formatDateTime(data.createdAt)} />
-              <View style={styles(theme).sep} />
               <LabelValue theme={theme} label={t('admin_feedback_author')} value={data.authorName} />
-              <View style={styles(theme).sep} />
               <LabelValue theme={theme} label={t('admin_feedback_company')} value={data.companyName || data.companyId} />
-              <View style={styles(theme).sep} />
               <LabelValue theme={theme} label={t('admin_feedback_email')} value={data.authorEmail} />
-              <View style={styles(theme).sep} />
               <LabelValue theme={theme} label={t('admin_feedback_phone')} value={data.authorPhone} />
             </Card>
 
@@ -215,12 +211,13 @@ export default function AdminFeedbackDetailsScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     content: {
-      padding: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
       gap: theme.spacing.md,
-      paddingBottom: theme.spacing.xl,
     },
     card: {
-      borderRadius: theme.radii.md,
+      borderRadius: theme.components.card.radius,
       borderWidth: theme.components.card.borderWidth,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
@@ -250,15 +247,14 @@ const styles = (theme) =>
       fontSize: theme.typography.sizes.md,
       fontWeight: theme.typography.weight.medium,
     },
-    sep: {
-      height: theme.components.listItem.dividerWidth,
-      backgroundColor: theme.colors.border,
-    },
     sectionTitle: {
       color: theme.colors.text,
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.semibold,
-      marginBottom: theme.spacing.xs,
+      fontSize: theme.components.sectionTitle.fontSize,
+      fontWeight: theme.components.sectionTitle.fontWeight,
+      marginBottom:
+        typeof theme.components.sectionHeader.bottom === 'number'
+          ? theme.components.sectionHeader.bottom
+          : theme.spacing[theme.components.sectionHeader.bottom],
     },
     messageText: {
       color: theme.colors.text,

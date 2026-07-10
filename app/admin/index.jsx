@@ -85,13 +85,12 @@ export default function AdminHomeScreen() {
   return (
     <Screen background="background">
       <ScrollView contentContainerStyle={styles(theme).content}>
-        <Card style={styles(theme).card} padded={false}>
-          {items.map((item, index) => {
-            const isLast = index === items.length - 1;
+        <Card style={styles(theme).card} padded={false} separated>
+          {items.map((item) => {
             return (
               <Pressable
                 key={item.key}
-                style={({ pressed }) => [styles(theme).row, !isLast && styles(theme).rowBorder, pressed && { opacity: 0.9 }]}
+                style={({ pressed }) => [styles(theme).row, pressed && { opacity: 0.9 }]}
                 onPress={item.onPress}
               >
                 <View style={styles(theme).rowLeft}>
@@ -120,11 +119,13 @@ export default function AdminHomeScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     content: {
-      padding: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
       gap: theme.spacing.md,
     },
     card: {
-      borderRadius: theme.radii.md,
+      borderRadius: theme.components.card.radius,
       borderWidth: theme.components.card.borderWidth,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
@@ -136,10 +137,6 @@ const styles = (theme) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-    },
-    rowBorder: {
-      borderBottomWidth: theme.components.listItem.dividerWidth,
-      borderBottomColor: theme.colors.border,
     },
     rowLeft: {
       flexDirection: 'row',

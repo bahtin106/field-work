@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import SeparatedList from '../../../components/ui/SeparatedList';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import TextField from '../../../components/ui/TextField';
@@ -808,7 +809,7 @@ export default function FinanceRulesSettingsScreen() {
       headerOptions={{ title: t('finance_rules_title') }}
       contentContainerStyle={styles.container}
     >
-      <SectionHeader bottomSpacing="xs">
+      <SectionHeader>
         {t('finance_rules_scope_title')}
       </SectionHeader>
       <Card paddedXOnly>
@@ -824,10 +825,10 @@ export default function FinanceRulesSettingsScreen() {
           </View>
         ) : null}
 
-        {rules.map((rule, index) => (
-          <View key={rule.id}>
-            {index > 0 ? <View style={base.sep} /> : null}
+        <SeparatedList>
+          {rules.map((rule) => (
             <Pressable
+              key={rule.id}
               style={({ pressed }) => [styles.ruleItem, pressed && { opacity: PRESSED_OPACITY }]}
               onPress={() => openEdit(rule)}
             >
@@ -853,26 +854,24 @@ export default function FinanceRulesSettingsScreen() {
                 />
               </View>
             </Pressable>
-          </View>
-        ))}
+          ))}
 
-        {!rulesQuery.isLoading && rules.length > 0 ? <View style={base.sep} /> : null}
-
-        {!rulesQuery.isLoading && canAddRule ? (
-          <Pressable
-            style={({ pressed }) => [base.row, pressed && { opacity: PRESSED_OPACITY }]}
-            onPress={openCreate}
-          >
-            <Text style={styles.addRuleText}>{t('finance_rule_add_new')}</Text>
-            <View style={base.rightWrap}>
-              <Feather
-                name="chevron-right"
-                size={theme.icons?.sm ?? 18}
-                color={theme.colors.textSecondary}
-              />
-            </View>
-          </Pressable>
-        ) : null}
+          {!rulesQuery.isLoading && canAddRule ? (
+            <Pressable
+              style={({ pressed }) => [base.row, pressed && { opacity: PRESSED_OPACITY }]}
+              onPress={openCreate}
+            >
+              <Text style={styles.addRuleText}>{t('finance_rule_add_new')}</Text>
+              <View style={base.rightWrap}>
+                <Feather
+                  name="chevron-right"
+                  size={theme.icons?.sm ?? 18}
+                  color={theme.colors.textSecondary}
+                />
+              </View>
+            </Pressable>
+          ) : null}
+        </SeparatedList>
       </Card>
 
       <BaseModal
@@ -1293,8 +1292,9 @@ function createStyles(theme) {
   const typography = theme?.typography || {};
   return StyleSheet.create({
     container: {
-      gap: spacing.md,
-      paddingHorizontal: spacing.md,
+      gap: theme.components.screenLayout.sectionGap,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     loadingWrap: {
       paddingVertical: spacing.lg,

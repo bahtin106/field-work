@@ -685,7 +685,8 @@ function OrderDetailsContent() {
   const isOrderFinanceEnabled = isOrderFinanceEnabledFromMap(orderFieldsByKey);
   const isOrderFinanceEntriesEnabled = isOrderFinanceEntriesEnabledFromMap(orderFieldsByKey);
   const canViewFinanceSection = canViewFinanceAll && isOrderFinanceEnabled && showFeedFinanceField;
-  const canEditFinanceEntries =
+  const canManageFinanceEntries = has('canEditFinanceEntries');
+  const canAddFinanceEntries =
     has('canEditFinanceEntries') && isOrderFinanceEntriesEnabled && showFeedFinanceField;
   const canEditFinances = has('canEditFinanceEntries') && isOrderFinanceEnabled && showFeedFinanceField;
   const canViewOrderPhotos = has('canViewOrderPhotos');
@@ -861,6 +862,7 @@ function OrderDetailsContent() {
   const [paymentStatusModalVisible, setPaymentStatusModalVisible] = useState(false);
   const [paymentMethodModalVisible, setPaymentMethodModalVisible] = useState(false);
   const [financeKindModalVisible, setFinanceKindModalVisible] = useState(false);
+  const [pendingFinanceEntryKind, setPendingFinanceEntryKind] = useState(null);
   const [financeCalcModeModalVisible, setFinanceCalcModeModalVisible] = useState(false);
   const [financeExpensePayerModalVisible, setFinanceExpensePayerModalVisible] = useState(false);
   const [financePercentBaseModalVisible, setFinancePercentBaseModalVisible] = useState(false);
@@ -868,6 +870,7 @@ function OrderDetailsContent() {
   const amountEditInputRef = useRef(null);
   const [financeEntryModalVisible, setFinanceEntryModalVisible] = useState(false);
   const [financeEntryViewModalVisible, setFinanceEntryViewModalVisible] = useState(false);
+  const [pendingFinanceEntryEdit, setPendingFinanceEntryEdit] = useState(null);
   const [financeEntryDeleteConfirmVisible, setFinanceEntryDeleteConfirmVisible] = useState(false);
   const [financeEntryPhotosModalVisible, setFinanceEntryPhotosModalVisible] = useState(false);
   const [financeEntryLocalPending, setFinanceEntryLocalPending] = useState([]);
@@ -923,7 +926,10 @@ function OrderDetailsContent() {
     [selectedFinanceEntry?.photo_urls],
   );
   const financeEntryViewHasPhotos = financeEntryViewPhotoCount > 0;
-  const normalizeFinanceTextInput = useCallback((value) => String(value ?? '').replace(/\s*[\r\n]+\s*/g, ' '), []);
+  const normalizeFinanceTextInput = useCallback(
+    (value) => String(value ?? '').replace(/\r\n?/g, '\n'),
+    [],
+  );
   const clearFinanceEntryFieldError = useCallback((fieldKey) => {
     if (!fieldKey) return;
     setFinanceEntryFieldErrors((prev) => {
@@ -2382,9 +2388,26 @@ function OrderDetailsContent() {
 
   const startEditFinanceEntryFromView = useCallback(() => {
     if (!selectedFinanceEntry) return;
+    setPendingFinanceEntryEdit(selectedFinanceEntry);
     setFinanceEntryViewModalVisible(false);
-    openEditFinanceEntry(selectedFinanceEntry);
-  }, [openEditFinanceEntry, selectedFinanceEntry]);
+  }, [selectedFinanceEntry]);
+
+  const handleFinanceEntryViewDismiss = useCallback(() => {
+    if (!pendingFinanceEntryEdit) return;
+    setPendingFinanceEntryEdit(null);
+    openEditFinanceEntry(pendingFinanceEntryEdit);
+  }, [openEditFinanceEntry, pendingFinanceEntryEdit]);
+
+  const handleFinanceKindSelect = useCallback((item) => {
+    setPendingFinanceEntryKind(item?.id || 'expense');
+    setFinanceKindModalVisible(false);
+  }, []);
+
+  const handleFinanceKindDismiss = useCallback(() => {
+    if (!pendingFinanceEntryKind) return;
+    setPendingFinanceEntryKind(null);
+    openCreateFinanceEntry(pendingFinanceEntryKind);
+  }, [openCreateFinanceEntry, pendingFinanceEntryKind]);
 
   const openFinanceEntryPhotosFromView = useCallback(() => {
     if (!selectedFinanceEntry) return;
@@ -3082,12 +3105,12 @@ function OrderDetailsContent() {
   const confirmDeleteFinanceEntry = useCallback(async () => {
     if (!selectedFinanceEntry?.id) return;
     await removeFinanceEntry(selectedFinanceEntry, {
-      allowSystemDelete: selectedFinanceEntry?.is_system === true && canEditFinanceEntries,
+      allowSystemDelete: selectedFinanceEntry?.is_system === true && canManageFinanceEntries,
     });
     setFinanceEntryDeleteConfirmVisible(false);
     setFinanceEntryViewModalVisible(false);
     setSelectedFinanceEntry(null);
-  }, [canEditFinanceEntries, removeFinanceEntry, selectedFinanceEntry]);
+  }, [canManageFinanceEntries, removeFinanceEntry, selectedFinanceEntry]);
 
   const toggleFinanceSection = useCallback((sectionKey) => {
     setExpandedFinanceSections((prev) => ({
@@ -4598,9 +4621,8 @@ function OrderDetailsContent() {
   const normalizedPaymentStatus = normalizePaymentStatus(order?.payment_status);
   const normalizedPaymentMethod = normalizePaymentMethod(order?.payment_method);
   const isOrderPaid = normalizedPaymentStatus === 'paid';
-  const executorAccruedTotal =
+  const executorFinanceTotal =
     Number(customerFinanceTotal - financeCompanyPaidExpenseTotal + financeExecutorPaidExpenseTotal) || 0;
-  const executorFinanceTotal = executorAccruedTotal;
   const showExecutorFinanceSection = canViewFinanceSection === true;
   const showInitialCostLine =
     canViewFinanceSection &&
@@ -4618,6 +4640,43 @@ function OrderDetailsContent() {
     ? ORDER_MEDIA_FIELD_KEYS.filter((fieldKey) => isOrderFieldVisible(fieldKey))
     : [];
   const orderMediaSnapshotReady = isRequestDetailLoaded(order);
+  const financeEntryPhotosContent = financeEntryPhotosModalVisible ? (
+    <Suspense fallback={null}>
+      <MediaUploadModal
+        embedded
+        visible
+        onClose={closeFinanceEntryPhotosModal}
+        category="finance_entry_photo"
+        photos={financeEntryDraft.photo_urls || []}
+        pending={financeEntryLocalPending}
+        getDisplayUrl={financeEntryMedia.getDisplayUrl}
+        getThumbnailUrl={financeEntryMedia.getThumbnailUrl}
+        getIssue={financeEntryMedia.getIssue}
+        onUploadUri={handleFinanceEntryPhotoUploadUri}
+        onUploadMultiple={handleFinanceEntryPhotoUploadMultiple}
+        onRemove={handleFinanceEntryPhotoRemove}
+        onRemoveMany={handleFinanceEntryPhotoRemoveMany}
+        canAddFromCamera={canAddOrderPhotosFromCamera}
+        canAddFromGallery={canAddOrderPhotosFromGallery}
+        canRemovePhotos={canAddOrderPhotos && canManageFinanceEntries}
+        onOpenViewer={openFinanceEntryViewer}
+      />
+    </Suspense>
+  ) : null;
+  const financeEntryModalContent = financeViewerVisible ? (
+    <Suspense fallback={null}>
+      <FullscreenImageViewer
+        embedded
+        visible
+        images={financeViewerPhotos}
+        initialIndex={financeViewerIndex}
+        onClose={closeFinanceEntryViewer}
+        onDelete={handleFinanceViewerDelete}
+        onRotateSave={handleFinanceViewerRotateSave}
+        categoryLabel={financeViewerCategoryLabel}
+      />
+    </Suspense>
+  ) : financeEntryPhotosContent;
   return (
     <>
       <SafeAreaView
@@ -4687,10 +4746,10 @@ function OrderDetailsContent() {
                 </Card>
               </>
             ) : null}
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+            <SectionHeader>
               {t('order_details_general_data')}
             </SectionHeader>
-            <Card paddedXOnly>
+            <Card paddedXOnly separated>
               {showOrderStatusRow ? <>
                 <View style={base.row}>
                   <Text style={base.label}>{t('order_details_status')}</Text>
@@ -4708,14 +4767,12 @@ function OrderDetailsContent() {
                     <OrderStatusCapsule status={order.status} companyId={order.company_id || companyId} />
                   </View>
                 </View>
-                <View style={base.sep} />
               </> : null}
               <LabelValueRow
                 label={t('order_details_created_at')}
                 value={createdAtDisplayValue}
                 hideWhenEmpty={false}
               />
-              <View style={base.sep} />
 
               {showExecutorRow ? (
                 <Pressable
@@ -4754,7 +4811,6 @@ function OrderDetailsContent() {
                   />
                 </Pressable>
               ) : null}
-              {showExecutorRow ? <View style={base.sep} /> : null}
 
               {shouldShowWorkTypeRow ? (
                 <LabelValueRow
@@ -4763,7 +4819,6 @@ function OrderDetailsContent() {
                   hideWhenEmpty={false}
                 />
               ) : null}
-              {shouldShowWorkTypeRow ? <View style={base.sep} /> : null}
 
               {showDepartureDateRow ? (
                 <Pressable
@@ -4813,7 +4868,6 @@ function OrderDetailsContent() {
                   />
                 </Pressable>
               ) : null}
-              {showDepartureDateRow ? <View style={base.sep} /> : null}
 
               {isOrderFieldVisible('comment') && !!descriptionValue ? (
               <ExpandableTextRow
@@ -4825,10 +4879,10 @@ function OrderDetailsContent() {
 
             {showObjectDataSection ? (
               <>
-                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                <SectionHeader>
                   {t('order_details_object_data')}
                 </SectionHeader>
-                <Card paddedXOnly>
+                <Card paddedXOnly separated>
                   {showCustomerRow ? (
                     <Pressable onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
                       <LabelValueRow
@@ -4842,10 +4896,6 @@ function OrderDetailsContent() {
                       />
                     </Pressable>
                   ) : null}
-                  {showCustomerRow && (showObjectRow || showPhoneRow || showObjectAddressRow) ? (
-                    <View style={base.sep} />
-                  ) : null}
-
                   {showObjectRow ? (
                     <Pressable onPress={onOpenObject} disabled={!linkedObjectId || !canViewObjects}>
                       <LabelValueRow
@@ -4865,7 +4915,6 @@ function OrderDetailsContent() {
                       />
                     </Pressable>
                   ) : null}
-                  {showObjectRow && (showPhoneRow || showObjectAddressRow) ? <View style={base.sep} /> : null}
 
                   {showPhoneRow ? (
                     <LabelValueRow
@@ -4899,7 +4948,6 @@ function OrderDetailsContent() {
                       hideWhenEmpty={false}
                     />
                   ) : null}
-                  {showPhoneRow && showObjectAddressRow ? <View style={base.sep} /> : null}
 
                   {showObjectAddressRow ? (
                     useCoordinatesForOrderAddress ? (
@@ -4964,7 +5012,7 @@ function OrderDetailsContent() {
 
             {canViewFinanceSection ? (
               <>
-                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                <SectionHeader>
                   {t('order_details_finance_data')}
                 </SectionHeader>
                 <Card paddedXOnly>
@@ -5191,14 +5239,8 @@ function OrderDetailsContent() {
                             </View>
                           ) : (
                             <>
-                              <LabelValueRow
-                                label={t('order_finance_customer_section')}
-                                value={formatMoney(customerFinanceTotal, currency)}
-                                hideWhenEmpty={false}
-                              />
                               {companyPaidExpenseEntries.length > 0 ? (
                                 <>
-                                  <View style={base.sep} />
                                   {companyPaidExpenseEntries.map((entry, index) => (
                                     <View key={`executor-company-expense-${entry.id}`}>
                                       {index > 0 ? <View style={base.sep} /> : null}
@@ -5231,7 +5273,7 @@ function OrderDetailsContent() {
                               ) : null}
                               {executorPaidExpenseEntries.length > 0 ? (
                                 <>
-                                  <View style={base.sep} />
+                                  {companyPaidExpenseEntries.length > 0 ? <View style={base.sep} /> : null}
                                   {executorPaidExpenseEntries.map((entry, index) => (
                                     <View key={`executor-self-expense-${entry.id}`}>
                                       {index > 0 ? <View style={base.sep} /> : null}
@@ -5267,7 +5309,7 @@ function OrderDetailsContent() {
                         </FinanceAccordionRow>
                       ) : null}
 
-                      {canEditFinanceEntries ? (
+                      {canAddFinanceEntries ? (
                         <>
                           <View style={base.sep} />
                           <Pressable
@@ -5295,7 +5337,7 @@ function OrderDetailsContent() {
 
             {!isFree && visibleMediaFields.length > 0 && (
               <>
-                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                <SectionHeader>
                   {t('order_details_photos_section')}
                 </SectionHeader>
                 {cloudFallbackActive && isAdminUser ? (
@@ -5571,11 +5613,9 @@ function OrderDetailsContent() {
         title={t('common_add')}
         searchable={false}
         items={financeKindSelectItems}
-        onSelect={(item) => {
-          setFinanceKindModalVisible(false);
-          openCreateFinanceEntry(item?.id || 'expense');
-        }}
+        onSelect={handleFinanceKindSelect}
         onClose={() => setFinanceKindModalVisible(false)}
+        onDismiss={handleFinanceKindDismiss}
       />
 
       <SelectModal
@@ -5630,8 +5670,11 @@ function OrderDetailsContent() {
       <BaseModal
         visible={financeEntryViewModalVisible}
         onClose={() => setFinanceEntryViewModalVisible(false)}
+        onDismiss={handleFinanceEntryViewDismiss}
         title={String(selectedFinanceEntry?.title || '').trim() || t('order_finance_entry_modal_title')}
         maxHeightRatio={0.7}
+        fullscreenContent={financeEntryModalContent}
+        onFullscreenRequestClose={closeFinanceEntryPhotosModal}
       >
         {selectedFinanceEntry?.is_system === true ? (
           <LabelValueRow
@@ -5666,7 +5709,7 @@ function OrderDetailsContent() {
                 rightWrapStyle={styles.financeModalRightWrap}
               />
             )}
-            {selectedFinanceEntry?.kind === 'expense' ? (
+            {selectedFinanceEntry?.kind === 'expense' && !isSoloAdmin ? (
               <>
                 <View style={base.sep} />
                 <LabelValueRow
@@ -5790,8 +5833,7 @@ function OrderDetailsContent() {
             </Pressable>
           </>
         ) : null}
-        {(canEditFinanceEntries && selectedFinanceEntry?.is_system !== true) ||
-        (canEditFinanceEntries && selectedFinanceEntry?.is_system === true) ? (
+        {canManageFinanceEntries ? (
           <View style={styles.financeEntryModalActions}>
             {selectedFinanceEntry?.is_system !== true ? (
               <Button
@@ -5833,6 +5875,8 @@ function OrderDetailsContent() {
         }}
         title={getFinanceEntryModalTitle(financeEntryDraft.kind, !!financeEntryDraft.id)}
         maxHeightRatio={0.82}
+        fullscreenContent={financeEntryModalContent}
+        onFullscreenRequestClose={closeFinanceEntryPhotosModal}
         footer={
           <View style={styles.financeEntryModalActions}>
             <Button
@@ -5974,43 +6018,6 @@ function OrderDetailsContent() {
           ) : null}
         </ScrollView>
       </BaseModal>
-
-      {financeEntryPhotosModalVisible ? (
-        <Suspense fallback={null}>
-          <MediaUploadModal
-            visible={financeEntryPhotosModalVisible}
-            onClose={closeFinanceEntryPhotosModal}
-            category="finance_entry_photo"
-            photos={financeEntryDraft.photo_urls || []}
-            pending={financeEntryLocalPending}
-            getDisplayUrl={financeEntryMedia.getDisplayUrl}
-            getThumbnailUrl={financeEntryMedia.getThumbnailUrl}
-            getIssue={financeEntryMedia.getIssue}
-            onUploadUri={handleFinanceEntryPhotoUploadUri}
-            onUploadMultiple={handleFinanceEntryPhotoUploadMultiple}
-            onRemove={handleFinanceEntryPhotoRemove}
-            onRemoveMany={handleFinanceEntryPhotoRemoveMany}
-            canAddFromCamera={canAddOrderPhotosFromCamera}
-            canAddFromGallery={canAddOrderPhotosFromGallery}
-            canRemovePhotos={canAddOrderPhotos && canEditFinanceEntries}
-            onOpenViewer={openFinanceEntryViewer}
-          />
-        </Suspense>
-      ) : null}
-
-      {financeViewerVisible ? (
-        <Suspense fallback={null}>
-          <FullscreenImageViewer
-            visible={financeViewerVisible}
-            images={financeViewerPhotos}
-            initialIndex={financeViewerIndex}
-            onClose={closeFinanceEntryViewer}
-            onDelete={handleFinanceViewerDelete}
-            onRotateSave={handleFinanceViewerRotateSave}
-            categoryLabel={financeViewerCategoryLabel}
-          />
-        </Suspense>
-      ) : null}
 
       <AlertModal
         visible={warningVisible}

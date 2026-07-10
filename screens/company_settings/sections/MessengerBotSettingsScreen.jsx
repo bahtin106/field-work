@@ -935,8 +935,9 @@ const styles = (theme) =>
 
     return StyleSheet.create({
     content: {
-      padding: theme.spacing.lg,
-      paddingBottom: theme.spacing.xxl,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     loader: {
       flex: 1,
@@ -944,10 +945,10 @@ const styles = (theme) =>
       justifyContent: 'center',
     },
     heroCard: {
-      borderRadius: theme.radii.lg,
+      borderRadius: theme.components.card.radius,
     },
     sectionCard: {
-      borderRadius: theme.radii.lg,
+      borderRadius: theme.components.card.radius,
     },
     stickyHeaderShell: {
       backgroundColor: theme.colors.background,
@@ -955,7 +956,7 @@ const styles = (theme) =>
     },
     fieldHeaderCard: {
       backgroundColor: theme.colors.surface,
-      borderRadius: theme.radii.lg,
+      borderRadius: theme.components.card.radius,
       borderWidth: 1,
       borderColor: theme.colors.border,
       borderBottomLeftRadius: 0,
@@ -968,7 +969,7 @@ const styles = (theme) =>
       elevation: 0,
     },
     fieldBodyCard: {
-      borderRadius: theme.radii.lg,
+      borderRadius: theme.components.card.radius,
       borderTopLeftRadius: 0,
       borderTopRightRadius: 0,
       borderTopWidth: 0,
@@ -998,7 +999,7 @@ const styles = (theme) =>
     },
     errorCard: {
       gap: theme.spacing.sm,
-      borderRadius: theme.radii.lg,
+      borderRadius: theme.components.card.radius,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.danger,
     },

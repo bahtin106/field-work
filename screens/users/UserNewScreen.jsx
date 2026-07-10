@@ -1219,7 +1219,7 @@ export default function NewUserScreen() {
             style={{ marginBottom: theme.spacing.md }}
           />
         )}
-        {canShowPersonalSection ? <SectionHeader bottomSpacing="xs">{t('section_personal')}</SectionHeader> : null}
+        {canShowPersonalSection ? <SectionHeader>{t('section_personal')}</SectionHeader> : null}
         {canShowPersonalSection ? (
         <Card paddedXOnly>
           {orderedPersonalFieldKeys.map((fieldKey) => (
@@ -1230,7 +1230,7 @@ export default function NewUserScreen() {
         </Card>
         ) : null}
 
-        {canShowContactSection ? <SectionHeader bottomSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
+        {canShowContactSection ? <SectionHeader>{t('clients_contacts_section')}</SectionHeader> : null}
         {canShowContactSection ? (
         <Card paddedXOnly>
           {orderedContactFieldKeys.map((fieldKey) => (
@@ -1241,7 +1241,7 @@ export default function NewUserScreen() {
         </Card>
         ) : null}
 
-        {canShowCompanySection ? <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader> : null}
+        {canShowCompanySection ? <SectionHeader>{t('section_company_role')}</SectionHeader> : null}
         {canShowCompanySection ? (
         <Card paddedXOnly>
           {orderedCompanyFieldKeys.map((fieldKey) => (

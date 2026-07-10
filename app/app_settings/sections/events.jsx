@@ -299,15 +299,14 @@ export default function NotificationEventsScreen() {
           const visibleItems = group.items.filter((item) => !item.requiresCreateOrders || canCreateOrders);
           return (
             <View key={group.key} style={s.sectionWrap}>
-              <SectionHeader topSpacing={0}>{t(group.titleKey)}</SectionHeader>
-              <Card paddedXOnly>
-                {visibleItems.map((item, index) => {
-                  const isLast = index === visibleItems.length - 1;
+              <SectionHeader>{t(group.titleKey)}</SectionHeader>
+              <Card paddedXOnly separated>
+                {visibleItems.map((item) => {
                   const isDisabled = isLoading || !prefs.allow;
                   const isExpanded = item.childrenKey === 'reminder_delay' && !!prefs.reminders && canCreateOrders;
 
                   return (
-                    <React.Fragment key={item.key}>
+                    <View key={item.key}>
                       <SwitchField
                         label={t(item.labelKey)}
                         value={!!prefs[item.key]}
@@ -336,8 +335,7 @@ export default function NotificationEventsScreen() {
                           </View>
                         </View>
                       ) : null}
-                      {!isLast ? <View style={base.sep} /> : null}
-                    </React.Fragment>
+                    </View>
                   );
                 })}
               </Card>
@@ -380,12 +378,11 @@ export default function NotificationEventsScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     container: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingBottom: theme.spacing.xl,
-      gap: theme.spacing.sm,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     sectionWrap: {
-      marginBottom: theme.spacing.sm,
+      marginBottom: 0,
     },
     expandedWrap: {
       marginLeft: theme.spacing.lg,

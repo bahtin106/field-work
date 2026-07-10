@@ -634,7 +634,7 @@ export default function EditUser() {
       rolePillHeader: {
         paddingHorizontal: theme.spacing.sm,
         paddingVertical: theme.spacing.xs,
-        borderRadius: theme.radii.lg,
+        borderRadius: theme.components.card.radius,
         borderWidth: theme.components.card.borderWidth,
       },
       rolePillHeaderText: { fontSize: theme.typography.sizes.xs, fontWeight: '600' },
@@ -644,7 +644,7 @@ export default function EditUser() {
         backgroundColor: withAlpha(theme.colors.danger, 0.08),
         borderColor: withAlpha(theme.colors.danger, 0.2),
         borderWidth: theme.components.card.borderWidth,
-        borderRadius: theme.radii.lg,
+        borderRadius: theme.components.card.radius,
       },
       avatar: {
         width: theme.components.avatar.md,
@@ -705,7 +705,7 @@ export default function EditUser() {
         borderColor: theme.colors.danger,
         borderWidth: theme.components.card.borderWidth,
         padding: theme.spacing.md,
-        borderRadius: theme.radii.xl,
+        borderRadius: theme.components.card.radius,
         marginBottom: theme.spacing.md,
       },
       errorTitle: { color: theme.colors.danger, fontWeight: '600' },
@@ -715,7 +715,7 @@ export default function EditUser() {
         borderColor: theme.colors.success,
         borderWidth: theme.components.card.borderWidth,
         padding: theme.spacing.md,
-        borderRadius: theme.radii.xl,
+        borderRadius: theme.components.card.radius,
         marginBottom: theme.spacing.md,
       },
       successText: { color: theme.colors.success, fontWeight: '600' },
@@ -3020,7 +3020,7 @@ export default function EditUser() {
               />
             ) : null}
             {canShowPersonalSection ? (
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+            <SectionHeader>
               {t('section_personal')}
             </SectionHeader>
             ) : null}
@@ -3036,7 +3036,7 @@ export default function EditUser() {
 
             {canShowContactSection ? (
               <>
-                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                <SectionHeader>
                   {t('clients_contacts_section')}
                 </SectionHeader>
                 <Card>
@@ -3051,7 +3051,7 @@ export default function EditUser() {
 
             {meId && meId === userId && (
               <>
-                <SectionHeader bottomSpacing="xs">
+                <SectionHeader>
                   {t('section_password_template').replace('{n}', String(MIN_PASSWORD_LENGTH))}
                 </SectionHeader>
                 <Card>
@@ -3141,7 +3141,7 @@ export default function EditUser() {
 
             {meIsAdmin && canShowCompanySection && (useDepartments || !isSelfAdmin) ? (
               <>
-                <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
+                <SectionHeader>{t('section_company_role')}</SectionHeader>
                 <Card>
                   {orderedCompanyFieldKeys.map((fieldKey) => (
                     <React.Fragment key={fieldKey}>

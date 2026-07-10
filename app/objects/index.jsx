@@ -438,7 +438,10 @@ export default function ObjectsIndex() {
           {refreshIndicator}
           <FlatList
             data={sortedFiltered}
-            contentContainerStyle={{ paddingHorizontal: theme.spacing.lg, paddingBottom: theme.spacing.xl }}
+            contentContainerStyle={{
+              paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+              paddingBottom: theme.components.screenLayout.contentPaddingBottom,
+            }}
             keyExtractor={keyExtractor}
             renderItem={renderItem}
             keyboardShouldPersistTaps="handled"

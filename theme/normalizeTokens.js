@@ -104,12 +104,25 @@ export function buildTheme(mode) {
       borderWidth: base.components?.card?.borderWidth ?? 1,
       padX: base.components?.card?.padX ?? 'lg',
       padY: base.components?.card?.padY ?? 'lg',
+      radius:
+        typeof base.components?.card?.radius === 'number'
+          ? base.components.card.radius
+          : radii[base.components?.card?.radius] ?? radii.xl,
+      shadow: base.components?.card?.shadow ?? 'card',
     },
     listItem: {
       height: base.components?.listItem?.height ?? 48,
+      compactHeight: base.components?.listItem?.compactHeight ?? 36,
+      padX: base.components?.listItem?.padX ?? 'md',
+      padY: base.components?.listItem?.padY ?? 'xs',
       dividerWidth: base.components?.listItem?.dividerWidth ?? 1,
+      dividerInsetX: base.components?.listItem?.dividerInsetX ?? 'md',
+      dividerColor: base.components?.listItem?.dividerColor ?? 'border',
       disabledOpacity: base.components?.listItem?.disabledOpacity ?? 0.5,
       chevronSize: base.components?.listItem?.chevronSize ?? 20,
+      chevronGap: base.components?.listItem?.chevronGap ?? 8,
+      labelValueGap: base.components?.listItem?.labelValueGap ?? 8,
+      valueReserve: base.components?.listItem?.valueReserve ?? 24,
     },
     switch: {
       scale: base.components?.switch?.scale ?? 1,
@@ -132,8 +145,35 @@ export function buildTheme(mode) {
     },
     // NEW: sensible defaults; additive, won't break existing usage
     sectionTitle: {
-      mb: base.components?.sectionTitle?.mb ?? 'sm', // spacing key
       ml: base.components?.sectionTitle?.ml ?? 'sm', // spacing key
+      fontSize:
+        typeof base.components?.sectionTitle?.fontSize === 'number'
+          ? base.components.sectionTitle.fontSize
+          : typography.sizes[base.components?.sectionTitle?.fontSize] ?? typography.sizes.sm,
+      fontWeight:
+        typography.weight[base.components?.sectionTitle?.fontWeight] ??
+        base.components?.sectionTitle?.fontWeight ??
+        typography.weight.bold,
+    },
+    sectionHeader: {
+      top: base.components?.sectionHeader?.top ?? 'md',
+      bottom: base.components?.sectionHeader?.bottom ?? 'xs',
+    },
+    screenLayout: {
+      contentPaddingX:
+        typeof base.components?.screenLayout?.contentPaddingX === 'number'
+          ? base.components.screenLayout.contentPaddingX
+          : spacing[base.components?.screenLayout?.contentPaddingX] ?? spacing.lg,
+      contentPaddingBottom:
+        typeof base.components?.screenLayout?.contentPaddingBottom === 'number'
+          ? base.components.screenLayout.contentPaddingBottom
+          : spacing[base.components?.screenLayout?.contentPaddingBottom] ?? spacing.xxl,
+      sectionGap:
+        typeof base.components?.screenLayout?.sectionGap === 'number'
+          ? base.components.screenLayout.sectionGap
+          : spacing[base.components?.screenLayout?.sectionGap] ?? spacing.sm,
+      floatingActionClearance:
+        base.components?.screenLayout?.floatingActionClearance ?? 88,
     },
     row: {
       minHeight: base.components?.row?.minHeight ?? base.components?.listItem?.height ?? 48,
@@ -151,6 +191,21 @@ export function buildTheme(mode) {
     input: {
       trailingSlotWidth: base.components?.input?.trailingSlotWidth ?? undefined,
       trailingGap: base.components?.input?.trailingGap ?? 8,
+      separator: {
+        enabled: base.components?.input?.separator?.enabled ?? true,
+        insetX:
+          base.components?.input?.separator?.insetX ??
+          base.components?.listItem?.dividerInsetX ??
+          'md',
+        height:
+          base.components?.input?.separator?.height ??
+          base.components?.listItem?.dividerWidth ??
+          1,
+        color:
+          base.components?.input?.separator?.color ??
+          base.components?.listItem?.dividerColor ??
+          'border',
+      },
     },
     toast: { anchorOffset: base.components?.toast?.anchorOffset ?? 120 },
     scrollView: {

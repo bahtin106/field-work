@@ -43,6 +43,12 @@ function mixHexColors(baseHex, topHex, ratio = 0.08) {
   }
 }
 
+const resolveThemeScaleValue = (scale, value, fallback) => {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && scale?.[value] !== undefined) return scale[value];
+  return fallback;
+};
+
 function buildTheme(mode, systemScheme = null) {
   const effective = mode === 'system' ? systemScheme || Appearance.getColorScheme?.() || 'light' : mode;
   const base = effective === 'dark' ? tokens.dark : tokens.light;
@@ -178,12 +184,26 @@ function buildTheme(mode, systemScheme = null) {
       borderWidth: base.components?.card?.borderWidth ?? 1,
       padX: base.components?.card?.padX ?? 'sm',
       padY: base.components?.card?.padY ?? 'sm',
+      radius: resolveThemeScaleValue(
+        radii,
+        base.components?.card?.radius,
+        radii.xl,
+      ),
+      shadow: base.components?.card?.shadow ?? 'card',
     },
     listItem: {
       height: base.components?.listItem?.height ?? 48,
+      compactHeight: base.components?.listItem?.compactHeight ?? 36,
+      padX: base.components?.listItem?.padX ?? 'md',
+      padY: base.components?.listItem?.padY ?? 'xs',
       dividerWidth: base.components?.listItem?.dividerWidth ?? 1,
+      dividerInsetX: base.components?.listItem?.dividerInsetX ?? 'md',
+      dividerColor: base.components?.listItem?.dividerColor ?? 'border',
       disabledOpacity: base.components?.listItem?.disabledOpacity ?? 0.5,
       chevronSize: base.components?.listItem?.chevronSize ?? 20,
+      chevronGap: base.components?.listItem?.chevronGap ?? 8,
+      labelValueGap: base.components?.listItem?.labelValueGap ?? 8,
+      valueReserve: base.components?.listItem?.valueReserve ?? 24,
     },
     orderStatusCapsule: {
       padX: base.components?.orderStatusCapsule?.padX ?? 10,
@@ -219,13 +239,39 @@ function buildTheme(mode, systemScheme = null) {
       // Р›РµРІС‹Р№ РѕС‚СЃС‚СѓРї Р·Р°РіРѕР»РѕРІРєР° СЃРµРєС†РёРё
       ml: base.components?.sectionTitle?.ml ?? 'lg',
       // Р¤РѕР»Р±СЌРєРё РґР»СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё (РµСЃР»Рё РіРґРµ-С‚Рѕ С‡РёС‚Р°СЋС‚ mt/mb)
-      mt: base.components?.sectionTitle?.mt ?? 'xs',
-      mb: base.components?.sectionTitle?.mb ?? 'xs',
+      fontSize: resolveThemeScaleValue(
+        typography.sizes,
+        base.components?.sectionTitle?.fontSize,
+        typography.sizes.sm,
+      ),
+      fontWeight:
+        typography.weight?.[base.components?.sectionTitle?.fontWeight] ??
+        base.components?.sectionTitle?.fontWeight ??
+        typography.weight.bold,
     },
     // Р•РґРёРЅС‹Рµ РѕС‚СЃС‚СѓРїС‹ РІРѕРєСЂСѓРі Р·Р°РіРѕР»РѕРІРєРѕРІ СЃРµРєС†РёР№ (РѕР±РµСЂС‚РєР° SectionHeader)
     sectionHeader: {
       top: base.components?.sectionHeader?.top ?? 'md',
       bottom: base.components?.sectionHeader?.bottom ?? 'xs',
+    },
+    screenLayout: {
+      contentPaddingX: resolveThemeScaleValue(
+        spacing,
+        base.components?.screenLayout?.contentPaddingX,
+        spacing.lg,
+      ),
+      contentPaddingBottom: resolveThemeScaleValue(
+        spacing,
+        base.components?.screenLayout?.contentPaddingBottom,
+        spacing.xxl,
+      ),
+      sectionGap: resolveThemeScaleValue(
+        spacing,
+        base.components?.screenLayout?.sectionGap,
+        spacing.sm,
+      ),
+      floatingActionClearance:
+        base.components?.screenLayout?.floatingActionClearance ?? 88,
     },
     row: {
       minHeight: base.components?.row?.minHeight ?? base.components?.listItem?.height ?? 48,
@@ -250,6 +296,10 @@ function buildTheme(mode, systemScheme = null) {
         insetX: base.components?.input?.separator?.insetX ?? 'lg',
         height:
           base.components?.input?.separator?.height ?? base.components?.listItem?.dividerWidth ?? 1,
+        color:
+          base.components?.input?.separator?.color ??
+          base.components?.listItem?.dividerColor ??
+          'border',
         alpha: base.components?.input?.separator?.alpha ?? 0.18,
         errorAlpha: base.components?.input?.separator?.errorAlpha ?? 0.28,
       },

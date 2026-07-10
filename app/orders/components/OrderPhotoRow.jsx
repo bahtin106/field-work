@@ -191,7 +191,7 @@ function OrderPhotoRow({
 
   return (
     <View>
-      <SectionHeader topSpacing="lg">{title}</SectionHeader>
+      <SectionHeader>{title}</SectionHeader>
       <Card>
         <View style={s.row}>
           {/* Add button */}

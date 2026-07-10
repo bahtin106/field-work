@@ -54,7 +54,6 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme/ThemeProvider';
 import DeferredScreen from '../../src/shared/perf/DeferredScreen';
-import { withAlpha } from '../../theme/colors';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { useClient, useClients, useUpdateClientMutation } from '../../src/features/clients/queries';
@@ -2939,7 +2938,7 @@ function CreateOrderContent() {
             style={{ marginBottom: theme.spacing.md }}
           />
         ) : null}
-        <SectionHeader topSpacing="xs" bottomSpacing="xs">
+        <SectionHeader>
           {t('create_order_section_main')}
         </SectionHeader>
         <Card padded={false} style={formStyles.card}>
@@ -3267,11 +3266,10 @@ function createStyles(theme) {
   const typo = theme.typography || {};
   const rad = theme.radii || {};
   const col = theme.colors || {};
-  const sep = theme.components?.input?.separator || {};
-  const insetKey = sep.insetX || 'lg';
-  const sepHeight = sep.height ?? theme.components?.listItem?.dividerWidth ?? 1;
-  const alpha = sep.alpha ?? 0.18;
-  const sepColor = withAlpha(col.primary, alpha);
+  const listItem = theme.components?.listItem || {};
+  const insetKey = listItem.dividerInsetX || 'md';
+  const sepHeight = listItem.dividerWidth;
+  const sepColor = col[listItem.dividerColor] ?? col.border;
   const toggleTrackOffColor = col.inputBorder || col.border;
   const ml = Number(sp?.[insetKey] ?? 0) || 0;
   const mr = Number(sp?.[insetKey] ?? 0) || 0;

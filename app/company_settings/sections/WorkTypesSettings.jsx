@@ -33,14 +33,11 @@ import {
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { getLocale } from '../../../src/i18n';
 import { useLastIntentWinsToggle } from '../../../src/shared/hooks/useLastIntentWinsToggle';
-import { withAlpha } from '../../../theme/colors';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const MAX_WORK_TYPES = 10;
 const WORK_TYPE_NAME_MAX_LENGTH = 64;
 const MODAL_AUTOFOCUS_DELAY_MS = 180;
-const DEFAULT_DIVIDER_WIDTH = 1;
-const DEFAULT_SEPARATOR_ALPHA = 0.18;
 const DEFAULT_LINE_HEIGHT_RATIO = 1.35;
 const DEFAULT_DISABLED_OPACITY = 0.5;
 const DEFAULT_TOUCH_TARGET_SIZE = 44;
@@ -82,12 +79,10 @@ export default function WorkTypesSettings() {
   const formStyles = useEditFormStyles();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
 
-  const sepConfig = theme.components?.input?.separator || {};
-  const sepInsetKey = sepConfig.insetX || 'lg';
-  const separatorHeight =
-    sepConfig.height ?? theme.components?.listItem?.dividerWidth ?? DEFAULT_DIVIDER_WIDTH;
-  const separatorAlpha = sepConfig.alpha ?? DEFAULT_SEPARATOR_ALPHA;
-  const separatorColor = withAlpha(theme.colors.primary, separatorAlpha);
+  const listItem = theme.components?.listItem || {};
+  const sepInsetKey = listItem.dividerInsetX || 'md';
+  const separatorHeight = listItem.dividerWidth;
+  const separatorColor = theme.colors[listItem.dividerColor] ?? theme.colors.border;
   const separatorInset = Number(theme.spacing?.[sepInsetKey] ?? 0) || 0;
 
   const s = React.useMemo(
@@ -747,8 +742,8 @@ function styles(theme, separatorColor, separatorHeight, separatorInset) {
       backgroundColor: theme.colors.background,
     },
     content: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingBottom: theme.spacing.xxl,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     loadingWrap: {
       flex: 1,

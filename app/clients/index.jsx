@@ -281,8 +281,8 @@ function createStyles(theme) {
       alignItems: 'center',
     },
     listContent: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
       gap: theme.spacing.sm,
     },
     row: {

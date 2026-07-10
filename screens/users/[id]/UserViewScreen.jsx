@@ -22,7 +22,6 @@ import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
-import ListSeparator from '../../../components/ui/ListSeparator';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { formatPersonInitials, formatPersonNameParts } from '../../../lib/personName';
@@ -402,7 +401,7 @@ export default function UserView() {
           <SectionHeader>{t('section_personal')}</SectionHeader>
         ) : null}
         {canShowPersonalSection ? (
-        <Card paddedXOnly>
+        <Card paddedXOnly separated>
           {fieldUi.isVisible('first_name') || fieldUi.isVisible('middle_name') || fieldUi.isVisible('last_name') ? (
           <LabelValueRow
             label={t('view_label_name')}
@@ -413,10 +412,6 @@ export default function UserView() {
             }
           />
           ) : null}
-          {(fieldUi.isVisible('first_name') || fieldUi.isVisible('middle_name') || fieldUi.isVisible('last_name')) && fieldUi.isVisible('birthdate') ? (
-            <ListSeparator />
-          ) : null}
-
           {fieldUi.isVisible('birthdate') ? (
           <LabelValueRow
             label={t('label_birthdate')}
@@ -453,7 +448,7 @@ export default function UserView() {
           <SectionHeader>{t('clients_contacts_section')}</SectionHeader>
         ) : null}
         {canShowContactSection ? (
-        <Card paddedXOnly>
+        <Card paddedXOnly separated>
           {fieldUi.isVisible('email') ? (
             <>
               <LabelValueRow
@@ -495,7 +490,6 @@ export default function UserView() {
                   ) : null
                 }
               />
-              {fieldUi.isVisible('phone') ? <ListSeparator /> : null}
             </>
           ) : null}
           {fieldUi.isVisible('phone') ? (
@@ -544,11 +538,10 @@ export default function UserView() {
 
         {canShowCompanySection && !isSoloAdmin ? <SectionHeader>{t('section_company_role')}</SectionHeader> : null}
         {canShowCompanySection && !isSoloAdmin ? (
-        <Card paddedXOnly>
+        <Card paddedXOnly separated>
           {hasCompanyValue && (
             <>
               <LabelValueRow label={t('admin_users_company')} value={companyName || companyId} />
-              <ListSeparator />
             </>
           )}
           {useDepartments && fieldUi.isVisible('department_id') ? (
@@ -557,13 +550,11 @@ export default function UserView() {
                 label={t('label_department')}
                 value={departmentName || t('placeholder_department')}
               />
-              <ListSeparator />
             </>
           ) : null}
             {fieldUi.isVisible('role') ? (
             <LabelValueRow label={t('label_role')} value={roleLabel} />
             ) : null}
-            {fieldUi.isVisible('role') ? <ListSeparator /> : null}
             <LabelValueRow
               label={t('label_status')}
               valueComponent={
@@ -577,11 +568,9 @@ export default function UserView() {
             />
             {isBlocked && blockedReasonLabel ? (
               <>
-                <ListSeparator />
                 <LabelValueRow label={t('label_block_reason')} value={blockedReasonLabel} />
               </>
             ) : null}
-            <ListSeparator />
             <LabelValueRow
               label={t('users_lastSeen_prefix')}
               valueComponent={

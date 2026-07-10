@@ -241,11 +241,13 @@ export default function AdminCompanyEditScreen() {
 const styles = (theme) =>
   StyleSheet.create({
     content: {
-      padding: theme.spacing.lg,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
       gap: theme.spacing.md,
     },
     card: {
-      borderRadius: theme.radii.md,
+      borderRadius: theme.components.card.radius,
       borderWidth: theme.components.card.borderWidth,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
@@ -253,8 +255,8 @@ const styles = (theme) =>
     },
     sectionTitle: {
       color: theme.colors.text,
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.bold,
+      fontSize: theme.components.sectionTitle.fontSize,
+      fontWeight: theme.components.sectionTitle.fontWeight,
     },
     line: {
       color: theme.colors.text,

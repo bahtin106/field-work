@@ -216,10 +216,10 @@ export default function TagsSettingsScreen() {
   return (
     <Screen headerOptions={{ title: t('settings_sections_reference_items_tags') }}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <SectionHeader topSpacing="xs">{t('tags_clients_title')}</SectionHeader>
+        <SectionHeader>{t('tags_clients_title')}</SectionHeader>
         {renderDictionaryBlock(TAG_TYPE.CLIENT)}
 
-        <SectionHeader topSpacing="xs">{t('tags_objects_title')}</SectionHeader>
+        <SectionHeader>{t('tags_objects_title')}</SectionHeader>
         {renderDictionaryBlock(TAG_TYPE.OBJECT)}
       </ScrollView>
 
@@ -271,8 +271,8 @@ export default function TagsSettingsScreen() {
 function createStyles(theme) {
   return StyleSheet.create({
     content: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingBottom: theme.spacing.xxl,
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
       gap: 0,
     },
     blockInner: {

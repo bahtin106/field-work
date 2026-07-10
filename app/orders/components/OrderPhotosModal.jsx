@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
@@ -33,10 +34,12 @@ export default function MediaUploadModal({
   canAddFromCamera = true,
   canAddFromGallery = true,
   canRemovePhotos = true,
+  embedded = false,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
+  const insets = useSafeAreaInsets();
 
   const [cameraVisible, setCameraVisible] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -64,6 +67,7 @@ export default function MediaUploadModal({
       setRemoveManyConfirmVisible(false);
       setPendingRemoveManyUris([]);
       pickedSessionIdsRef.current = new Set();
+      setCameraVisible(false);
     }
   }, [pickedSessionIdsRef, visible]);
 
@@ -253,7 +257,7 @@ export default function MediaUploadModal({
   );
   const selectedCount = selectedUris.length;
   const deleteDisabled = selectedCount === 0;
-  const s = useMemo(() => buildStyles(theme), [theme]);
+  const s = useMemo(() => buildStyles(theme, insets), [insets, theme]);
 
   const footer = useMemo(() => {
     if (selectionMode) {
@@ -358,48 +362,88 @@ export default function MediaUploadModal({
     theme,
   ]);
 
+  const photoContent = (
+    <>
+      <Text style={s.subtitle}>
+        {selectionMode
+          ? t('order_photos_selected_hint').replace('{count}', String(selectedCount))
+          : t('order_photos_count').replace('{count}', String(count))}
+      </Text>
+      {unavailableCount > 0 ? (
+        <Text style={s.warningText}>
+          {t('order_photos_unavailable_hint').replace('{count}', String(unavailableCount))}
+        </Text>
+      ) : null}
+
+      <PhotoGrid
+        photos={photos}
+        pending={pending}
+        getDisplayUrl={getDisplayUrl}
+        getThumbnailUrl={getThumbnailUrl}
+        getIssue={getIssue}
+        onOpenViewer={handleOpenViewer}
+        onRemove={canRemovePhotos ? handleRemove : undefined}
+        canAddPhotos={canAddFromCamera || canAddFromGallery}
+        selectionMode={selectionMode}
+        selectedUris={selectedUris}
+        onEnterSelectionMode={canRemovePhotos ? enterSelectionMode : undefined}
+        onToggleSelect={canRemovePhotos ? toggleSelection : undefined}
+      />
+    </>
+  );
+
   return (
     <>
-      <BaseModal
+      {embedded ? (
+        cameraVisible && canAddFromCamera ? (
+          <PhotoCaptureFlowModal visible onClose={handleCloseCamera} onSave={handleSaveFromCamera} />
+        ) : (
+          <View style={s.embeddedRoot}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+            <View style={s.embeddedSheet}>
+              <View style={s.embeddedHandleHit}>
+                <View style={s.embeddedHandle} />
+              </View>
+              <View style={s.embeddedHeader}>
+                <View style={s.embeddedClose} />
+                <Text style={s.embeddedTitle}>{t('order_photos_title')}</Text>
+                <Pressable
+                  onPress={onClose}
+                  hitSlop={theme.spacing.md}
+                  style={s.embeddedClose}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('btn_close')}
+                >
+                  <Feather name="x" size={theme.icons?.md ?? 22} color={theme.colors.textSecondary} />
+                </Pressable>
+              </View>
+              <View style={s.embeddedContent}>{photoContent}</View>
+              {footer ? <View style={s.embeddedFooter}>{footer}</View> : null}
+            </View>
+          </View>
+        )
+      ) : (
+        <BaseModal
         visible={visible && !suspended && confirmRemoveIndex == null}
         onClose={suspended || confirmRemoveIndex != null ? undefined : onClose}
         onDismiss={handleBaseDismiss}
         title={t('order_photos_title')}
         maxHeightRatio={0.85}
         footer={footer}
+        onFullscreenRequestClose={handleCloseCamera}
+        fullscreenContent={
+          cameraVisible && canAddFromCamera ? (
+            <PhotoCaptureFlowModal
+              visible
+              onClose={handleCloseCamera}
+              onSave={handleSaveFromCamera}
+            />
+          ) : null
+        }
       >
-        <Text style={s.subtitle}>
-          {selectionMode
-            ? t('order_photos_selected_hint').replace('{count}', String(selectedCount))
-            : t('order_photos_count').replace('{count}', String(count))}
-        </Text>
-        {unavailableCount > 0 ? (
-          <Text style={s.warningText}>
-            {t('order_photos_unavailable_hint').replace('{count}', String(unavailableCount))}
-          </Text>
-        ) : null}
-
-        <PhotoGrid
-          photos={photos}
-          pending={pending}
-          getDisplayUrl={getDisplayUrl}
-          getThumbnailUrl={getThumbnailUrl}
-          getIssue={getIssue}
-          onOpenViewer={handleOpenViewer}
-          onRemove={canRemovePhotos ? handleRemove : undefined}
-          canAddPhotos={canAddFromCamera || canAddFromGallery}
-          selectionMode={selectionMode}
-          selectedUris={selectedUris}
-          onEnterSelectionMode={canRemovePhotos ? enterSelectionMode : undefined}
-          onToggleSelect={canRemovePhotos ? toggleSelection : undefined}
-        />
+        {photoContent}
       </BaseModal>
-
-      <PhotoCaptureFlowModal
-        visible={cameraVisible && canAddFromCamera}
-        onClose={handleCloseCamera}
-        onSave={handleSaveFromCamera}
-      />
+      )}
 
       <ConfirmModal
         visible={removeConfirmVisible}
@@ -428,13 +472,74 @@ export default function MediaUploadModal({
   );
 }
 
-function buildStyles(theme) {
+function buildStyles(theme, insets) {
   const sp = theme.spacing;
   const ty = theme.typography;
   const cl = theme.colors;
   const rd = theme.radii;
 
   return StyleSheet.create({
+    embeddedRoot: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      paddingHorizontal: theme.components?.modal?.edgePadding ?? sp.md,
+      paddingBottom: Math.max(sp.md, Number(insets?.bottom || 0) + sp.md),
+      backgroundColor: cl.overlay,
+    },
+    embeddedSheet: {
+      width: '100%',
+      maxHeight: '85%',
+      minHeight: 0,
+      flexShrink: 1,
+      overflow: 'hidden',
+      borderRadius: theme.components?.modal?.radius ?? theme.radii.xl,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: cl.border,
+      backgroundColor: cl.surface,
+      ...(Platform.OS === 'ios'
+        ? (theme.shadows?.card?.ios || {})
+        : (theme.shadows?.card?.android || {})),
+    },
+    embeddedHandleHit: {
+      alignItems: 'center',
+      paddingVertical: sp.md,
+    },
+    embeddedHandle: {
+      width: theme.components?.modal?.handleWidth ?? 48,
+      height: theme.components?.modal?.handleHeight ?? 5,
+      borderRadius: theme.radii.xs,
+      backgroundColor: cl.inputBorder,
+    },
+    embeddedHeader: {
+      minHeight: theme.components?.input?.height ?? 48,
+      paddingHorizontal: sp.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    embeddedClose: {
+      width: theme.components?.input?.height ?? 48,
+      height: theme.components?.input?.height ?? 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    embeddedTitle: {
+      flex: 1,
+      textAlign: 'center',
+      color: cl.text,
+      fontSize: ty.sizes.lg,
+      fontWeight: ty.weight?.bold || '700',
+    },
+    embeddedContent: {
+      flexShrink: 1,
+      minHeight: 0,
+      paddingHorizontal: sp.lg,
+    },
+    embeddedFooter: {
+      paddingHorizontal: sp.lg,
+      paddingTop: sp.sm,
+      paddingBottom: sp.md,
+    },
     subtitle: {
       fontSize: ty.sizes.sm,
       color: cl.textSecondary,

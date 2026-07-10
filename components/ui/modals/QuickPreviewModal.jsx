@@ -16,6 +16,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { getCardSurfaceStyle } from '../../../theme/surfaceStyles';
 import { useToast } from '../ToastProvider';
 import { withAlpha } from './BaseModal';
 
@@ -276,16 +277,11 @@ export default function QuickPreviewModal({
 function createStyles(theme) {
   return StyleSheet.create({
     card: {
+      ...getCardSurfaceStyle(theme),
       position: 'absolute',
       width: 'auto',
-      backgroundColor: theme.colors.surface,
-      borderRadius: theme.radii.lg,
-      borderWidth: theme.components?.card?.borderWidth ?? 1,
-      borderColor: theme.colors.border,
       paddingHorizontal: theme.spacing.md,
       paddingVertical: theme.spacing.sm,
-      ...(theme.shadows?.card?.ios || {}),
-      elevation: theme.shadows?.card?.android?.elevation ?? 8,
     },
     title: {
       color: theme.colors.text,

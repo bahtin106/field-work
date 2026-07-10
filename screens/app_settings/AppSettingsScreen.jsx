@@ -16,7 +16,6 @@ import Card from '../../components/ui/Card';
 import SectionHeader from '../../components/ui/SectionHeader';
 import { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
-import { listItemStyles } from '../../components/ui/listItemStyles';
 import { DateTimeModal, SelectModal } from '../../components/ui/modals';
 import { ANDROID_CHANNEL_ID, getAndroidChannelName, APP_DEFAULTS } from '../../config/notifications';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
@@ -293,7 +292,6 @@ export default function AppSettings() {
   })();
   const currentThemeLabel = t(`settings_theme_${mode || 'system'}`);
   const s = useMemo(() => styles(theme), [theme]);
-  const base = useMemo(() => listItemStyles(theme), [theme]);
   const futureFeature = useCallback(() => toast.info(t('feature_future')), [t, toast]);
   const [prefs, setPrefs] = useState({
     allow: true,
@@ -985,14 +983,13 @@ export default function AppSettings() {
             <ActivityIndicator />
           </View>
         )}
-        {sections.map((sec, idx) => (
+        {sections.map((sec) => (
           <View key={sec.key} style={s.sectionWrap}>
-            <SectionHeader topSpacing={idx === 0 ? 0 : undefined}>
+            <SectionHeader>
               {sec.title}
             </SectionHeader>
-            <Card paddedXOnly>
-              {sec.items.map((it, idx) => {
-                const last = idx === sec.items.length - 1;
+            <Card paddedXOnly separated>
+              {sec.items.map((it) => {
                 return (
                   <React.Fragment key={it.key}>
                     {it.switch ? (
@@ -1015,7 +1012,6 @@ export default function AppSettings() {
                         accessibilityLabel={it.label}
                       />
                     )}
-                    {!last && <View style={base.sep} />}
                   </React.Fragment>
                 );
               })}
@@ -1085,7 +1081,10 @@ export default function AppSettings() {
 
 const styles = (t) =>
   StyleSheet.create({
-    contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
-    sectionWrap: { marginBottom: t.spacing.sm },
+    contentWrap: {
+      paddingHorizontal: t.components.screenLayout.contentPaddingX,
+      paddingBottom: t.components.screenLayout.contentPaddingBottom,
+    },
+    sectionWrap: { marginBottom: 0 },
     loadingWrap: { paddingVertical: t.spacing.sm },
   });

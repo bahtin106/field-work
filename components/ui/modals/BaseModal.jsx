@@ -27,6 +27,14 @@ import { t as T } from '../../../src/i18n';
 import { useToast } from '../ToastProvider';
 import { useTheme } from '../../../theme';
 import { withAlpha as withThemeAlpha } from '../../../theme/colors';
+import DismissKeyboardArea from '../../layout/DismissKeyboardArea';
+import {
+  notifyIOSModalDismissed,
+  registerIOSModal,
+  releaseIOSModal,
+  requestIOSModalPresentation,
+  unregisterIOSModal,
+} from './iosModalCoordinator';
 
 const OPEN_SPRING = { damping: 28, stiffness: 500, mass: 0.5 };
 const MIN_TOP_GAP_FROM_STATUS_BAR_DP = 38;
@@ -100,6 +108,8 @@ const BaseModalImpl = (
     keyboardExtraPadding = 0,
     disableContentShrink = false,
     minTopGapFromStatusBar = null,
+    fullscreenContent = null,
+    onFullscreenRequestClose,
   },
   ref,
 ) => {
@@ -113,6 +123,10 @@ const BaseModalImpl = (
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
   const [modalKey, _setModalKey] = useState(0);
   const dismissNotifiedRef = useRef(false);
+  const iosModalIdRef = useRef(null);
+  const iosSuspendedRef = useRef(false);
+  const openRef = useRef(null);
+  const suspendRef = useRef(null);
 
   // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
   const [kbInset, setKbInset] = useState(0);
@@ -299,6 +313,27 @@ const BaseModalImpl = (
       if (fin) runOnJS(doUnmount)();
     });
   };
+
+  openRef.current = open;
+  suspendRef.current = () => {
+    if (!rnVisible) return;
+    iosSuspendedRef.current = true;
+    setNativeDismissPending(true);
+    setRnVisible(false);
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return undefined;
+    const id = registerIOSModal({
+      present: () => openRef.current?.(),
+      suspend: () => suspendRef.current?.(),
+    });
+    iosModalIdRef.current = id;
+    return () => {
+      unregisterIOSModal(id);
+      iosModalIdRef.current = null;
+    };
+  }, []);
   useImperativeHandle(ref, () => ({ close }));
 
   const requestClose = () => {
@@ -353,11 +388,19 @@ const BaseModalImpl = (
   ).current;
 
   useEffect(() => {
-    if (visible) {
-      open();
-    } else if (rnVisible) {
-      close();
+    if (Platform.OS === 'ios') {
+      const id = iosModalIdRef.current;
+      if (!id) return;
+      if (visible) {
+        requestIOSModalPresentation(id);
+      } else {
+        releaseIOSModal(id);
+        if (rnVisible) close();
+      }
+      return;
     }
+    if (visible) open();
+    else if (rnVisible) close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
@@ -394,7 +437,7 @@ const BaseModalImpl = (
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={requestClose}
+      onRequestClose={fullscreenContent ? (onFullscreenRequestClose || requestClose) : requestClose}
       onShow={() => {
         runOpenAnimation();
         try {
@@ -402,12 +445,21 @@ const BaseModalImpl = (
         } catch {}
       }}
       onDismiss={() => {
+        const wasSuspended = iosSuspendedRef.current;
+        iosSuspendedRef.current = false;
         // Safety-net: ensure state is reset even if native dismisses unexpectedly
         setRnVisible(false);
         setNativeDismissPending(false);
-        notifyDismiss();
+        if (Platform.OS === 'ios' && iosModalIdRef.current != null) {
+          notifyIOSModalDismissed(iosModalIdRef.current, { suspended: wasSuspended });
+        }
+        if (!wasSuspended) notifyDismiss();
       }}
     >
+      {fullscreenContent ? (
+        <View style={StyleSheet.absoluteFill}>{fullscreenContent}</View>
+      ) : (
+        <>
       {/* Backdrop - handles taps outside card */}
       <Pressable
         style={[StyleSheet.absoluteFill, { zIndex: 0, elevation: 0 }]}
@@ -455,6 +507,7 @@ const BaseModalImpl = (
             },
           ]}
         >
+          <DismissKeyboardArea style={{ width: '100%', flexShrink: 1, minHeight: 0 }}>
           {/* Drag handle */}
             {showHandle ? (
               <View style={s.handleHit} {...(disablePanClose ? {} : pan.panHandlers)}>
@@ -530,8 +583,11 @@ const BaseModalImpl = (
                 {footer}
               </View>
             ) : null}
+          </DismissKeyboardArea>
           </Animated.View>
         </Animated.View>
+        </>
+      )}
       {toast?.renderOverlay?.() || null}
     </Modal>
   );

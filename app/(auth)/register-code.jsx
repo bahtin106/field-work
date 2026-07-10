@@ -12,7 +12,7 @@ import { logClientError } from '../../lib/errorLogsClient';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useFeedback } from '../../src/shared/feedback';
-import { useTheme } from '../../theme';
+import { getCardSurfaceStyle, useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 import { LEGAL_LINKS } from '../../config/externalUrls';
 
@@ -151,10 +151,7 @@ export default function RegisterCodeScreen() {
           paddingBottom: theme.spacing.xl,
         },
         card: {
-          borderRadius: theme.radii.xxl,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          backgroundColor: theme.colors.surface,
+          ...getCardSurfaceStyle(theme),
           paddingHorizontal: theme.spacing.lg,
           paddingVertical: theme.spacing.xl,
           gap: theme.spacing.md,

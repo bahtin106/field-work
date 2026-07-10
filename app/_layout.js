@@ -22,6 +22,7 @@ LogBox.ignoreLogs([
 ]);
 
 import BottomNav from '../components/navigation/BottomNav';
+import DismissKeyboardArea from '../components/layout/DismissKeyboardArea';
 import ToastProvider, { useToast } from '../components/ui/ToastProvider';
 import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
@@ -1066,7 +1067,7 @@ function RootLayoutInner() {
             style={{ flex: 1, backgroundColor: theme.colors.background }}
           >
             {isAuthenticated && !isBlockedScreen ? <OfflineStatusBanner /> : null}
-            <View style={{ flex: 1, minHeight: 0 }}>
+            <DismissKeyboardArea style={{ flex: 1, minHeight: 0 }}>
               <Stack
                 initialRouteName="(auth)"
                 screenOptions={{
@@ -1128,7 +1129,7 @@ function RootLayoutInner() {
                   <Stack.Screen name="admin/server/index" />
                 <Stack.Screen name="stats" options={{ title: t('routes.stats') }} />
               </Stack>
-            </View>
+            </DismissKeyboardArea>
             {isSigningOut || (!isAuthenticated && !inAuthFlow) ? (
               <View
                 pointerEvents="auto"

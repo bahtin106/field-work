@@ -1153,9 +1153,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         />
       ) : null}
 
-      <Card style={[styles.cardRounded, styles.menuCard]} padded={false}>
-        {menuItems.map((item, index) => {
-          const isLast = index === menuItems.length - 1;
+      <Card style={[styles.cardRounded, styles.menuCard]} padded={false} separated>
+        {menuItems.map((item) => {
           const isDisabled = item.disabled === true;
           return (
             <Pressable
@@ -1167,7 +1166,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
                 styles.menuRow,
                 isDisabled && styles.menuRowDisabled,
                 pressed && styles.rowPressed,
-                !isLast && styles.menuRowBorder,
               ]}
               accessibilityRole="button"
               accessibilityState={{ disabled: isDisabled }}
@@ -1201,9 +1199,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       </Card>
 
       {quickAccessItems.length > 0 ? (
-        <Card style={[styles.cardRounded, styles.quickAccessCard]} padded={false}>
-          {quickAccessItems.map((item, index) => {
-            const isLast = index === quickAccessItems.length - 1;
+        <Card style={[styles.cardRounded, styles.quickAccessCard]} padded={false} separated>
+          {quickAccessItems.map((item) => {
             const isDisabled = item.disabled === true;
             return (
               <Pressable
@@ -1215,7 +1212,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
                   styles.menuRow,
                   isDisabled && styles.menuRowDisabled,
                   pressed && styles.rowPressed,
-                  !isLast && styles.menuRowBorder,
                 ]}
                 accessibilityRole="button"
                 accessibilityState={{ disabled: isDisabled }}
@@ -1292,7 +1288,7 @@ const createStyles = (theme) => {
     },
     cardRounded: {
       marginBottom: spacing.lg,
-      borderRadius: radii.xl,
+      borderRadius: theme.components.card.radius,
       overflow: 'hidden',
       borderWidth: theme.components?.card?.borderWidth ?? 1,
       borderColor: colors.border,
@@ -1396,7 +1392,7 @@ const createStyles = (theme) => {
     menuCard: {},
     subscriptionWarningCard: {
       marginBottom: spacing.lg,
-      borderRadius: radii.xl,
+      borderRadius: theme.components.card.radius,
       borderWidth: theme.components?.card?.borderWidth ?? 1,
       borderColor: withAlpha(colors.warning || colors.primary, 0.2),
       backgroundColor: colors.surface,
@@ -1454,10 +1450,6 @@ const createStyles = (theme) => {
     menuRowDisabled: {
       opacity: theme.components?.listItem?.disabledOpacity ?? 0.6,
     },
-    menuRowBorder: {
-      borderBottomWidth: theme.components?.listItem?.dividerWidth ?? 1,
-      borderColor: colors.border,
-    },
     menuContent: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1499,7 +1491,7 @@ const createStyles = (theme) => {
       justifyContent: 'center',
     },
     loadingCard: {
-      borderRadius: radii.xl,
+      borderRadius: theme.components.card.radius,
       borderWidth: theme.components?.card?.borderWidth ?? 1,
       borderColor: colors.border,
       backgroundColor: colors.surface,

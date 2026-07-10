@@ -1791,10 +1791,11 @@ function EditOrderContent() {
         card: formStyles.card,
         field: formStyles.field,
         separator: {
-          height: theme.components?.input?.separator?.height ?? 1,
-          backgroundColor: theme.components?.input?.separator?.color || theme.colors.border,
-          marginLeft: theme.spacing?.lg ?? 16,
-          marginRight: theme.spacing?.lg ?? 16,
+          height: theme.components.listItem.dividerWidth,
+          backgroundColor:
+            theme.colors[theme.components.listItem.dividerColor] ?? theme.colors.border,
+          marginLeft: theme.spacing[theme.components.listItem.dividerInsetX],
+          marginRight: theme.spacing[theme.components.listItem.dividerInsetX],
         },
         toggleRow: {
           ...formStyles.field,
@@ -2851,7 +2852,7 @@ function EditOrderContent() {
           } catch {}
         }}
       >
-      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
+      <SectionHeader>{T('order_details_general_data')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {orderedGeneralFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditGeneralField(fieldKey)}</View>

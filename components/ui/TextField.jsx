@@ -15,8 +15,6 @@ import { t as T } from '../../src/i18n';
 import { useAutoScrollOnInvalid, useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
 import { getFieldValidationState, getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme';
-import { withAlpha } from '../../theme/colors';
-import { focusNextInput, registerInput, unregisterInput } from './inputFocusRegistry';
 import { CHEVRON_GAP, listItemStyles } from './listItemStyles';
 import ThemedSwitch from './ThemedSwitch';
 
@@ -82,8 +80,6 @@ const TextField = forwardRef(function TextField(
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
   const lastKeyRef = useRef(null);
-  const fieldIdRef = useRef(Symbol('text-field'));
-  const mountOrderRef = useRef(Date.now() + Math.random());
   // Для управления видимостью пароля через toggle кнопку
   const [showPassword, setShowPassword] = useState(false);
   const baseInputHeight =
@@ -134,11 +130,13 @@ const TextField = forwardRef(function TextField(
   const s = styles(theme, isErr, focused, autoGrowEnabled, minContentHeight, effectiveMultiline);
   const inputRef = useRef(null);
   const [contentHeight, setContentHeight] = useState(minContentHeight);
+  const lastMeasuredValueRef = useRef(null);
 
   useEffect(() => {
     if (!effectiveMultiline || !autoGrowEnabled) {
       setContentHeight(minContentHeight);
     }
+    lastMeasuredValueRef.current = null;
   }, [autoGrowEnabled, effectiveMultiline, minContentHeight]);
 
   React.useImperativeHandle(ref, () => ({
@@ -154,15 +152,18 @@ const TextField = forwardRef(function TextField(
 
   const handleChangeText = React.useCallback(
     (text) => {
-      let processedText = text;
+      const sourceText = effectiveMultiline ? String(text ?? '').replace(/\r\n?/g, '\n') : text;
+      let processedText = sourceText;
 
       // Если указана функция фильтрации (например, для паролей)
       if (filterInput) {
-        const filtered = filterInput(text);
+        const filtered = effectiveMultiline
+          ? sourceText.split('\n').map((line) => filterInput(line)).join('\n')
+          : filterInput(sourceText);
 
         // Если текст изменился после фильтрации - были недопустимые символы
-        if (filtered !== text && onInvalidInput) {
-          onInvalidInput(text, filtered);
+        if (filtered !== sourceText && onInvalidInput) {
+          onInvalidInput(sourceText, filtered);
         }
 
         processedText = filtered;
@@ -170,12 +171,15 @@ const TextField = forwardRef(function TextField(
 
       onChangeText?.(processedText);
     },
-    [onChangeText, filterInput, onInvalidInput],
+    [effectiveMultiline, onChangeText, filterInput, onInvalidInput],
   );
 
   // Правильное вычисление secureTextEntry: скрываем пароль ТОЛЬКО если это поле пароля И showPassword=false
   const effectiveSecureTextEntry = secureTextEntry ? !showPassword : false;
   const effectiveValue = value != null ? String(value) : '';
+  useEffect(() => {
+    lastMeasuredValueRef.current = null;
+  }, [effectiveValue]);
   const hasValue = effectiveValue.length > 0;
   const floatingLabelActive = focused || hasValue;
   const useInstantMasking = false;
@@ -211,34 +215,22 @@ const TextField = forwardRef(function TextField(
   const effectiveReturnKeyType = useMemo(() => {
     if (returnKeyType) return returnKeyType;
     if (effectiveMultiline) return 'default';
-    return onSubmitEditing ? 'done' : 'next';
-  }, [effectiveMultiline, onSubmitEditing, returnKeyType]);
+    return 'done';
+  }, [effectiveMultiline, returnKeyType]);
 
   const handleSubmitEditing = React.useCallback(
     (e) => {
-      onSubmitEditing?.(e);
-
-      if (effectiveMultiline || onSubmitEditing) return;
-      const moved = focusNextInput(fieldIdRef.current);
-      if (!moved) Keyboard.dismiss();
+      // A multiline field owns Return: on both iOS and Android it must insert
+      // a line break instead of invoking form-level submit/dismiss handlers.
+      if (effectiveMultiline) return;
+      if (onSubmitEditing) {
+        onSubmitEditing(e);
+        return;
+      }
+      Keyboard.dismiss();
     },
     [effectiveMultiline, onSubmitEditing],
   );
-
-  useEffect(() => {
-    if (effectiveMultiline || pressable) return undefined;
-
-    const id = fieldIdRef.current;
-    registerInput({
-      id,
-      order: mountOrderRef.current,
-      getInput: () => inputRef.current,
-    });
-
-    return () => {
-      unregisterInput(id);
-    };
-  }, [effectiveMultiline, pressable]);
 
   return (
     <View
@@ -292,8 +284,16 @@ const TextField = forwardRef(function TextField(
             scrollEnabled={effectiveMultiline && !autoGrowEnabled}
             onContentSizeChange={(e) => {
               if (!effectiveMultiline || !autoGrowEnabled) return;
+              // iOS can emit another content-size event in response to a height
+              // update. Handle one measurement per text value to prevent a
+              // self-triggered layout loop after Return/newline input.
+              if (lastMeasuredValueRef.current === effectiveValue) return;
+              lastMeasuredValueRef.current = effectiveValue;
               const nextHeight = Number(e?.nativeEvent?.contentSize?.height) || minContentHeight;
-              const clampedHeight = Math.max(minContentHeight, Math.min(nextHeight, maxContentHeight));
+              const clampedHeight = Math.max(
+                minContentHeight,
+                Math.min(Math.ceil(nextHeight), maxContentHeight),
+              );
               setContentHeight((prev) => (Math.abs(prev - clampedHeight) > 1 ? clampedHeight : prev));
             }}
             onFocus={(e) => {
@@ -309,7 +309,7 @@ const TextField = forwardRef(function TextField(
             autoCapitalize={autoCapitalize}
             autoFocus={autoFocus}
             showSoftInputOnFocus={showSoftInputOnFocus}
-            blurOnSubmit={false}
+            blurOnSubmit={!effectiveMultiline && !onSubmitEditing}
             returnKeyType={effectiveReturnKeyType}
             onSubmitEditing={handleSubmitEditing}
             style={[
@@ -400,10 +400,9 @@ const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMul
   const sepHeight = isError
     ? Math.max(baseSeparatorHeight * errorSeparatorMultiplier, baseSeparatorHeight + 1)
     : baseSeparatorHeight;
-  const alpha = isError ? 1 : (sep.alpha ?? 0.18);
   const sepColor = isError
     ? t.colors.danger
-    : withAlpha(t.colors.primary, alpha);
+    : t.colors[sep.color] ?? t.colors.border;
   const ml = Number(t.spacing?.[insetKey] ?? 0) || 0;
   const mr = Number(t.spacing?.[insetKey] ?? 0) || 0;
 
@@ -739,7 +738,7 @@ const selectStyles = (t, isError = false) => {
         : (t.components?.input?.separator?.height ?? t.components?.listItem?.dividerWidth ?? 1),
       backgroundColor: isError
         ? t.colors.danger
-        : withAlpha(t.colors.primary, t.components?.input?.separator?.alpha ?? 0.18),
+        : t.colors[t.components?.input?.separator?.color] ?? t.colors.border,
       marginLeft: Number(t.spacing?.[t.components?.input?.separator?.insetX ?? 'lg'] ?? 0) || 0,
       marginRight: Number(t.spacing?.[t.components?.input?.separator?.insetX ?? 'lg'] ?? 0) || 0,
     },
