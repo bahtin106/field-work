@@ -68,6 +68,7 @@
   "offline_banner_pending": "В очереди: {count}.",
   "offline_banner_conflicts": "Конфликты версий: {count}.",
   "offline_banner_failed": "Ошибки синхронизации: {count}.",
+  "notifications_channel_name": "Уведомления",
   "profile_media_session_expired": "Сессия истекла. Войдите снова.",
   "profile_media_read_avatar_failed": "Не удалось прочитать файл аватара",
   "profile_media_prepare_upload_failed": "Не удалось подготовить загрузку",

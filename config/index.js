@@ -13,7 +13,6 @@ const APP_DEFAULTS = {
   /** Android notification channel settings (Point 3) */
   notifications: {
     ANDROID_CHANNEL_ID: 'app-notify',
-    ANDROID_CHANNEL_NAME: 'App Notifications',
   },
 };
 

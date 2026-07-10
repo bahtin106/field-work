@@ -7,5 +7,7 @@ try {
 } catch {}
 const __NOTIF = (APP_DEFAULTS && APP_DEFAULTS.notifications) || {};
 export const ANDROID_CHANNEL_ID = __NOTIF.ANDROID_CHANNEL_ID || 'app-notify';
-export const ANDROID_CHANNEL_NAME = __NOTIF.ANDROID_CHANNEL_NAME || 'Уведомления';
+export function getAndroidChannelName(t) {
+  return t('notifications_channel_name');
+}
 export { APP_DEFAULTS };

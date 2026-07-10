@@ -17,6 +17,7 @@ export default {
   offline_banner_pending: 'Queued: {count}.',
   offline_banner_conflicts: 'Version conflicts: {count}.',
   offline_banner_failed: 'Sync errors: {count}.',
+  notifications_channel_name: 'Notifications',
   profile_media_session_expired: 'Session expired. Sign in again.',
   profile_media_read_avatar_failed: 'Could not read avatar file',
   profile_media_prepare_upload_failed: 'Could not prepare upload',

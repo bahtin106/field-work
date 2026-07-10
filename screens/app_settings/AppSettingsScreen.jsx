@@ -18,7 +18,7 @@ import { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { DateTimeModal, SelectModal } from '../../components/ui/modals';
-import { ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME, APP_DEFAULTS } from '../../config/notifications';
+import { ANDROID_CHANNEL_ID, getAndroidChannelName, APP_DEFAULTS } from '../../config/notifications';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { supabase } from '../../lib/supabase';
 import {
@@ -33,7 +33,7 @@ import { useTheme } from '../../theme';
 
 import { TBL } from '../../lib/constants';
 import { saveUserLocale } from '../../lib/userLocale';
-import { availableLocales, getLocale, setLocale } from '../../src/i18n';
+import { availableLocales, getLocale, setLocale, t as T } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
@@ -201,7 +201,7 @@ async function getPushTokenIfGranted() {
     if (Platform.OS === 'android') {
       try {
         await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
-          name: ANDROID_CHANNEL_NAME,
+          name: getAndroidChannelName(T),
           importance: Notifications.AndroidImportance.MAX,
           sound: 'default',
           lightColor: '#0A84FF',
