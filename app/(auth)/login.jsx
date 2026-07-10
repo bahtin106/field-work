@@ -449,6 +449,7 @@ function LoginScreenContent() {
                 variant="primary"
                 size="lg"
                 onPress={handleSubmit}
+                formSubmit
                 disabled={!canSubmit}
                 loading={loading}
               />
@@ -547,6 +548,7 @@ function LoginScreenContent() {
                   variant="primary"
                   size="lg"
                   onPress={handleSubmit}
+                  formSubmit
                   disabled={!canSubmit}
                   loading={loading}
                 />
@@ -596,6 +598,7 @@ function LoginScreenContent() {
               <Button
                 title={recoverSendTitle}
                 onPress={sendRecover}
+                formSubmit
                 loading={recoverSending}
                 disabled={!canSendRecover}
               />
@@ -652,6 +655,7 @@ function LoginScreenContent() {
               <Button
                 title={supportSending ? t('btn_sending') : t('btn_send')}
                 onPress={sendSupport}
+                formSubmit
                 loading={supportSending}
                 disabled={supportSending}
               />

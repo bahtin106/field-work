@@ -32,6 +32,7 @@ import {
   usePullToRefreshFeedback,
 } from '../../components/ui/PullToRefreshFeedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { getStatusDbAliases } from '../../lib/orderFilters';
 import { usePersistedOrderStatusUsage } from '../../lib/orderStatusUsage';
 import { getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import goBackSmart from '../../lib/navigation/goBackSmart';
@@ -481,6 +482,10 @@ function AllOrdersContent() {
   const { data: companyId } = useMyCompanyIdQuery();
   const statusSystem = useCompanyOrderStatuses(companyId);
   const isFeedFeatureEnabled = statusSystem.isEnabled && statusSystem.feedEnabled && !isSoloAdmin;
+  const feedStatusValues = useMemo(
+    () => new Set(getStatusDbAliases('feed').map((value) => String(value).trim())),
+    [],
+  );
   const permissionByRole = !permLoading ? has(ALL_ORDERS_PERMISSION_KEY) : null;
   const isExplicitlyDeniedOnline =
     !offlineMode && allowed === false && permissionByRole === false;
@@ -1559,6 +1564,13 @@ function AllOrdersContent() {
     const createdTimeFrom = parseTimeToMinutes(orderFilters.createdTimeFrom);
     const createdTimeTo = parseTimeToMinutes(orderFilters.createdTimeTo);
     return (orders || []).filter((order) => {
+      if (
+        effectiveStatusFilter === 'all' &&
+        isFeedFeatureEnabled &&
+        feedStatusValues.has(String(order?.status || '').trim())
+      ) {
+        return false;
+      }
       if (timeFrom != null || timeTo != null) {
         const dt = order?.time_window_start ? new Date(order.time_window_start) : null;
         if (dt && !Number.isNaN(dt.getTime())) {
@@ -1608,6 +1620,9 @@ function AllOrdersContent() {
   }, [
     companySettings,
     deferredSearchQuery,
+    effectiveStatusFilter,
+    feedStatusValues,
+    isFeedFeatureEnabled,
     orderFilters.createdTimeFrom,
     orderFilters.createdTimeTo,
     orderFilters.departureTimeFrom,

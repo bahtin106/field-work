@@ -900,7 +900,7 @@ export default function FinanceRulesSettingsScreen() {
                 setEditorSubmitAttempt(false);
               }}
             />
-            <Button title={t('btn_save')} loading={saveMutation.isPending} onPress={saveRuleWithConfirm} />
+            <Button title={t('btn_save')} loading={saveMutation.isPending} onPress={saveRuleWithConfirm} formSubmit />
           </View>
         }
       >

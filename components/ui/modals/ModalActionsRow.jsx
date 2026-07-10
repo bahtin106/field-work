@@ -22,6 +22,8 @@ export default function ModalActionsRow({ actions = [] }) {
             onPress={action.onPress}
             loading={!!action.loading}
             disabled={!!action.disabled}
+            formSubmit={!!action.formSubmit}
+            dismissKeyboardOnPress={!!action.dismissKeyboardOnPress}
           />
         </View>
       ))}

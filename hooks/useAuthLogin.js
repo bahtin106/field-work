@@ -14,7 +14,6 @@ import { logger } from '../lib/logger';
 import { supabase } from '../lib/supabase';
 import {
   AUTH_ERRORS,
-  AUTH_ERROR_MESSAGES,
   logAuthError,
   mapSupabaseAuthError,
 } from '../lib/supabaseAuthErrors';
@@ -98,7 +97,7 @@ export function useAuthLogin() {
 
         // Маппируем на UI-ошибку
         const errorKey = mapSupabaseAuthError(authErr);
-        const errorMessage = t(errorKey, AUTH_ERROR_MESSAGES[errorKey]);
+        const errorMessage = t(errorKey);
 
         setError(errorMessage);
         setLoading(false);
@@ -108,7 +107,7 @@ export function useAuthLogin() {
       // Успешный логин — проверяем что сессия действительно создана
       if (!data?.session?.access_token) {
         logger.warn('Login succeeded but no session token received');
-        setError(t(AUTH_ERRORS.UNKNOWN_ERROR, AUTH_ERROR_MESSAGES[AUTH_ERRORS.UNKNOWN_ERROR]));
+        setError(t(AUTH_ERRORS.UNKNOWN_ERROR));
         setLoading(false);
         return false;
       }
@@ -202,10 +201,7 @@ export function useAuthLogin() {
 
       logger.error('Unexpected login error', { error: err.message });
 
-      const errorMessage = t(
-        AUTH_ERRORS.UNKNOWN_ERROR,
-        AUTH_ERROR_MESSAGES[AUTH_ERRORS.UNKNOWN_ERROR],
-      );
+      const errorMessage = t(AUTH_ERRORS.UNKNOWN_ERROR);
       setError(errorMessage);
       setLoading(false);
       return false;

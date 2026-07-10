@@ -1043,7 +1043,7 @@ export default function BillingScreen() {
               <Button title={t('btn_cancel')} variant="secondary" onPress={closeManageModal} style={styles(theme).footerBtn} />
             </View>
             <View style={styles(theme).footerBtnWrap}>
-              <Button title={savingChanges ? t('btn_applying') : t('btn_apply')} onPress={askApplyChanges} loading={savingChanges} disabled={savingChanges || !hasChanges} style={styles(theme).footerBtn} />
+              <Button title={savingChanges ? t('btn_applying') : t('btn_apply')} onPress={askApplyChanges} loading={savingChanges} disabled={savingChanges || !hasChanges} style={styles(theme).footerBtn} formSubmit />
             </View>
           </View>
         }

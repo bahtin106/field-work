@@ -242,6 +242,7 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
               variant="primary"
               size="md"
               title={submitting ? t('btn_sending') : t('btn_send')}
+              formSubmit
               disabled={submitting || !String(message || '').trim()}
               onPress={send}
             />

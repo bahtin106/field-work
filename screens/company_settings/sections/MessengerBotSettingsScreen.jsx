@@ -900,6 +900,7 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
                 title={t('btn_save')}
                 variant="primary"
                 onPress={saveWelcomeMessage}
+                formSubmit
                 loading={welcomeSaving}
               />
             </View>

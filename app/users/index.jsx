@@ -29,7 +29,7 @@ import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useFilters } from '../../components/hooks/useFilters';
 import { UserCard } from '../../components/users/UserCard';
-import { ROLE, ROLE_LABELS } from '../../constants/roles';
+import { ROLE, getRoleLabel } from '../../constants/roles';
 import { formatPersonName } from '../../lib/personName';
 import { resolveAppLocale } from '../../lib/localeFormatting';
 import { pluralizeRu } from '../../lib/pluralize';
@@ -268,7 +268,7 @@ function UsersIndexContent() {
             u?.full_name,
             u?.email,
             u?.role,
-            ROLE_LABELS[u?.role] || '',
+            getRoleLabel(u?.role, t),
             departmentLabel,
             u?.license_state,
             u?.last_seen_at,
@@ -477,7 +477,7 @@ function UsersIndexContent() {
     }
     // Role summary
     if (Array.isArray(filters.values.roles) && filters.values.roles.length) {
-      const roleNames = filters.values.roles.map((r) => ROLE_LABELS[r]).filter(Boolean);
+      const roleNames = filters.values.roles.map((r) => getRoleLabel(r, t)).filter(Boolean);
       if (roleNames.length) {
         fullParts.push(
           summarizeFilterPart({
@@ -722,10 +722,10 @@ function UsersIndexContent() {
         onClose={() => setFiltersVisible(false)}
         departments={useDepartments ? departments : []}
         includeNoDepartment={useDepartments}
-        rolesOptions={Object.keys(ROLE_LABELS).map((r) => ({
+        rolesOptions={Object.values(ROLE).map((r) => ({
           id: r,
           value: r,
-          label: ROLE_LABELS[r] || r,
+          label: getRoleLabel(r, t),
         }))}
         searchItems={users}
         showSearchCategory={false}

@@ -1256,7 +1256,7 @@ export default function CompanySettings() {
               <React.Fragment key={it.key}>
                 {idx > 0 ? <View style={s.sep} /> : null}
                 <SelectField
-                  label={it.label || t(`settings_sections_reference_items_${it.key}`)}
+                  label={t(it.labelKey)}
                   showValue={false}
                   onPress={it.route ? go(it.route) : undefined}
                   disabled={!it.route}
@@ -1379,6 +1379,7 @@ export default function CompanySettings() {
               size="md"
               onPress={saveCompanyNameDraft}
               title={savingCompany ? t('btn_saving') : t('btn_save')}
+              formSubmit
             />
           </View>
         }
@@ -2042,6 +2043,7 @@ export default function CompanySettings() {
               variant="primary"
               size="md"
               title={t('btn_apply')}
+              formSubmit
               disabled={!String(windowBefore).trim() || !String(windowAfter).trim()}
               onPress={() => {
                 const beforeM = toMinutes(windowBefore, beforeUnit);

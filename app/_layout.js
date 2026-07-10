@@ -1,7 +1,7 @@
 ﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Image, InteractionManager, Keyboard, LogBox, Platform, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Image, InteractionManager, LogBox, Platform, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { enableFreeze } from 'react-native-screens';
@@ -73,37 +73,6 @@ function ensureForegroundNotificationHandler() {
 
 function LastSeenTracker() {
   useAppLastSeen(30_000);
-  return null;
-}
-
-function BlurFocusedInputOnKeyboardHide() {
-  useEffect(() => {
-    if (Platform.OS === 'web') return undefined;
-    // Android can emit keyboardDidHide while switching between inputs with
-    // different keyboard modes (for example email -> password). Blurring the
-    // current input there closes the newly opened keyboard immediately.
-    if (Platform.OS === 'android') return undefined;
-
-    const blurFocusedInput = () => {
-      try {
-        const state = TextInput?.State;
-        const focusedInput = state?.currentlyFocusedInput?.();
-        if (focusedInput && typeof focusedInput.blur === 'function') {
-          focusedInput.blur();
-        }
-      } catch {
-        // Nothing to blur.
-      }
-    };
-
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const subscription = Keyboard.addListener(hideEvent, blurFocusedInput);
-
-    return () => {
-      subscription?.remove?.();
-    };
-  }, []);
-
   return null;
 }
 
@@ -1180,7 +1149,6 @@ function RootLayoutInner() {
             {isAuthenticated ? <RouteFreshnessBoundary /> : null}
             {isAuthenticated && !isBlockedScreen && <BottomNav />}
             {isAuthenticated && <LastSeenTracker />}
-            <BlurFocusedInputOnKeyboardHide />
           </SafeAreaView>
       </PermissionsProvider>
     </GestureHandlerRootView>

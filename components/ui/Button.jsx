@@ -11,6 +11,10 @@ import {
 } from 'react-native';
 import { useTheme } from '../../theme';
 import { useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
+import {
+  dismissKeyboardBeforeAction,
+  prepareFormSubmit,
+} from '../../src/shared/forms/prepareFormSubmit';
 
 export default function Button({
   title,
@@ -21,6 +25,7 @@ export default function Button({
   loading,
   style,
   formSubmit = false,
+  dismissKeyboardOnPress = false,
 }) {
   const { theme } = useTheme();
   const formContext = useFormAutoScrollContext();
@@ -132,7 +137,8 @@ export default function Button({
   const s = styles(theme, palette, sizes, isDisabled);
   const handlePress = () => {
     if (isDisabled || pressLockedRef.current) return;
-    if (formSubmit) formContext?.beginValidationAttempt?.();
+    if (formSubmit) prepareFormSubmit(formContext);
+    else if (dismissKeyboardOnPress) dismissKeyboardBeforeAction();
     const result = onPress?.();
     if (result && typeof result.then === 'function') {
       pressLockedRef.current = true;

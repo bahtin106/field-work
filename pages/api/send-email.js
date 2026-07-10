@@ -34,7 +34,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { type, firstName, lastName, resetLink } = req.body;
+    const { type, firstName, lastName, resetLink, locale } = req.body;
     const email = normalizeEmail(req.body?.email);
 
     if (!type || !isValidEmail(email)) {
@@ -44,9 +44,9 @@ export default async function handler(req, res) {
     let result;
 
     if (type === 'invite') {
-      result = await sendInviteEmail(email, firstName, lastName, resetLink);
+      result = await sendInviteEmail(email, firstName, lastName, resetLink, locale);
     } else if (type === 'password-reset') {
-      result = await sendPasswordResetEmail(email, firstName, lastName, resetLink);
+      result = await sendPasswordResetEmail(email, firstName, lastName, resetLink, locale);
     } else {
       return res.status(400).json({ error: 'Invalid email type' });
     }

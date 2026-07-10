@@ -34,7 +34,10 @@ function excludeFeedStatuses(query: any) {
   const feedStatusValues = getStatusDbAliases('feed').filter(Boolean);
   if (!feedStatusValues.length) return query;
   const encoded = feedStatusValues
-    .map((value) => `'${String(value).replace(/'/g, "''")}'`)
+    // PostgREST's `in` filter accepts quoted values with double quotes, not
+    // SQL-style single quotes. This keeps the feed status out of "All" even
+    // for legacy localized status values.
+    .map((value) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
     .join(',');
   return query.or(`status.is.null,status.not.in.(${encoded})`);
 }

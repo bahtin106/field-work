@@ -97,8 +97,7 @@ const getImagePickerMediaTypesImages = () => {
   return ['images'];
 };
 
-import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../../constants/roles';
-let ROLE_LABELS_LOCAL = ROLE_LABELS;
+import { ROLE, EDITABLE_ROLES as ROLES } from '../../../constants/roles';
 
 // --- Local date formatter to avoid UTC shifts ---
 const __ymdLocal = (d) => {
@@ -180,17 +179,6 @@ const __coercePickerDate = (v) => {
   }
 };
 // --- end local-date helpers ---
-
-try {
-  const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
-  if (fromEnv) ROLE_LABELS_LOCAL = { ...ROLE_LABELS_LOCAL, ...JSON.parse(fromEnv) };
-} catch {}
-
-let ROLE_DESCRIPTIONS = globalThis?.APP_I18N?.role_descriptions || {};
-try {
-  const fromEnv = process.env.EXPO_PUBLIC_ROLE_DESCRIPTIONS_JSON;
-  if (fromEnv) ROLE_DESCRIPTIONS = { ...ROLE_DESCRIPTIONS, ...JSON.parse(fromEnv) };
-} catch {}
 
 function withAlpha(color, a) {
   if (typeof color === 'string') {
@@ -573,7 +561,6 @@ function RoleSelectModal({
   visible,
   role,
   roles = [],
-  roleLabels: _roleLabels = {},
   roleDescriptions = {},
   onSelect,
   onClose,
@@ -601,7 +588,7 @@ function RoleSelectModal({
 export default function EditUser() {
   const toast = useToast();
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const _ver = useI18nVersion();
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -610,8 +597,8 @@ export default function EditUser() {
 
   const ROLE_DESCRIPTIONS_LOCAL = React.useMemo(
     () => ({
-      [ROLE.DISPATCHER]: ROLE_DESCRIPTIONS[ROLE.DISPATCHER] ?? t('role_desc_dispatcher'),
-      [ROLE.WORKER]: ROLE_DESCRIPTIONS[ROLE.WORKER] ?? t('role_desc_worker'),
+      [ROLE.DISPATCHER]: t('role_desc_dispatcher'),
+      [ROLE.WORKER]: t('role_desc_worker'),
     }),
     [t],
   );
@@ -1887,7 +1874,6 @@ export default function EditUser() {
     if (saveInFlightRef.current || saving || submitCheckingEmail) return;
     saveInFlightRef.current = true;
     try {
-    Keyboard.dismiss();
     setErr('');
     clearBanner();
     setFieldErrors({});
@@ -2258,6 +2244,7 @@ export default function EditUser() {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           tempPassword,
+          locale,
         }),
       });
 
@@ -2872,7 +2859,7 @@ export default function EditUser() {
         <>
           <TextField
             label={fieldUi.withRequiredLabel('role', t('label_role'))}
-            value={ROLE_LABELS_LOCAL[role] || role}
+            value={t(`role_${role}`)}
             style={styles.field}
             pressable
             onPress={() => setShowRoles(true)}
@@ -3437,7 +3424,6 @@ export default function EditUser() {
               visible={showRoles}
               role={role}
               roles={ROLES}
-              roleLabels={ROLE_LABELS_LOCAL}
               roleDescriptions={ROLE_DESCRIPTIONS_LOCAL}
               onSelect={(r) => {
                 setRole(r);

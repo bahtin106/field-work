@@ -30,7 +30,7 @@ export function useRouteTitle(options = {}, route, pathnameRaw = '') {
     const pathname = pathnameRaw || '';
 
     if (typeof pathname === 'string' && pathname.includes('/edit')) {
-      return globalThis?.S?.('edit_title') ?? T('route_editing');
+      return T('route_editing');
     }
 
     if (pathname.startsWith('/users/')) return '';

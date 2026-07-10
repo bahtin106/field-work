@@ -493,16 +493,6 @@ export default function DepartmentsSettings() {
           {useDepartments ? (
             <>
               <View>
-                <View>
-                  <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>
-                    <View style={s.nameWrap}>
-                      <Text style={s.nameText} numberOfLines={1}>
-                        {t('placeholder_department')}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-                {departments.length ? <View style={s.separator} /> : null}
                 {departments.map((item, index) => {
                   const isBusy = !!busyById[item.id];
                   const isEnabled = item.is_enabled !== false;
@@ -621,6 +611,7 @@ export default function DepartmentsSettings() {
                 title={t('departments_settings_create_button')}
                 variant="primary"
                 onPress={onCreate}
+                formSubmit
                 loading={creating}
                 disabled={!normalizeName(newDepartmentName)}
               />
@@ -667,6 +658,7 @@ export default function DepartmentsSettings() {
                 title={t('btn_save')}
                 variant="primary"
                 onPress={onSaveEditModal}
+                formSubmit
                 disabled={!normalizeName(editModal.value)}
                 loading={!!busyById[editModal.id]}
               />

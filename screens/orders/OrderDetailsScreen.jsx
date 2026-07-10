@@ -5526,6 +5526,7 @@ function OrderDetailsContent() {
           <Button
             title={t('order_modal_edit_save')}
             loading={financeSaving}
+            formSubmit
             onPress={() =>
               saveInlineFinanceField({
                 field: 'start_price',
@@ -5847,6 +5848,7 @@ function OrderDetailsContent() {
               title={t('btn_save')}
               loading={upsertFinanceEntryMutation.isPending}
               onPress={saveFinanceEntry}
+              formSubmit
             />
           </View>
         }

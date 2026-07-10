@@ -35,19 +35,17 @@ function formatCountdown(totalSeconds) {
   return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
-function formatDuration(totalSeconds, locale = 'ru') {
+function formatDuration(totalSeconds, t) {
   const minutes = Math.max(1, Math.ceil(Number(totalSeconds || 0) / 60));
-  if (String(locale || '').toLowerCase().startsWith('en')) {
-    return minutes === 1 ? '1 minute' : `${minutes} minutes`;
-  }
   const mod10 = minutes % 10;
   const mod100 = minutes % 100;
-  const unit = mod10 === 1 && mod100 !== 11
-    ? 'минута'
+  const form = mod10 === 1 && mod100 !== 11
+    ? 'one'
     : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
-      ? 'минуты'
-      : 'минут';
-  return `${minutes} ${unit}`;
+      ? 'few'
+      : 'many';
+  return t(`register_code_duration_${form}`)
+    .replace('{count}', String(minutes));
 }
 const resolveDeviceTimeZone = () => {
   try {
@@ -121,7 +119,7 @@ async function parseInvokeErrorDetails(invokeError) {
 
 export default function RegisterCodeScreen() {
   const { theme } = useTheme();
-  const { t, locale } = useTranslation();
+  const { t } = useTranslation();
   const router = useRouter();
   const { showBanner, clearBanner, showSuccessToast } = useFeedback();
   const params = useLocalSearchParams();
@@ -247,9 +245,9 @@ export default function RegisterCodeScreen() {
   const expiresHint = useMemo(
     () =>
       t('register_code_screen_expire_hint')
-        .replace('{duration}', formatDuration(expiresInSeconds, locale))
+        .replace('{duration}', formatDuration(expiresInSeconds, t))
         .replace('{remaining}', formatCountdown(displayedExpiryTimer)),
-    [displayedExpiryTimer, expiresInSeconds, locale, t],
+    [displayedExpiryTimer, expiresInSeconds, t],
   );
   const code = otp.join('');
   const canSubmit = code.length === 6 && !!email && !submitting && !codeExpired;
@@ -637,6 +635,7 @@ export default function RegisterCodeScreen() {
             variant="primary"
             size="lg"
             onPress={() => handleVerifyAndRegister(code, { manual: true })}
+            formSubmit
             loading={submitting}
             disabled={!canSubmit || resending}
           />

@@ -1,5 +1,10 @@
 // constants/routeTitles.js
-export const ROUTE_TITLES = {}; // опциональный резерв на будущее
+import { t } from '../src/i18n';
 
-export const getRouteTitle = (path) =>
-  globalThis?.APP_I18N?.routes?.[path] ?? ROUTE_TITLES[path] ?? '';
+export function getRouteTitle(path) {
+  const normalizedPath = String(path || '').replace(/^\//, '');
+  if (!normalizedPath) return '';
+  const key = `routes.${normalizedPath}`;
+  const label = t(key);
+  return label === key ? '' : label;
+}

@@ -597,6 +597,7 @@ export default function WorkTypesSettings() {
                 title={t('work_types_settings_create_button')}
                 variant="primary"
                 onPress={onCreate}
+                formSubmit
                 loading={creating}
                 disabled={!normalizeName(newTypeName)}
               />
@@ -643,6 +644,7 @@ export default function WorkTypesSettings() {
                 title={t('btn_save')}
                 variant="primary"
                 onPress={onSaveEditModal}
+                formSubmit
                 disabled={!normalizeName(editModal.value)}
                 loading={!!busyById[editModal.id]}
               />

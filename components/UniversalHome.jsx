@@ -597,15 +597,14 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     placeholderData: (prev) => prev,
   });
   const cloudHealthCode = String(
-    cloudStatusError
-      ? 'error'
-      : cloudIntegrationStatus?.health ||
-          (cloudIntegrationStatus?.connected ? 'unknown' : 'not_connected'),
+    cloudIntegrationStatus?.health ||
+      (cloudIntegrationStatus?.connected ? 'unknown' : 'not_connected'),
   );
   const hasCloudIssue =
     shouldCheckCloudHealth &&
     cloudStatusFetched &&
     !cloudStatusFetching &&
+    !cloudStatusError &&
     cloudHealthCode !== 'ok';
 
   const handleLogout = async () => {

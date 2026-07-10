@@ -142,6 +142,7 @@ export default function MultiSelectModal({
           key: 'confirm',
           title: T('btn_done'),
           variant: 'primary',
+          dismissKeyboardOnPress: true,
           onPress: () => {
             onChange?.(selected);
             onClose?.();

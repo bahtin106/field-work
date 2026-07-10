@@ -7,7 +7,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   BackHandler,
-  Keyboard,
   Linking,
   Pressable,
   ScrollView,
@@ -437,11 +436,7 @@ function EditOrderContent() {
   const floorRef = useRef(null);
   const entranceRef = useRef(null);
   const apartmentRef = useRef(null);
-  const customerNameRef = useRef(null);
   const entranceInfoRef = useRef(null);
-  const parkingNotesRef = useRef(null);
-  const geoLatRef = useRef(null);
-  const geoLngRef = useRef(null);
   const [price, setPrice] = useState('');
   const { data: clients = [] } = useClients(
     { companyId, search: '' },
@@ -2227,40 +2222,6 @@ function EditOrderContent() {
       showToast(T('settings_recalc_in_progress'), 'warning');
       return;
     }
-    try {
-      Keyboard.dismiss();
-      [
-        titleRef,
-        descriptionRef,
-        regionRef,
-        districtRef,
-        cityRef,
-        streetRef,
-        houseRef,
-        postalCodeRef,
-        countryRef,
-        officeRef,
-        floorRef,
-        entranceRef,
-        apartmentRef,
-        customerNameRef,
-        entranceInfoRef,
-        parkingNotesRef,
-        geoLatRef,
-        geoLngRef,
-      ].forEach(
-        (r) => {
-          try {
-            if (r && r.current && typeof r.current.blur === 'function') {
-              r.current.blur();
-            }
-          } catch {
-          }
-        },
-      );
-    } catch {
-    }
-
     // Allow React state from the last input event to flush before validation/save.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -2945,6 +2906,7 @@ function EditOrderContent() {
             <View style={{ flex: 1 }}>
               <Button
                 title={T('btn_save')}
+                formSubmit
                 onPress={() => {
                   applyAddressDraft(addressModalDraft);
                   setAddressMode(ORDER_ADDRESS_MODE.CUSTOM);

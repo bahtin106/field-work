@@ -12,10 +12,14 @@ export const EDITABLE_ROLES = (
   .map((s) => s.trim())
   .filter(Boolean);
 
-import { t as T } from '../src/i18n';
+const ROLE_LABEL_KEYS = Object.freeze({
+  [ROLE.DISPATCHER]: 'role_dispatcher',
+  [ROLE.WORKER]: 'role_worker',
+  [ROLE.ADMIN]: 'role_admin',
+});
 
-export const ROLE_LABELS = {
-  [ROLE.DISPATCHER]: T('role_dispatcher'),
-  [ROLE.WORKER]: T('role_worker'),
-  [ROLE.ADMIN]: T('role_admin'),
-};
+export function getRoleLabel(role, t) {
+  const normalizedRole = String(role || '').trim();
+  const key = ROLE_LABEL_KEYS[normalizedRole];
+  return key ? t(key) : normalizedRole;
+}

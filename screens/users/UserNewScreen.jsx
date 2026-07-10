@@ -5,7 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme / layout / UI
@@ -56,7 +56,7 @@ import { useI18nVersion } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
 // data / constants
-import { ROLE, ROLE_LABELS, EDITABLE_ROLES as ROLES } from '../../constants/roles';
+import { ROLE, EDITABLE_ROLES as ROLES } from '../../constants/roles';
 import {
   AUTH_CONSTRAINTS,
 } from '../../lib/authValidation';
@@ -76,12 +76,6 @@ const __pick = (val, devFallback) => (val != null ? val : __IS_PROD ? null : dev
 
 
 const _FN_INVITE_USER = process.env.EXPO_PUBLIC_FN_INVITE_USER || 'invite-user';
-
-let ROLE_LABELS_LOCAL = ROLE_LABELS;
-try {
-  const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
-  if (fromEnv) ROLE_LABELS_LOCAL = { ...ROLE_LABELS_LOCAL, ...JSON.parse(fromEnv) };
-} catch {}
 
 const IMAGE_MEDIA_TYPES = (() => {
   try {
@@ -744,7 +738,7 @@ export default function NewUserScreen() {
       role: (
         <TextField
           label={fieldUi.withRequiredLabel('role', t('label_role'))}
-          value={String(ROLE_LABELS_LOCAL[role] || role)}
+          value={String(t(`role_${role}`))}
           style={styles.field}
           pressable
           onPress={() => setShowRoles(true)}
@@ -910,7 +904,6 @@ export default function NewUserScreen() {
 
   const handleCreate = useCallback(async () => {
     if (submitting) return;
-    Keyboard.dismiss();
     setSubmittedAttempt(true);
 
     //    ( )
@@ -1056,7 +1049,7 @@ export default function NewUserScreen() {
       if (inviteData?.blocked_by_license || inviteData?.license_state === 'blocked_by_license') {
         showInfoToast(t('invite_created_blocked_by_license'));
       } else {
-        showSuccessToast(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
+        showSuccessToast(t('toast_invite_sent'));
       }
       await Promise.allSettled([
         queryClient.invalidateQueries({ queryKey: ['employees'] }),
@@ -1103,8 +1096,8 @@ export default function NewUserScreen() {
     fieldUi,
   ]);
   const roleItems = useMemo(
-    () => ROLES.map((r) => ({ id: r, label: ROLE_LABELS_LOCAL[r] || r })),
-    [],
+    () => ROLES.map((r) => ({ id: r, label: t(`role_${r}`) })),
+    [t],
   );
 
   const _onCancel = () => {

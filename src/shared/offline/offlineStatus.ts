@@ -6,6 +6,7 @@ import { queryKeys } from '../query/queryKeys';
 
 const OUTBOX_KEY = 'offline.outbox.v1';
 const MAX_ATTEMPTS = 8;
+const OFFLINE_CONFIRMATION_MS = 2500;
 
 export type OfflineOutboxItem = {
   id: string;
@@ -26,6 +27,8 @@ export type OfflineOutboxItem = {
 type Listener = () => void;
 
 let lastNetState: NetInfoState | null = null;
+let pendingOfflineState: NetInfoState | null = null;
+let offlineConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
 let isSyncing = false;
 let cachedOfflineSnapshot: {
   isNetworkKnown: boolean;
@@ -55,6 +58,24 @@ function emit() {
   }
 }
 
+function isOnlineNetState(state: NetInfoState | null) {
+  return Boolean(state?.isConnected) && state?.isInternetReachable !== false;
+}
+
+function applyNetState(state: NetInfoState | null) {
+  lastNetState = state;
+  onlineManager.setOnline(isOnlineNetState(state));
+  emit();
+}
+
+function clearOfflineConfirmation() {
+  if (offlineConfirmationTimer) {
+    clearTimeout(offlineConfirmationTimer);
+    offlineConfirmationTimer = null;
+  }
+  pendingOfflineState = null;
+}
+
 export function subscribeOfflineState(listener: Listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -79,9 +100,29 @@ export function getOfflineSnapshot() {
 }
 
 export function setOfflineNetState(state: NetInfoState | null) {
-  lastNetState = state;
-  onlineManager.setOnline(Boolean(state?.isConnected) && state?.isInternetReachable !== false);
-  emit();
+  if (isOnlineNetState(state)) {
+    clearOfflineConfirmation();
+    applyNetState(state);
+    return;
+  }
+
+  // Mobile OSes can briefly report a disconnected network while switching
+  // Wi-Fi/cellular routes. Keep the last confirmed online state until the
+  // signal has remained offline for a short period.
+  if (!isOnlineNetState(lastNetState)) {
+    clearOfflineConfirmation();
+    applyNetState(state);
+    return;
+  }
+
+  pendingOfflineState = state;
+  if (offlineConfirmationTimer) return;
+  offlineConfirmationTimer = setTimeout(() => {
+    offlineConfirmationTimer = null;
+    const confirmedState = pendingOfflineState;
+    pendingOfflineState = null;
+    applyNetState(confirmedState);
+  }, OFFLINE_CONFIRMATION_MS);
 }
 
 export function useOfflineSnapshot() {

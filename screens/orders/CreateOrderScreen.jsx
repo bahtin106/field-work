@@ -122,6 +122,7 @@ const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: false },
   { field_key: 'phone', label: null, type: 'phone', position: 30 },
 ];
+const WORK_TYPE_NONE_OPTION_ID = '__none__';
 
 const AUTO_FILLED_ORDER_FIELDS = new Set(['title']);
 const OBJECT_SEARCH_DEBOUNCE_MS = 150;
@@ -2387,19 +2388,26 @@ function CreateOrderContent() {
   }, [departureDate, departureEndDate, isDepartureRange, formatDate]);
 
   const workTypeItems = useMemo(() => {
-    if (!workTypes.length) {
-      return [
-        {
-          id: 'empty',
-          label: t('create_order_modal_work_type_empty'),
-          disabled: true,
-        },
-      ];
-    }
-    return workTypes.map((wt) => ({
-      id: wt.id,
-      label: sanitizeVisibleText(wt?.name, t('common_noName')),
-    }));
+    const items = [
+      {
+        id: WORK_TYPE_NONE_OPTION_ID,
+        label: t('create_order_work_type_placeholder'),
+        isSystem: true,
+      },
+      ...workTypes.map((wt) => ({
+        id: wt.id,
+        label: sanitizeVisibleText(wt?.name, t('common_noName')),
+      })),
+    ];
+    if (workTypes.length) return items;
+    return [
+      ...items,
+      {
+        id: 'empty',
+        label: t('create_order_modal_work_type_empty'),
+        disabled: true,
+      },
+    ];
   }, [workTypes, t]);
 
   const assigneeItems = useMemo(() => {
@@ -3001,13 +3009,13 @@ function CreateOrderContent() {
         title={t('create_order_modal_work_type_title')}
         items={workTypeItems}
         searchable={false}
-        selectedId={workTypeId}
+        selectedId={workTypeId ?? WORK_TYPE_NONE_OPTION_ID}
         onSelect={(item) => {
           if (!item?.id || item.disabled) return;
           try {
             Keyboard.dismiss();
           } catch {}
-          setWorkTypeId(String(item.id));
+          setWorkTypeId(item.id === WORK_TYPE_NONE_OPTION_ID ? null : String(item.id));
           setWorkTypeModalVisible(false);
         }}
         onClose={() => setWorkTypeModalVisible(false)}

@@ -188,7 +188,7 @@ export default function AdminCompanyEditScreen() {
           {companyMutation.error ? (
             <Text style={styles(theme).error}>{String(companyMutation.error?.message || t('admin_unknown_error'))}</Text>
           ) : null}
-          <UIButton title={t('admin_save_company')} onPress={() => companyMutation.mutate()} disabled={isSaving || !companyId} />
+          <UIButton title={t('admin_save_company')} onPress={() => companyMutation.mutate()} disabled={isSaving || !companyId} formSubmit />
         </Card>
 
         <Card style={styles(theme).card}>
@@ -209,7 +209,7 @@ export default function AdminCompanyEditScreen() {
           {subscriptionMutation.error ? (
             <Text style={styles(theme).error}>{String(subscriptionMutation.error?.message || t('admin_unknown_error'))}</Text>
           ) : null}
-          <UIButton title={t('admin_save_subscription')} onPress={() => subscriptionMutation.mutate()} disabled={isSaving || !companyId} />
+          <UIButton title={t('admin_save_subscription')} onPress={() => subscriptionMutation.mutate()} disabled={isSaving || !companyId} formSubmit />
         </Card>
 
         <Card style={styles(theme).card}>

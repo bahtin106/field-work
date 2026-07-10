@@ -271,7 +271,7 @@ function excludeFeedStatuses(query) {
   const feedStatusAliases = getStatusDbAliases('feed').filter(Boolean);
   if (!feedStatusAliases.length) return query;
   const encoded = feedStatusAliases
-    .map((value) => `'${String(value).replace(/'/g, "''")}'`)
+    .map((value) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
     .join(',');
   return query.or(`status.is.null,status.not.in.(${encoded})`);
 }

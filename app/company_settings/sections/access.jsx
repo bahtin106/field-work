@@ -458,6 +458,7 @@ export default function AccessSettingsScreen() {
         <Button
           title={t('access_settings_save')}
           onPress={onSave}
+          formSubmit
           loading={saving}
           disabled={loading || !cloudReady || resettingDefaults}
           style={s.footerButton}

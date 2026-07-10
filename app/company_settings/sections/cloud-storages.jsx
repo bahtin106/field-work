@@ -517,6 +517,7 @@ export default function YandexDiskIntegrationScreen() {
               <UIButton
                 title={t('btn_save')}
                 onPress={saveFolder}
+                formSubmit
                 disabled={loading || String(folderDraft || '').trim() === String(folderPath || '').trim()}
                 loading={loading}
               />

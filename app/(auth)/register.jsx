@@ -3,7 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Keyboard,
   Linking,
   Platform,
   Pressable,
@@ -620,7 +619,6 @@ export default function RegisterScreen() {
 
   const handleRegister = useCallback(async () => {
     if (submitting) return;
-    Keyboard.dismiss();
     setSubmittedAttempt(true);
     clearBanner();
     setFieldErrors({});
@@ -1000,6 +998,7 @@ export default function RegisterScreen() {
             variant="primary"
             size="lg"
             onPress={handleRegister}
+            formSubmit
             loading={submitting}
             disabled={submitting || checkingAvailability}
             style={styles.submitButton}

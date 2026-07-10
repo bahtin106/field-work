@@ -19,7 +19,7 @@ import {
 import { getLocale, t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
-import { ROLE_LABELS } from '../../constants/roles';
+import { getRoleLabel } from '../../constants/roles';
 import { NO_DEPARTMENT_FILTER_ID } from '../../src/features/employees/departments';
 import Button from '../ui/Button';
 import TextField from '../ui/TextField';
@@ -1104,7 +1104,7 @@ export default function FiltersPanel({
               }}
               numberOfLines={1}
             >
-              {ROLE_LABELS[emp.role] || emp.role}
+              {getRoleLabel(emp.role, t)}
             </Text>
           ) : null}
         </View>
@@ -2026,6 +2026,7 @@ export default function FiltersPanel({
           <View style={styles.applyBar} pointerEvents="box-none">
             <Button
               title={t('btn_apply')}
+              formSubmit
               onPress={() => {
                 if (isAssignmentMode) {
                   const selection = [...(assignmentDraftSelection || [])];

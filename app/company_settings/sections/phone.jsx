@@ -286,6 +286,7 @@ export default function PhoneVisibilitySettingsScreen() {
         <Button
           title={t('access_settings_save')}
           onPress={save}
+          formSubmit
           loading={saving}
           disabled={saving || isLoading}
           style={styles.saveButton}

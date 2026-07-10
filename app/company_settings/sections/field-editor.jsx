@@ -125,11 +125,10 @@ function buildEntitySaveState() {
   }, {});
 }
 
-function getEntityMeta(entityType, t) {
-  const row = ENTITY_ROWS.find((item) => item.id === entityType);
-  return {
-    title: row ? t(row.titleKey) : String(entityType || ''),
-  };
+function getVisibleEntityRows(isSoloAdmin) {
+  return isSoloAdmin
+    ? ENTITY_ROWS.filter((row) => row.id !== ENTITY_FIELD_TYPES.EMPLOYEE)
+    : ENTITY_ROWS;
 }
 
 function sanitizeEditorLabel(rawLabel) {
@@ -216,14 +215,19 @@ export default function FieldEditorScreen() {
   const { t } = useTranslation();
   const toast = useToast();
   const nav = useNavigation();
-  const { profile } = useAuthContext();
+  const { profile, user } = useAuthContext();
   const s = React.useMemo(() => createStyles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const isAdmin = String(profile?.role || '').toLowerCase() === 'admin';
+  const isSoloAdmin =
+    isAdmin && String(user?.user_metadata?.account_type || '').trim().toLowerCase() === 'solo';
+  const visibleEntityRows = React.useMemo(() => getVisibleEntityRows(isSoloAdmin), [isSoloAdmin]);
 
   const orderQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, { enabled: isAdmin });
   const objectQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, { enabled: isAdmin });
-  const employeeQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, { enabled: isAdmin });
+  const employeeQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
+    enabled: isAdmin && !isSoloAdmin,
+  });
   const clientQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT, { enabled: isAdmin });
   const saveMutation = useSaveEntityFieldSettingsMutation();
 
@@ -274,13 +278,14 @@ export default function FieldEditorScreen() {
   }, [dirtyMap, objectQuery.data]);
 
   React.useEffect(() => {
+    if (isSoloAdmin) return;
     const nextData = employeeQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE);
     setDrafts((prev) =>
       prev[ENTITY_FIELD_TYPES.EMPLOYEE] && dirtyMap[ENTITY_FIELD_TYPES.EMPLOYEE]
         ? prev
         : { ...prev, [ENTITY_FIELD_TYPES.EMPLOYEE]: cloneSettings(nextData) },
     );
-  }, [dirtyMap, employeeQuery.data]);
+  }, [dirtyMap, employeeQuery.data, isSoloAdmin]);
 
   React.useEffect(() => {
     const nextData = clientQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT);
@@ -423,12 +428,7 @@ export default function FieldEditorScreen() {
             errorMessage: null,
           },
         }));
-        toast.success(
-          t('field_settings_saved').replace(
-            '{entity}',
-            getEntityMeta(entityType, t).title,
-          ),
-        );
+        toast.success(t('field_settings_saved_short'));
       } catch (error) {
         const raw = String(error?.message || '').toUpperCase();
         const isConflict = raw.includes('FIELD_SETTINGS_CONFLICT');
@@ -509,7 +509,7 @@ export default function FieldEditorScreen() {
           queuedSaveRef.current[entityType] = false;
           void persistEntityDraft(entityType, { showErrorToast: false });
         } else {
-          const nextQueuedEntity = ENTITY_ROWS.find((row) => queuedSaveRef.current[row.id] === true)?.id;
+          const nextQueuedEntity = visibleEntityRows.find((row) => queuedSaveRef.current[row.id] === true)?.id;
           if (nextQueuedEntity) {
             queuedSaveRef.current[nextQueuedEntity] = false;
             void persistEntityDraft(nextQueuedEntity, { showErrorToast: false });
@@ -517,7 +517,7 @@ export default function FieldEditorScreen() {
         }
       }
     },
-    [saveMutation, t, toast],
+    [saveMutation, t, toast, visibleEntityRows],
   );
 
   const updateDraft = React.useCallback((entityType, updater) => {
@@ -548,21 +548,21 @@ export default function FieldEditorScreen() {
   }, []);
 
   const hasDirtyChanges = React.useMemo(
-    () => ENTITY_ROWS.some((row) => dirtyMap[row.id] === true),
-    [dirtyMap],
+    () => visibleEntityRows.some((row) => dirtyMap[row.id] === true),
+    [dirtyMap, visibleEntityRows],
   );
 
   const isSavingAny = React.useMemo(
-    () => ENTITY_ROWS.some((row) => saveStateMap[row.id]?.phase === 'saving'),
-    [saveStateMap],
+    () => visibleEntityRows.some((row) => saveStateMap[row.id]?.phase === 'saving'),
+    [saveStateMap, visibleEntityRows],
   );
 
   const handleSaveAll = React.useCallback(async () => {
-    for (const row of ENTITY_ROWS) {
+    for (const row of visibleEntityRows) {
       if (dirtyMapRef.current?.[row.id] !== true) continue;
       await persistEntityDraft(row.id, { showErrorToast: true });
     }
-  }, [persistEntityDraft]);
+  }, [persistEntityDraft, visibleEntityRows]);
 
   const handleToggleEnabled = React.useCallback(
     (entityType, fieldKey, nextValue) => {
@@ -902,7 +902,7 @@ export default function FieldEditorScreen() {
           </View>
         </View>
         <Card paddedXOnly style={s.fieldBodyCard}>
-          {ENTITY_ROWS.map((row, index) => {
+          {visibleEntityRows.map((row, index) => {
             const isExpanded = expandedMap[row.id] === true;
             const statusLabel = getEntityStatusLabel(row.id);
             const isError = saveStateMap[row.id]?.phase === 'error';
@@ -961,6 +961,7 @@ export default function FieldEditorScreen() {
       <View style={s.footerBar}>
         <Button
           title={isSavingAny ? t('btn_saving') : t('btn_save')}
+          formSubmit
           onPress={() => {
             void handleSaveAll();
           }}

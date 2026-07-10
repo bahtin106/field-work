@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -166,7 +165,6 @@ export default function SetPasswordScreen() {
 
   const handleSetPassword = useCallback(async () => {
     if (submitting) return;
-    Keyboard.dismiss();
     setSubmittedAttempt(true);
 
     if (!passwordValid || !passwordsMatch) {
@@ -368,6 +366,7 @@ export default function SetPasswordScreen() {
             <Button
               title={t('set_password_submit')}
               onPress={handleSetPassword}
+              formSubmit
               disabled={submitting || !passwordValid || !passwordsMatch}
               loading={submitting}
             />

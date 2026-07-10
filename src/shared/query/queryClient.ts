@@ -336,10 +336,9 @@ export function configureQueryEnvironment() {
   if (listenersConfigured) return;
   listenersConfigured = true;
 
-  onlineManager.setEventListener((setOnline) =>
+  onlineManager.setEventListener((_setOnline) =>
     NetInfo.addEventListener((state) => {
       setOfflineNetState(state);
-      setOnline(Boolean(state.isConnected) && state.isInternetReachable !== false);
     }),
   );
 

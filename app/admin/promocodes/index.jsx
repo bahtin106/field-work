@@ -246,7 +246,7 @@ export default function AdminPromoCodesScreen() {
               <Button title={t('btn_cancel')} variant="secondary" onPress={requestCloseForm} disabled={mutation.isPending} />
             </View>
             <View style={styles(theme).footerButton}>
-              <Button title={t('btn_apply')} onPress={() => mutation.mutate(form)} loading={mutation.isPending} />
+              <Button title={t('btn_apply')} onPress={() => mutation.mutate(form)} loading={mutation.isPending} formSubmit />
             </View>
           </View>
         }

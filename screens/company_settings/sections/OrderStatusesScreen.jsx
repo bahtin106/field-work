@@ -441,7 +441,7 @@ export default function OrderStatusesScreen() {
 function Actions({ t, onCancel, onConfirm, confirmTitle, destructive = false, loading = false, disabled = false }) {
   return <View style={{ flexDirection: 'row', gap: 8 }}>
     <View style={{ flex: 1 }}><Button title={t('btn_cancel')} variant="secondary" onPress={onCancel} /></View>
-    <View style={{ flex: 1 }}><Button title={confirmTitle} variant={destructive ? 'destructive' : 'primary'} onPress={onConfirm} loading={loading} disabled={disabled} /></View>
+    <View style={{ flex: 1 }}><Button title={confirmTitle} variant={destructive ? 'destructive' : 'primary'} onPress={onConfirm} loading={loading} disabled={disabled} formSubmit /></View>
   </View>;
 }
 

@@ -65,6 +65,7 @@ export default function ClientAddressEditorModal({
             key: 'save',
             title: saveLabel || t('btn_save'),
             variant: 'primary',
+            formSubmit: true,
             loading: saving,
             disabled: saving,
             onPress: onSave,

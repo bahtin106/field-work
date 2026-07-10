@@ -1,41 +1,39 @@
 // constants/settings.js
-import { t as T } from '../src/i18n';
-
 export const SETTINGS_SECTIONS = {
   COMPANY: {
-    title: T('company_settings_sections_company_title'),
+    titleKey: 'company_settings_sections_company_title',
     items: [
-      { key: 'timezone', label: T('company_settings_sections_company_items_timezone'), type: 'tz' },
+      { key: 'timezone', labelKey: 'company_settings_sections_company_items_timezone', type: 'tz' },
       {
         key: 'billing',
-        label: T('company_settings_sections_company_items_billing'),
+        labelKey: 'company_settings_sections_company_items_billing',
         route: '/billing',
         showValue: false,
       },
     ],
   },
   MANAGEMENT: {
-    title: T('company_settings_sections_management_title'),
+    titleKey: 'company_settings_sections_management_title',
     items: [
       {
         key: 'notifications',
-        label: T('company_settings_sections_management_items_notifications'),
+        labelKey: 'company_settings_sections_management_items_notifications',
         route: '/company_settings/sections/notifications',
       },
       {
         key: 'access',
-        label: T('company_settings_sections_management_items_access'),
+        labelKey: 'company_settings_sections_management_items_access',
         route: '/company_settings/sections/access',
         companyOnly: true,
       },
       {
         key: 'form_builder',
-        label: T('company_settings_sections_management_items_form_builder'),
+        labelKey: 'company_settings_sections_management_items_form_builder',
         route: '/company_settings/sections/field-editor',
       },
       {
         key: 'finance_rules',
-        label: T('company_settings_sections_management_items_finance_rules'),
+        labelKey: 'company_settings_sections_management_items_finance_rules',
         route: '/company_settings/sections/finance-rules',
         companyOnly: true,
       },
@@ -43,109 +41,109 @@ export const SETTINGS_SECTIONS = {
     ],
   },
   REFERENCE: {
-    title: T('settings_sections_reference_title'),
+    titleKey: 'settings_sections_reference_title',
     items: [
       {
         key: 'employees',
-        label: T('company_settings_sections_company_items_employees'),
+        labelKey: 'settings_sections_reference_items_employees',
         route: '/users',
         showValue: false,
       },
       {
         key: 'clients',
-        label: T('company_settings_sections_company_items_clients'),
+        labelKey: 'settings_sections_reference_items_clients',
         route: '/clients',
         showValue: false,
       },
       {
         key: 'objects',
-        label: T('settings_sections_reference_items_objects'),
+        labelKey: 'settings_sections_reference_items_objects',
         route: '/objects',
         showValue: false,
       },
       {
         key: 'work_types',
-        label: T('company_settings_sections_management_items_work_types'),
+        labelKey: 'settings_sections_reference_items_work_types',
         route: '/company_settings/sections/WorkTypesSettings',
       },
       {
         key: 'order_statuses',
-        label: T('settings_reference_order_statuses'),
+        labelKey: 'settings_sections_reference_items_order_statuses',
         route: '/company_settings/sections/order-statuses',
       },
       {
         key: 'departments',
-        label: T('company_settings_sections_management_items_departments'),
+        labelKey: 'settings_sections_reference_items_departments',
         route: '/company_settings/sections/DepartmentsSettings',
       },
       {
         key: 'tags',
-        label: T('settings_sections_reference_items_tags'),
+        labelKey: 'settings_sections_reference_items_tags',
         route: '/company_settings/sections/tags',
       },
     ],
   },
   INTEGRATIONS: {
-    title: T('company_settings_sections_integrations_title'),
+    titleKey: 'company_settings_sections_integrations_title',
     items: [
       {
         key: 'crm_systems',
-        label: T('company_settings_sections_integrations_items_crm_systems'),
+        labelKey: 'company_settings_sections_integrations_items_crm_systems',
       },
       {
         key: 'telegram_bot',
-        label: T('settings_integrations_telegram_bot'),
+        labelKey: 'settings_integrations_telegram_bot',
         route: '/company_settings/sections/telegram-bot',
       },
       {
         key: 'max_bot',
-        label: T('settings_integrations_max_bot'),
+        labelKey: 'settings_integrations_max_bot',
         route: '/company_settings/sections/max-bot',
       },
       {
         key: 'yandex_disk',
-        label: T('company_settings_sections_integrations_items_yandex_disk'),
+        labelKey: 'company_settings_sections_integrations_items_yandex_disk',
         route: '/company_settings/sections/yandex-disk',
       },
     ],
   },
   DEPARTURE: {
-    title: T('company_settings_sections_departure_title'),
+    titleKey: 'company_settings_sections_departure_title',
   },
   PHONE: {
-    title: T('company_settings_sections_phone_title'),
+    titleKey: 'company_settings_sections_phone_title',
   },
 };
 
-export const UI_TEXT = {
-  settingsTitle: T('company_settings_title'),
+export const UI_TEXT_KEYS = {
+  settingsTitle: 'company_settings_title',
   toggles: {
-    useDepartureTime: T('company_settings_sections_departure_toggles_useDepartureTime'),
+    useDepartureTime: 'company_settings_sections_departure_toggles_useDepartureTime',
   },
   phone: {
-    mode: T('company_settings_sections_phone_items_phoneMode'),
-    windowBefore: T('company_settings_sections_phone_items_windowBefore'),
-    windowAfter: T('company_settings_sections_phone_items_windowAfter'),
+    mode: 'company_settings_sections_phone_items_phoneMode',
+    windowBefore: 'company_settings_sections_phone_items_windowBefore',
+    windowAfter: 'company_settings_sections_phone_items_windowAfter',
   },
   helperText: {
-    departureOn: T('company_settings_sections_departure_helperText_departureOn'),
-    departureOff: T('company_settings_sections_departure_helperText_departureOff'),
+    departureOn: 'company_settings_sections_departure_helperText_departureOn',
+    departureOff: 'company_settings_sections_departure_helperText_departureOff',
   },
   modals: {
     timezone: {
-      title: T('company_settings_modals_timezone_title'),
-      subtitleDevice: T('company_settings_modals_timezone_subtitleDevice'),
+      title: 'company_settings_modals_timezone_title',
+      subtitleDevice: 'company_settings_modals_timezone_subtitleDevice',
       searchable: true, // конфиг
     },
     phoneMode: {
-      title: T('company_settings_modals_phoneMode_title'),
+      title: 'company_settings_modals_phoneMode_title',
       searchable: false, // конфиг
     },
   },
 };
 
 export const PHONE_MODE_OPTIONS = [
-  { id: 'always', label: T('company_settings_modals_phoneMode_options_always') },
-  { id: 'never', label: T('company_settings_modals_phoneMode_options_never') },
-  { id: 'window', label: T('company_settings_modals_phoneMode_options_window') },
+  { id: 'always', labelKey: 'company_settings_modals_phoneMode_options_always' },
+  { id: 'never', labelKey: 'company_settings_modals_phoneMode_options_never' },
+  { id: 'window', labelKey: 'company_settings_modals_phoneMode_options_window' },
 ];

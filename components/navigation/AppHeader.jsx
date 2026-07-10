@@ -8,6 +8,7 @@ import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
+import { prepareFormSubmit } from '../../src/shared/forms/prepareFormSubmit';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
 
@@ -249,7 +250,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   const rightPress = useCallback(() => {
     if (rightDisabled) return undefined;
     if (options?.formSubmit === true || routeParams.formSubmit === true) {
-      formContext?.beginValidationAttempt?.();
+      prepareFormSubmit(formContext);
     }
     if (typeof options?.onRightPress === 'function') return options.onRightPress();
     if (typeof routeParams.onRightPress === 'function') return routeParams.onRightPress();

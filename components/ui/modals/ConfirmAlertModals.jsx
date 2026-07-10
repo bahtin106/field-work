@@ -40,6 +40,7 @@ export function ConfirmModal({
           key: 'confirm',
           title: confirmLabel,
           variant: confirmVariant,
+          dismissKeyboardOnPress: true,
           loading,
           onPress: () => {
             try {
