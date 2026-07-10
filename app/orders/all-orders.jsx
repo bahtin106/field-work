@@ -19,12 +19,13 @@ import {
 } from 'react-native';
 
 import DynamicOrderCard from '../../components/DynamicOrderCard';
-import FiltersPanel from '../../components/filters/FiltersPanel';
+import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
 import StatusSelectModal from '../../components/filters/StatusSelectModal';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
+import EmptyListState from '../../components/ui/EmptyListState';
 import {
   ThemedRefreshControl,
   useManagedRefresh,
@@ -154,6 +155,7 @@ const ALL_ORDERS_STATUS_MORE_MIN_WIDTH = 70;
 const ALL_ORDERS_STATUS_MORE_MAX_WIDTH = 84;
 const ALL_ORDERS_STATUS_USAGE_STORAGE_PREFIX = 'orders.all.statusUsage.v1';
 const ALL_ORDERS_STATUS_USAGE_MAX_ENTRIES = 32;
+const MULTIPLE_STATUS_FILTER = '__multiple__';
 const LEGACY_STATUS_FILTER_MAP = Object.freeze({
   completed: 'done',
   in_progress: 'progress',
@@ -240,6 +242,19 @@ function normalizeStatusFilterParam(value) {
 function normalizeAllOrdersStatusFilter(value) {
   const key = normalizeStatusFilterParam(value);
   return key === 'in_progress' ? 'progress' : key;
+}
+
+function resolveAllOrdersStatusSelection(values = [], fallback = 'all') {
+  const statuses = Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map(normalizeAllOrdersStatusFilter)
+        .filter((status) => status && status !== 'all'),
+    ),
+  );
+  if (statuses.length > 1) return MULTIPLE_STATUS_FILTER;
+  if (statuses.length === 1) return statuses[0];
+  return normalizeAllOrdersStatusFilter(fallback);
 }
 
 function estimateAllOrdersStatusChipWidth(
@@ -559,7 +574,7 @@ function AllOrdersContent() {
   }, [isSoloAdmin, relationClientId, relationLabel, relationObjectIds, router, search]);
 
   const [statusFilter, setStatusFilter] = useState(
-    normalizeStatusFilterParam(filter),
+    resolveAllOrdersStatusSelection(readRouteListParam(statuses), readRouteParam(filter)),
   );
   const statusTabs = useMemo(
     () => {
@@ -575,7 +590,10 @@ function AllOrdersContent() {
     [isSoloAdmin, statusSystem.feedEnabled, statusSystem.isEnabled, statusSystem.regularStatuses],
   );
   const effectiveStatusFilter = useMemo(
-    () => (statusTabs.includes(statusFilter) ? statusFilter : 'all'),
+    () =>
+      statusFilter === MULTIPLE_STATUS_FILTER || statusTabs.includes(statusFilter)
+        ? statusFilter
+        : 'all',
     [statusFilter, statusTabs],
   );
   const [orders, setOrders] = useState([]);
@@ -616,10 +634,11 @@ function AllOrdersContent() {
   const viewabilityPrefetchRef = useRef({ key: '', ts: 0 });
 
   useEffect(() => {
+    if (statusSystem.isLoading) return;
     if (statusFilter === effectiveStatusFilter) return;
     setStatusFilter(effectiveStatusFilter);
     router.setParams({ filter: effectiveStatusFilter });
-  }, [effectiveStatusFilter, router, statusFilter]);
+  }, [effectiveStatusFilter, router, statusFilter, statusSystem.isLoading]);
 
   const executorFilters = useMemo(() => {
     if (Array.isArray(orderFilters.executorIds) && orderFilters.executorIds.length) {
@@ -726,14 +745,20 @@ function AllOrdersContent() {
   );
   const allRequestsParams = useMemo(() => {
     const next = { sortKey: normalizedSortKey };
-    if (statusSystem.isEnabled && effectiveStatusFilter && effectiveStatusFilter !== 'all') {
+    if (
+      statusSystem.isEnabled &&
+      effectiveStatusFilter &&
+      effectiveStatusFilter !== 'all' &&
+      effectiveStatusFilter !== MULTIPLE_STATUS_FILTER
+    ) {
       next.status = effectiveStatusFilter;
     }
     const statusFilters = statusSystem.isEnabled && Array.isArray(orderFilters.statuses)
       ? orderFilters.statuses.map(normalizeAllOrdersStatusFilter).filter((key) => key && key !== 'all')
       : [];
     if (statusFilters.length) next.statuses = statusFilters;
-    next.excludeFeedWhenAll = isFeedFeatureEnabled;
+    // The feed is a separate tab and must never leak into the aggregate list.
+    next.excludeFeedWhenAll = true;
     if (executorFilters.length) next.executorIds = executorFilters;
     if (departmentFilter != null) next.departmentId = departmentFilter;
     if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
@@ -761,7 +786,6 @@ function AllOrdersContent() {
     departmentFilter,
     executorFilters,
     effectiveStatusFilter,
-    isFeedFeatureEnabled,
     normalizedSortKey,
     orderFilters.clientIds,
     orderFilters.createdDateFrom,
@@ -1131,6 +1155,13 @@ function AllOrdersContent() {
         : [],
     [getStatusLabel, hasStatusNavigation, statusTabs],
   );
+  const panelStatusOptions = useMemo(
+    () =>
+      statusFilterOptions
+        .filter((option) => option.id !== 'all')
+        .map((option) => ({ ...option, exclusive: option.id === 'feed' })),
+    [statusFilterOptions],
+  );
   const statusChipLabels = useMemo(() => {
     const labels = {};
     statusFilterOptions.forEach((option) => {
@@ -1140,18 +1171,21 @@ function AllOrdersContent() {
   }, [statusFilterOptions, t]);
   useEffect(() => {
     if (statusSystem.isLoading) return;
-    const allowed = new Set(
-      statusSystem.isEnabled
-        ? orderStatusOptions.map((option) => normalizeAllOrdersStatusFilter(option?.id)).filter(Boolean)
-        : [],
-    );
+    if (effectiveStatusFilter === MULTIPLE_STATUS_FILTER) return;
+    const expectedStatuses =
+      statusSystem.isEnabled && effectiveStatusFilter !== 'all' ? [effectiveStatusFilter] : [];
     setOrderFilters((previous) => {
       const current = Array.isArray(previous.statuses) ? previous.statuses : [];
-      const next = current.filter((status) => allowed.has(normalizeAllOrdersStatusFilter(status)));
-      if (next.length === current.length) return previous;
-      return { ...previous, statuses: next };
+      const normalizedCurrent = current.map(normalizeAllOrdersStatusFilter).slice(0, 1);
+      if (
+        normalizedCurrent.length === expectedStatuses.length &&
+        normalizedCurrent[0] === expectedStatuses[0]
+      ) {
+        return previous;
+      }
+      return { ...previous, statuses: expectedStatuses };
     });
-  }, [orderStatusOptions, statusSystem.isEnabled, statusSystem.isLoading]);
+  }, [effectiveStatusFilter, statusSystem.isEnabled, statusSystem.isLoading]);
   const statusUsageStorageKey = useMemo(() => {
     const userId = String(user?.id || profile?.id || 'anonymous').trim() || 'anonymous';
     const companyScope = String(companyId || 'global').trim() || 'global';
@@ -1203,7 +1237,12 @@ function AllOrdersContent() {
       const key = normalizeAllOrdersStatusFilter(value);
       if (!statusTabs.includes(key)) return;
       setStatusFilter(key);
-      router.setParams({ filter: key });
+      const statuses = key === 'all' ? [] : [key];
+      setOrderFilters((previous) => ({ ...previous, statuses }));
+      router.setParams({
+        filter: key,
+        statuses: statuses.length ? statuses.join(',') : undefined,
+      });
       recordStatusFilterUsage(key);
     },
     [recordStatusFilterUsage, router, statusTabs],
@@ -1864,7 +1903,8 @@ function AllOrdersContent() {
           }
           onResetFilters={() => {
             setOrderFilters(createOrderFilterDefaults());
-            router.setParams(buildClearedRouteFilterParams());
+            setStatusFilter('all');
+            router.setParams({ ...buildClearedRouteFilterParams(), filter: 'all' });
           }}
           metaText={`${t('common_shown')} ${sortedFilteredOrders.length} ${t('common_of')} ${orders.length}`}
         />
@@ -1914,10 +1954,6 @@ function AllOrdersContent() {
     ],
   );
 
-  const hasSearchQuery = Boolean(deferredSearchQuery.trim());
-  const hasActiveFilters = Boolean(filterSummaryData.full || hasLinkedRelationFilter);
-  const hasActiveTabFilter = effectiveStatusFilter !== 'all';
-
   const retryLoad = useCallback(() => {
     refreshAll().catch(() => {});
   }, [refreshAll]);
@@ -1947,27 +1983,8 @@ function AllOrdersContent() {
       );
     }
 
-    const title = hasSearchQuery
-      ? t('orders_empty_search_title')
-      : hasActiveFilters || hasActiveTabFilter
-        ? t('orders_empty_filtered_title')
-        : t('orders_empty_title');
-    const subtitle = hasSearchQuery
-      ? t('orders_empty_search_subtitle')
-      : hasActiveFilters || hasActiveTabFilter
-        ? t('orders_empty_filtered_subtitle')
-        : t('orders_empty');
-
-    return (
-      <View style={styles.emptyWrap}>
-        <Text style={styles.emptyTitle}>{title}</Text>
-        <Text style={styles.emptyText}>{subtitle}</Text>
-      </View>
-    );
+    return <EmptyListState />;
   }, [
-    hasActiveFilters,
-    hasActiveTabFilter,
-    hasSearchQuery,
     listLoading,
     requestsError,
     retryLoad,
@@ -2069,37 +2086,37 @@ function AllOrdersContent() {
         />
       </View>
 
-      <FiltersPanel
+      <OrdersFiltersPanel
         visible={filtersVisible}
         onClose={() => setFiltersVisible(false)}
-        mode="orders"
-        showSearchCategory={false}
-        inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
-        ordersFilters={{
-          statuses: statusSystem.isEnabled ? orderStatusOptions : [],
-          workTypes: useWorkTypes ? workTypes : [],
-          clients: clientOptions,
-          executors: executorOptions,
-          executorSelectionMode: 'multiple',
-          showDate: true,
-          showTime: true,
-          showCreatedDate: true,
-          showCreatedTime: true,
-          showAmount: true,
-        }}
+        statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
+        workTypeOptions={useWorkTypes ? workTypes : []}
+        clientOptions={clientOptions}
+        executorOptions={executorOptions}
+        showExecutors
         values={orderFilters}
         setValue={setOrderFilterValue}
         defaults={ORDER_FILTER_DEFAULTS}
         onReset={() => {
           setOrderFilters(createOrderFilterDefaults());
-          router.setParams(buildClearedRouteFilterParams());
+          setStatusFilter('all');
+          router.setParams({ ...buildClearedRouteFilterParams(), filter: 'all' });
         }}
         onApply={(nextValues) => {
+          const nextStatuses = Array.from(
+            new Set(
+              (statusSystem.isEnabled && Array.isArray(nextValues?.statuses)
+                ? nextValues.statuses
+                : []
+              )
+                .map(normalizeAllOrdersStatusFilter)
+                .filter((status) => statusTabs.includes(status) && status !== 'all'),
+            ),
+          );
+          const nextStatus = resolveAllOrdersStatusSelection(nextStatuses, 'all');
           const normalizedNextValues = {
             ...nextValues,
-            statuses: statusSystem.isEnabled && Array.isArray(nextValues?.statuses)
-              ? nextValues.statuses.map(normalizeAllOrdersStatusFilter).filter(Boolean)
-              : [],
+            statuses: nextStatuses,
             workTypes: useWorkTypes ? nextValues?.workTypes : [],
             executorIds: Array.isArray(nextValues?.executorIds)
               ? nextValues.executorIds.map(String).filter(Boolean)
@@ -2108,8 +2125,13 @@ function AllOrdersContent() {
                 : [],
           };
           normalizedNextValues.executorId = normalizedNextValues.executorIds[0] || null;
+          setStatusFilter(nextStatus);
+          recordStatusFilterUsage(nextStatus);
           setOrderFilters(normalizedNextValues);
-          router.setParams(buildRouteFilterParams(normalizedNextValues));
+          router.setParams({
+            ...buildRouteFilterParams(normalizedNextValues),
+            filter: nextStatus === MULTIPLE_STATUS_FILTER ? 'all' : nextStatus,
+          });
         }}
       />
       {hasStatusNavigation ? (

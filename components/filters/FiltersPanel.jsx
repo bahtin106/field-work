@@ -1346,6 +1346,9 @@ export default function FiltersPanel({
       case 'orders_statuses': {
         const statusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
         const allSelected = !Array.isArray(draft.statuses) || draft.statuses.length === 0;
+        const exclusiveStatusIds = statusOptions
+          .filter((item) => item?.exclusive === true)
+          .map((item, itemIndex) => String(item?.id ?? item?.value ?? itemIndex));
         return (
           <>
             <Pressable
@@ -1374,7 +1377,24 @@ export default function FiltersPanel({
               return (
                 <Pressable
                   key={`orders_status_${id}`}
-                  onPress={() => toggleOrdersMulti('statuses', id)}
+                  onPress={() => {
+                    if (statusItem?.exclusive === true) {
+                      setDraft((d) => ({ ...d, statuses: [id] }));
+                      return;
+                    }
+                    setDraft((d) => {
+                      const current = Array.isArray(d.statuses) ? d.statuses : [];
+                      const withoutExclusive = current.filter(
+                        (statusId) => !exclusiveStatusIds.includes(String(statusId)),
+                      );
+                      return {
+                        ...d,
+                        statuses: withoutExclusive.includes(id)
+                          ? withoutExclusive.filter((statusId) => statusId !== id)
+                          : [...withoutExclusive, id],
+                      };
+                    });
+                  }}
                   style={({ pressed }) => [
                     optionRow,
                     pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },

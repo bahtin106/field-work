@@ -25,6 +25,7 @@ import { useAuth } from '../../components/hooks/useAuth';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
+import EmptyListState from '../../components/ui/EmptyListState';
 import {
   ThemedRefreshControl,
   useManagedRefresh,
@@ -130,6 +131,7 @@ const MY_ORDERS_STATUS_MORE_MIN_WIDTH = 70;
 const MY_ORDERS_STATUS_MORE_MAX_WIDTH = 84;
 const MY_ORDERS_STATUS_USAGE_STORAGE_PREFIX = 'orders.my.statusUsage.v1';
 const MY_ORDERS_STATUS_USAGE_MAX_ENTRIES = 32;
+const MULTIPLE_STATUS_FILTER = '__multiple__';
 const ORDER_FILTER_DEFAULTS = Object.freeze({
   workTypes: [],
   statuses: [],
@@ -159,6 +161,19 @@ function normalizeMyOrdersStatusFilter(value) {
   if (!key) return 'all';
   if (key === 'in_progress') return 'progress';
   return key;
+}
+
+function resolveMyOrdersStatusSelection(values = [], fallback = 'all') {
+  const statuses = Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map(normalizeMyOrdersStatusFilter)
+        .filter((status) => status && status !== 'all'),
+    ),
+  );
+  if (statuses.length > 1) return MULTIPLE_STATUS_FILTER;
+  if (statuses.length === 1) return statuses[0];
+  return normalizeMyOrdersStatusFilter(fallback);
 }
 
 function estimateStatusChipWidth(label, { hasLeadingDot = false, maxWidth = MY_ORDERS_STATUS_CHIP_MAX_WIDTH } = {}) {
@@ -217,7 +232,7 @@ function rankStatusFilterOptions(options = [], usage = {}) {
     .map(({ option }) => option);
 }
 
-const FiltersPanel = lazy(() => import('../../components/filters/FiltersPanel'));
+const OrdersFiltersPanel = lazy(() => import('../../components/filters/OrdersFiltersPanel'));
 const SortSelectModal = lazy(() => import('../../components/filters/SortSelectModal'));
 
 function buildScopedStorageKey(prefix, scopeKey) {
@@ -511,6 +526,13 @@ function MyOrdersContent() {
       ...orderStatusOptions.map((option) => addOption(option?.id, option?.label)),
     ].filter(Boolean);
   }, [isSoloAdmin, orderStatusOptions, statusFilterLabels, statusSystem.feedEnabled, statusSystem.isEnabled]);
+  const panelStatusOptions = useMemo(
+    () =>
+      statusFilterOptions
+        .filter((option) => option.id !== 'all')
+        .map((option) => ({ ...option, exclusive: option.id === 'feed' })),
+    [statusFilterOptions],
+  );
   const statusChipLabels = useMemo(
     () => ({
       ...statusFilterLabels,
@@ -668,7 +690,7 @@ function MyOrdersContent() {
       const labels = statuses
         .map((code) => {
           const normalized = normalizeMyOrdersStatusFilter(code);
-          return orderStatusOptions.find((opt) => opt.id === normalized)?.label || code;
+          return statusFilterLabels[normalized] || code;
         })
         .filter(Boolean);
       if (labels.length) {
@@ -761,7 +783,7 @@ function MyOrdersContent() {
       full: joinFilterSummary(fullParts, t('common_bullet')),
       compact: joinFilterSummary(compactParts, t('common_bullet')),
     };
-  }, [clientOptions, filters.values, orderStatusOptions, statusSystem.isEnabled, workTypeOptions, t]);
+  }, [clientOptions, filters.values, statusFilterLabels, statusSystem.isEnabled, workTypeOptions, t]);
 
   const cacheScopeKey = useMemo(() => {
     const scopedUserId = String(auth.user?.id || auth.profile?.id || '').trim();
@@ -878,10 +900,15 @@ function MyOrdersContent() {
     }
     return [];
   });
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(() =>
+    resolveMyOrdersStatusSelection(filters.values?.statuses, 'all'),
+  );
   const rawStatusFilter = normalizeMyOrdersStatusFilter(filter);
   const activeStatusFilter =
-    hasStatusNavigation && statusUsageAllowedIds.includes(rawStatusFilter) ? rawStatusFilter : 'all';
+    hasStatusNavigation &&
+    (rawStatusFilter === MULTIPLE_STATUS_FILTER || statusUsageAllowedIds.includes(rawStatusFilter))
+      ? rawStatusFilter
+      : 'all';
   const isFeedFeatureEnabled = statusSystem.isEnabled && statusSystem.feedEnabled && !isSoloAdmin;
   const effectiveFilter = activeStatusFilter;
   const recordStatusFilterUsage = useCallback(
@@ -1156,19 +1183,31 @@ function MyOrdersContent() {
   const selectStatusFilter = useCallback(
     (nextFilter, options = {}) => {
       const normalized = normalizeMyOrdersStatusFilter(nextFilter);
-      const nextStatus = statusUsageAllowedIds.includes(normalized) ? normalized : 'all';
+      const nextStatus =
+        normalized === MULTIPLE_STATUS_FILTER || statusUsageAllowedIds.includes(normalized)
+          ? normalized
+          : 'all';
       if (nextStatus !== activeStatusFilter) {
         forceNetworkRefreshRef.current = true;
         setRefreshNonce((value) => value + 1);
       }
       setFilter(nextStatus);
+      if (options?.syncFilter !== false) {
+        setFilterValue('statuses', nextStatus === 'all' ? [] : [nextStatus]);
+      }
       primeOrdersFromCache(nextStatus);
       setStatusSelectVisible(false);
       if (options?.recordUsage !== false) {
         recordStatusFilterUsage(nextStatus);
       }
     },
-    [activeStatusFilter, primeOrdersFromCache, recordStatusFilterUsage, statusUsageAllowedIds],
+    [
+      activeStatusFilter,
+      primeOrdersFromCache,
+      recordStatusFilterUsage,
+      setFilterValue,
+      statusUsageAllowedIds,
+    ],
   );
   useEffect(() => {
     if (firstContentMarkedRef.current) return;
@@ -1176,6 +1215,20 @@ function MyOrdersContent() {
     firstContentMarkedRef.current = true;
     markFirstContent(MY_ORDERS_SCREEN_KEY);
   }, [loading]);
+  useEffect(() => {
+    if (statusSystem.isLoading) return;
+    if (activeStatusFilter === MULTIPLE_STATUS_FILTER) return;
+    const expectedStatuses = activeStatusFilter === 'all' ? [] : [activeStatusFilter];
+    const currentStatuses = Array.isArray(selectedStatusFilters)
+      ? selectedStatusFilters.map(normalizeMyOrdersStatusFilter).slice(0, 1)
+      : [];
+    if (
+      currentStatuses.length !== expectedStatuses.length ||
+      currentStatuses[0] !== expectedStatuses[0]
+    ) {
+      setFilterValue('statuses', expectedStatuses);
+    }
+  }, [activeStatusFilter, selectedStatusFilters, setFilterValue, statusSystem.isLoading]);
   useEffect(() => {
     if (!isFocused || !Array.isArray(orders) || orders.length === 0) return undefined;
     let cancelled = false;
@@ -1292,23 +1345,11 @@ function MyOrdersContent() {
     relationFingerprint,
   ]);
   useEffect(() => {
-    const currentStatuses = Array.isArray(selectedStatusFilters) ? selectedStatusFilters : [];
-    const allowedKeys = new Set(
-      statusSystem.isEnabled
-        ? orderStatusOptions.map((option) => normalizeOrderStatusFilterKey(option?.id)).filter(Boolean)
-        : [],
-    );
-    const allowedStatuses = currentStatuses.filter((statusKey) =>
-      allowedKeys.has(normalizeOrderStatusFilterKey(statusKey)));
-    if (allowedStatuses.length !== currentStatuses.length) {
-      setFilterValue('statuses', allowedStatuses);
-    }
-  }, [orderStatusOptions, selectedStatusFilters, setFilterValue, statusSystem.isEnabled]);
-  useEffect(() => {
+    if (statusSystem.isLoading) return;
     if (rawStatusFilter !== activeStatusFilter) {
       setFilter(activeStatusFilter);
     }
-  }, [activeStatusFilter, rawStatusFilter]);
+  }, [activeStatusFilter, rawStatusFilter, statusSystem.isLoading]);
 
   // Full dataset loading (batch streaming)
   // Feed indicator state (cached preview of feed), scoped with the same account cache key.
@@ -2320,6 +2361,7 @@ function MyOrdersContent() {
           onResetFilters={async () => {
             const resetValues = filters.reset();
             await filters.apply(resetValues);
+            selectStatusFilter('all');
           }}
           metaText={`${t('common_shown')} ${sortedFilteredOrders.length} ${t('common_of')} ${Math.max(totalOrdersCount, orders.length)}`}
         />
@@ -2354,10 +2396,6 @@ function MyOrdersContent() {
     ],
   );
 
-  const hasSearchQuery = Boolean(deferredSearchQuery.trim());
-  const hasActiveFilters = Boolean(filterSummaryData.full || hasLinkedRelationFilter);
-  const hasActiveTabFilter = activeStatusFilter !== 'all';
-
   // Empty state
   const ListEmptyComponent = useCallback(
     () => {
@@ -2385,28 +2423,9 @@ function MyOrdersContent() {
         );
       }
 
-      const title = hasSearchQuery
-        ? t('orders_empty_search_title')
-        : hasActiveFilters || hasActiveTabFilter
-          ? t('orders_empty_filtered_title')
-          : t('orders_empty_title');
-      const subtitle = hasSearchQuery
-        ? t('orders_empty_search_subtitle')
-        : hasActiveFilters || hasActiveTabFilter
-          ? t('orders_empty_filtered_subtitle')
-          : t('orders_empty');
-
-      return (
-        <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>{title}</Text>
-          <Text style={styles.emptyText}>{subtitle}</Text>
-        </View>
-      );
+      return <EmptyListState />;
     },
     [
-      hasActiveFilters,
-      hasActiveTabFilter,
-      hasSearchQuery,
       loadError,
       loading,
       retryLoad,
@@ -2514,29 +2533,36 @@ function MyOrdersContent() {
       </View>
       {filters.visible ? (
         <Suspense fallback={null}>
-          <FiltersPanel
+          <OrdersFiltersPanel
             visible={filters.visible}
             onClose={filters.close}
-            mode="orders"
-            showSearchCategory={false}
-            inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_clients'] }}
-            ordersFilters={{
-              statuses: statusSystem.isEnabled ? orderStatusOptions : [],
-              workTypes: useWorkTypesFlag ? workTypeOptions : [],
-              clients: clientOptions,
-              executors: [],
-              facetCounts: ordersFacetCounts,
-              showDate: true,
-              showTime: true,
-              showCreatedDate: true,
-              showCreatedTime: true,
-              showAmount: true,
-            }}
+            statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
+            workTypeOptions={useWorkTypesFlag ? workTypeOptions : []}
+            clientOptions={clientOptions}
+            facetCounts={ordersFacetCounts}
             values={filterPanelValues}
             setValue={filters.setValue}
             defaults={ORDER_FILTER_DEFAULTS}
-            onReset={() => filters.reset()}
-            onApply={(nextValues) => filters.apply(nextValues)}
+            onReset={() => {
+              filters.reset();
+              selectStatusFilter('all');
+            }}
+            onApply={async (nextValues) => {
+              const nextStatuses = Array.from(
+                new Set(
+                  (Array.isArray(nextValues?.statuses) ? nextValues.statuses : [])
+                    .map(normalizeMyOrdersStatusFilter)
+                    .filter((status) => statusUsageAllowedIds.includes(status) && status !== 'all'),
+                ),
+              );
+              const nextStatus = resolveMyOrdersStatusSelection(nextStatuses, 'all');
+              const normalizedNextValues = {
+                ...nextValues,
+                statuses: nextStatuses,
+              };
+              await filters.apply(normalizedNextValues);
+              selectStatusFilter(nextStatus, { syncFilter: false });
+            }}
           />
         </Suspense>
       ) : null}

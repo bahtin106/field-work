@@ -13,6 +13,7 @@ import {
   createClientObject,
   deleteClientObject,
   getClientObjectById,
+  hasEnoughObjectSearchInput,
   listClientObjects,
   listClientObjectsByCompany,
   searchCompanyObjectsForOrder,
@@ -146,10 +147,7 @@ export function useSearchCompanyObjectsForOrder(params: any = {}, options: any =
     clientId?: string | null;
   };
 
-  const hasEnoughInput =
-    String(street || '').trim().length >= 3 ||
-    String(query || '').trim().length >= 8 ||
-    (String(street || '').trim().length >= 2 && String(house || '').trim().length >= 1);
+  const hasEnoughInput = hasEnoughObjectSearchInput({ query, street, house });
 
   return useQuery({
     queryKey: queryKeys.objects.searchForOrder(params),
@@ -165,6 +163,10 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
 
   useEffect(() => {
     if (!enabled || !companyId) return;
+
+    const refreshObjectLists = () => {
+      void queryClient.invalidateQueries({ queryKey: ['objects'] });
+    };
 
     const channel = supabase
       .channel(`client-objects:realtime:${companyId}`)
@@ -187,6 +189,7 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
               queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
               queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
             }
+            queryClient.invalidateQueries({ queryKey: ['objects'] });
             queryClient.invalidateQueries({ queryKey: ['clients'] });
             queryClient.invalidateQueries({ queryKey: ['requests'] });
           } catch (e) {
@@ -222,7 +225,9 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
           void invalidateManyNow(queryClient, [['objects'], ['clients'], ['tags']]);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') refreshObjectLists();
+      });
 
     return () => {
       try {

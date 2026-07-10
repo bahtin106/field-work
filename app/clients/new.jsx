@@ -6,7 +6,6 @@ import { Image as ExpoImage } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import AdditionalPhoneInputRow from '../../components/clients/AdditionalPhoneInputRow';
-import ClientObjectEditorModal from '../../components/objects/ClientObjectEditorModal';
 import EditScreenTemplate from '../../components/layout/EditScreenTemplate';
 import Card from '../../components/ui/Card';
 import PhoneInput from '../../components/ui/PhoneInput';
@@ -24,7 +23,6 @@ import {
   extractConflictingClientId,
   findClientByPrimaryPhone,
 } from '../../src/features/clients/api';
-import { useCreateClientObjectMutation } from '../../src/features/objects/queries';
 import { useSetClientTagsMutation } from '../../src/features/tags/queries';
 import { resolveTagErrorMessage } from '../../src/features/tags/errors';
 import { uploadClientAvatar } from '../../src/features/clients/avatar';
@@ -56,15 +54,6 @@ import {
   getRequiredTextFieldError,
   normalizeOptionalEmail,
 } from '../../src/shared/validation/fields';
-import {
-  buildClientObjectAddressSummary,
-  createEmptyClientObjectDraft,
-  hasClientObjectAddressContent,
-  hasClientObjectMapPoint,
-  normalizeClientObjectLocationMode,
-  normalizeCoordinateValue,
-  sanitizeClientObjectPayload,
-} from '../../src/features/objects/addressing';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
@@ -152,7 +141,6 @@ export default function NewClientScreen() {
   const canCreateClients = has('canCreateClients');
 
   const createMutation = useCreateClientMutation();
-  const createObjectMutation = useCreateClientObjectMutation();
   const updateMutation = useUpdateClientMutation();
   const setClientTagsMutation = useSetClientTagsMutation();
   const { settings } = useCompanySettings();
@@ -169,9 +157,7 @@ export default function NewClientScreen() {
   const [additionalPhones, setAdditionalPhones] = React.useState(createEmptyAdditionalClientPhones());
   const [visibleAdditionalPhoneSlots, setVisibleAdditionalPhoneSlots] = React.useState([]);
   const [avatarUrl, setAvatarUrl] = React.useState('');
-  const [primaryObjectDraft, setPrimaryObjectDraft] = React.useState(createEmptyClientObjectDraft());
   const [tags, setTags] = React.useState([]);
-  const [objectModalVisible, setObjectModalVisible] = React.useState(false);
   const [avatarSheetVisible, setAvatarSheetVisible] = React.useState(false);
   const [cropVisible, setCropVisible] = React.useState(false);
   const [cropSrc, setCropSrc] = React.useState(null);
@@ -644,20 +630,6 @@ export default function NewClientScreen() {
         }
       }
 
-      const objectLocationMode = normalizeClientObjectLocationMode(primaryObjectDraft?.location_mode, {
-        fallback: hasClientObjectMapPoint(primaryObjectDraft) ? 'map' : 'address',
-      });
-      if (hasClientObjectAddressContent(primaryObjectDraft) || hasClientObjectMapPoint(primaryObjectDraft)) {
-        await createObjectMutation.mutateAsync({
-          client_id: created.id,
-          is_primary: true,
-          ...sanitizeClientObjectPayload(primaryObjectDraft),
-          geo_lat: normalizeCoordinateValue(primaryObjectDraft?.geo_lat) || null,
-          geo_lng: normalizeCoordinateValue(primaryObjectDraft?.geo_lng) || null,
-          location_mode: objectLocationMode,
-        });
-      }
-
       if (settings?.enable_client_tags && tags.length > 0) {
         await setClientTagsMutation.mutateAsync({
           clientId: String(created.id),
@@ -697,7 +669,6 @@ export default function NewClientScreen() {
   }, [
     canCreateClients,
     createMutation,
-    createObjectMutation,
     setClientTagsMutation,
     updateMutation,
     cleanFirstName,
@@ -705,7 +676,6 @@ export default function NewClientScreen() {
     cleanMiddleName,
     email,
     comment,
-    primaryObjectDraft,
     settings?.enable_client_tags,
     tags,
     avatarUrl,
@@ -854,19 +824,6 @@ export default function NewClientScreen() {
         </Card>
         ) : null}
 
-        <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
-        <Card paddedXOnly>
-          <Pressable onPress={() => setObjectModalVisible(true)} style={styles.addressCard}>
-            <Text style={styles.addressTitle}>{t('objects_primary')}</Text>
-            <Text style={styles.addressSummary}>
-              {normalizeClientObjectLocationMode(primaryObjectDraft?.location_mode, {
-                fallback: hasClientObjectMapPoint(primaryObjectDraft) ? 'map' : 'address',
-              }) === 'map' && hasClientObjectMapPoint(primaryObjectDraft)
-                ? `${normalizeCoordinateValue(primaryObjectDraft?.geo_lat)}, ${normalizeCoordinateValue(primaryObjectDraft?.geo_lng)}`
-                : (buildClientObjectAddressSummary(primaryObjectDraft) || t('objects_empty'))}
-            </Text>
-          </Pressable>
-        </Card>
       </EditScreenTemplate>
 
       {canManageAvatar ? (
@@ -911,16 +868,6 @@ export default function NewClientScreen() {
         </BaseModal>
       ) : null}
 
-      <ClientObjectEditorModal
-        visible={objectModalVisible}
-        title={t('objects_primary')}
-        draft={primaryObjectDraft}
-        onChange={(field, value) => {
-          setPrimaryObjectDraft((prev) => ({ ...prev, [field]: value }));
-        }}
-        onSave={() => setObjectModalVisible(false)}
-        onClose={() => setObjectModalVisible(false)}
-      />
     </>
   );
 }
@@ -1004,19 +951,6 @@ function createStyles(theme) {
       color: theme.colors.primary,
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.semibold,
-    },
-    addressCard: {
-      paddingVertical: theme.spacing.sm,
-    },
-    addressTitle: {
-      color: theme.colors.text,
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.semibold,
-      marginBottom: theme.spacing.xs,
-    },
-    addressSummary: {
-      color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.sm,
     },
     avatarPreviewWrap: {
       alignItems: 'center',

@@ -181,6 +181,29 @@ export type OrderObjectSearchResult = {
   comment: string;
 };
 
+function mapOrderObjectSearchResult(row: any): OrderObjectSearchResult {
+  return {
+    objectId: String(row?.object_id || ''),
+    clientId: String(row?.client_id || ''),
+    objectName: String(row?.object_name || '').trim(),
+    clientName: String(row?.client_name || '').trim(),
+    shortAddress: String(row?.short_address || '').trim(),
+    score: Number(row?.score || 0),
+    isSameClient: !!row?.is_same_client,
+    country: String(row?.country || '').trim(),
+    region: String(row?.region || '').trim(),
+    district: String(row?.district || '').trim(),
+    city: String(row?.city || '').trim(),
+    street: String(row?.street || '').trim(),
+    house: String(row?.house || '').trim(),
+    postal_code: String(row?.postal_code || '').trim(),
+    floor: String(row?.floor || '').trim(),
+    entrance: String(row?.entrance || '').trim(),
+    apartment: String(row?.apartment || row?.office || '').trim(),
+    comment: String(row?.comment || row?.entrance_info || '').trim(),
+  };
+}
+
 export async function listClientObjects(clientId: string) {
   return measureNetwork('objects.listByClient', async () => {
     if (!clientId) return [];
@@ -265,6 +288,25 @@ export async function getClientObjectById(objectId: string) {
   return p;
 }
 
+export function hasEnoughObjectSearchInput({
+  query = '',
+  street = '',
+  house = '',
+}: {
+  query?: string;
+  street?: string;
+  house?: string;
+} = {}) {
+  const normalizedQuery = String(query || '').trim();
+  const normalizedStreet = String(street || '').trim();
+  const normalizedHouse = String(house || '').trim();
+  return (
+    normalizedStreet.length >= 3 ||
+    normalizedQuery.length >= 8 ||
+    (normalizedStreet.length >= 2 && normalizedHouse.length >= 1)
+  );
+}
+
 export async function searchCompanyObjectsForOrder({
   query = '',
   street = '',
@@ -287,12 +329,7 @@ export async function searchCompanyObjectsForOrder({
     const safeCity = String(city || '').trim().slice(0, 120);
     const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Number(limit), 1), 10) : 6;
 
-    const hasEnoughInput =
-      safeStreet.length >= 3 ||
-      safeQuery.length >= 8 ||
-      (safeStreet.length >= 2 && safeHouse.length >= 1);
-
-    if (!hasEnoughInput) return [];
+    if (!hasEnoughObjectSearchInput({ query: safeQuery, street: safeStreet, house: safeHouse })) return [];
 
     const { data, error } = await supabase.rpc('search_company_objects_for_order', {
       p_query: safeQuery,
@@ -305,26 +342,38 @@ export async function searchCompanyObjectsForOrder({
 
     if (error) throw error;
 
-    return (Array.isArray(data) ? data : []).map((row: any) => ({
-      objectId: String(row?.object_id || ''),
-      clientId: String(row?.client_id || ''),
-      objectName: String(row?.object_name || '').trim(),
-      clientName: String(row?.client_name || '').trim(),
-      shortAddress: String(row?.short_address || '').trim(),
-      score: Number(row?.score || 0),
-      isSameClient: !!row?.is_same_client,
-      country: String(row?.country || '').trim(),
-      region: String(row?.region || '').trim(),
-      district: String(row?.district || '').trim(),
-      city: String(row?.city || '').trim(),
-      street: String(row?.street || '').trim(),
-      house: String(row?.house || '').trim(),
-      postal_code: String(row?.postal_code || '').trim(),
-      floor: String(row?.floor || '').trim(),
-      entrance: String(row?.entrance || '').trim(),
-      apartment: String(row?.apartment || row?.office || '').trim(),
-      comment: String(row?.comment || '').trim(),
-    }));
+    return (Array.isArray(data) ? data : []).map(mapOrderObjectSearchResult);
+  });
+}
+
+export async function findExactCompanyObjectForOrder({
+  street = '',
+  house = '',
+  city = '',
+  apartment = '',
+  entrance = '',
+}: {
+  street?: string;
+  house?: string;
+  city?: string;
+  apartment?: string;
+  entrance?: string;
+}): Promise<OrderObjectSearchResult[]> {
+  const safeStreet = String(street || '').trim().slice(0, 120);
+  const safeHouse = String(house || '').trim().slice(0, 32);
+  if (!safeStreet || !safeHouse) return [];
+
+  return measureNetwork('objects.findExactForOrder', async () => {
+    const { data, error } = await supabase.rpc('find_exact_company_object_for_order', {
+      p_street: safeStreet,
+      p_house: safeHouse,
+      p_city: String(city || '').trim().slice(0, 120),
+      p_apartment: String(apartment || '').trim().slice(0, 32),
+      p_entrance: String(entrance || '').trim().slice(0, 32),
+      p_limit: 1,
+    });
+    if (error) throw error;
+    return (Array.isArray(data) ? data : []).map(mapOrderObjectSearchResult);
   });
 }
 

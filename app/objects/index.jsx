@@ -11,6 +11,7 @@ import FiltersPanel from '../../components/filters/FiltersPanel';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
 import { useFilters } from '../../components/hooks/useFilters';
 import ObjectCard from '../../components/objects/ObjectCard';
+import EmptyListState from '../../components/ui/EmptyListState';
 import {
   ThemedRefreshControl,
   useManagedRefresh,
@@ -449,6 +450,7 @@ export default function ObjectsIndex() {
             onViewableItemsChanged={prefetchVisibleObjects}
             viewabilityConfig={viewabilityConfig}
             refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            ListEmptyComponent={<EmptyListState />}
           />
         </View>
       </DismissKeyboardArea>

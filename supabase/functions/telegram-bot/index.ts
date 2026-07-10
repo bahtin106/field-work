@@ -2237,7 +2237,7 @@ async function handleConfirmationCallback(
       admin,
       conversation,
       callback.chatId,
-      'Заполнение остановлено. Чтобы начать снова, откройте ссылку из приложения.',
+      'Заполнение остановлено. Чтобы начать снова, откройте ссылку еще раз.',
       { removeKeyboard: true },
     );
     await answerTelegramCallback(callback.callbackId);
@@ -2526,7 +2526,7 @@ async function handleWebhook(admin: AdminClient, req: Request) {
       admin,
       conversation,
       message.chatId,
-      'Заполнение остановлено. Чтобы начать снова, откройте ссылку из приложения.',
+      'Заполнение остановлено. Чтобы начать снова, откройте ссылку еще раз.',
       { removeKeyboard: true },
     );
     await safeDeleteTelegramMessage(message.chatId, message.messageId);

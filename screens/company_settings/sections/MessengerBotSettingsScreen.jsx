@@ -2,7 +2,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from 'expo-router';
 import React from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View, Pressable } from 'react-native';
 
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
@@ -13,6 +13,7 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { ConfirmModal, SelectModal } from '../../../components/ui/modals';
+import BaseModal from '../../../components/ui/modals/BaseModal';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { messengerBotIntegration } from '../../../lib/messengerBotIntegration';
@@ -41,6 +42,7 @@ const ADDRESS_FIELD_KEYS = new Set([
   'parking_notes',
 ]);
 const FIELD_SWITCH_COLUMN_WIDTH = 72;
+const WELCOME_MESSAGE_MAX_LENGTH = 500;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,6 +89,10 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
   const [clientFieldsExpanded, setClientFieldsExpanded] = React.useState(false);
   const [addressFieldsExpanded, setAddressFieldsExpanded] = React.useState(false);
   const [startLinkBusy, setStartLinkBusy] = React.useState(false);
+  const [welcomeModalVisible, setWelcomeModalVisible] = React.useState(false);
+  const [welcomeDraft, setWelcomeDraft] = React.useState('');
+  const [welcomeError, setWelcomeError] = React.useState('');
+  const [welcomeSaving, setWelcomeSaving] = React.useState(false);
   const dataRef = React.useRef(null);
   const confirmedDataRef = React.useRef(null);
   const lastSavedPayloadRef = React.useRef('');
@@ -185,6 +191,10 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
   const assignees = React.useMemo(() => data?.assignees || [], [data?.assignees]);
   const config = React.useMemo(() => data?.config || {}, [data?.config]);
   const fields = React.useMemo(() => data?.fields || [], [data?.fields]);
+  const welcomeMessage = React.useMemo(
+    () => String(config.welcome_message || data?.default_welcome_message || '').trim(),
+    [config.welcome_message, data?.default_welcome_message],
+  );
   const formatAssigneeLabel = React.useCallback(
     (item) => {
       if (!item) return t('common_select');
@@ -432,6 +442,45 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
     toast.success(t('toast_copied'));
   }, [data?.start_link, t, toast]);
 
+  const openWelcomeModal = React.useCallback(() => {
+    setWelcomeDraft(welcomeMessage);
+    setWelcomeError('');
+    setWelcomeModalVisible(true);
+  }, [welcomeMessage]);
+
+  const closeWelcomeModal = React.useCallback(() => {
+    if (welcomeSaving) return;
+    setWelcomeError('');
+    setWelcomeModalVisible(false);
+  }, [welcomeSaving]);
+
+  const saveWelcomeMessage = React.useCallback(async () => {
+    const nextWelcomeMessage = String(welcomeDraft || '').trim();
+    const nextSnapshot = {
+      ...(data || {}),
+      config: {
+        ...(data?.config || {}),
+        welcome_message: nextWelcomeMessage,
+      },
+    };
+    const attemptVersion = localVersionRef.current + 1;
+    setWelcomeError('');
+    setWelcomeSaving(true);
+    setLocalData(nextSnapshot);
+    try {
+      await saveSnapshot(nextSnapshot, {
+        showErrorToast: false,
+        revertOnError: true,
+        attemptVersion,
+      });
+      setWelcomeModalVisible(false);
+    } catch (error) {
+      setWelcomeError(String(error?.message || t('toast_error')));
+    } finally {
+      setWelcomeSaving(false);
+    }
+  }, [data, saveSnapshot, setLocalData, t, welcomeDraft]);
+
   const handleFieldToggle = React.useCallback((field, value) => {
     if (LOCKED_FIELD_KEYS.has(String(field?.field_key || ''))) {
       toast.info(tr('locked_field_toast'));
@@ -643,6 +692,22 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
                 ) : null}
               </View>
               </View>
+              <View style={base.sep} />
+              <Pressable
+                style={s.welcomeRow}
+                onPress={openWelcomeModal}
+                accessibilityRole="button"
+                accessibilityLabel={t('messenger_bot_welcome_edit')}
+              >
+                <View style={s.welcomeTextWrap}>
+                  <Text style={base.label}>{t('messenger_bot_welcome_label')}</Text>
+                </View>
+                <Feather
+                  name="chevron-right"
+                  size={Number(theme?.icons?.sm ?? 18)}
+                  color={theme.colors.textSecondary}
+                />
+              </Pressable>
             </>
           ) : null}
         </Card>
@@ -820,6 +885,41 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
         onConfirm={regenerateLink}
         onClose={() => setRegenerateConfirmVisible(false)}
       />
+      <BaseModal
+        visible={welcomeModalVisible}
+        onClose={closeWelcomeModal}
+        title={t('messenger_bot_welcome_title')}
+        feedback={welcomeError ? { message: welcomeError, type: 'warning' } : null}
+        footer={
+          <View style={s.modalFooter}>
+            <View style={s.modalButtonWrap}>
+              <Button title={t('btn_cancel')} variant="secondary" onPress={closeWelcomeModal} />
+            </View>
+            <View style={s.modalButtonWrap}>
+              <Button
+                title={t('btn_save')}
+                variant="primary"
+                onPress={saveWelcomeMessage}
+                loading={welcomeSaving}
+              />
+            </View>
+          </View>
+        }
+      >
+        <TextInput
+          value={welcomeDraft}
+          onChangeText={setWelcomeDraft}
+          placeholder={t('messenger_bot_welcome_placeholder')}
+          placeholderTextColor={theme.colors.inputPlaceholder}
+          multiline
+          maxLength={WELCOME_MESSAGE_MAX_LENGTH}
+          editable={!welcomeSaving}
+          textAlignVertical="top"
+          style={s.welcomeInput}
+        />
+        <Text style={s.welcomeHint}>{t('messenger_bot_welcome_hint')}</Text>
+        <Text style={s.welcomeCounter}>{`${welcomeDraft.length}/${WELCOME_MESSAGE_MAX_LENGTH}`}</Text>
+      </BaseModal>
     </Screen>
   );
 }
@@ -959,6 +1059,46 @@ const styles = (theme) =>
     },
     linkValueText: {
       textAlign: 'left',
+    },
+    welcomeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      minHeight: theme.components?.listItem?.height ?? 48,
+      paddingHorizontal: rowPaddingX,
+    },
+    welcomeTextWrap: {
+      flex: 1,
+      paddingRight: theme.spacing.sm,
+    },
+    welcomeInput: {
+      minHeight: 132,
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.md,
+      lineHeight: Math.round((theme.typography.sizes.md || 16) * 1.4),
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.md,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+    },
+    welcomeHint: {
+      marginTop: theme.spacing.sm,
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      lineHeight: 20,
+    },
+    welcomeCounter: {
+      marginTop: theme.spacing.xs,
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.xs,
+      textAlign: 'right',
+    },
+    modalFooter: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+    },
+    modalButtonWrap: {
+      flex: 1,
     },
     link: {
       color: theme.colors.primary,

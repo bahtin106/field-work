@@ -8,7 +8,6 @@ import {
   InteractionManager,
   Platform,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +24,7 @@ import { useToast } from '../../components/ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
+import EmptyListState from '../../components/ui/EmptyListState';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useFilters } from '../../components/hooks/useFilters';
@@ -642,14 +642,6 @@ function UsersIndexContent() {
     );
   }
 
-  const EmptyState = () => (
-    <View style={styles.emptyWrap}>
-      <Text style={styles.emptyText}>
-        {users.length === 0 ? t('empty_noData') : t('empty_noResults')}
-      </Text>
-    </View>
-  );
-
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
       <DismissKeyboardArea style={{ flex: 1 }}>
@@ -708,7 +700,7 @@ function UsersIndexContent() {
               onViewableItemsChanged={onViewableItemsChanged}
               viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
               refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-              ListEmptyComponent={<EmptyState />}
+              ListEmptyComponent={<EmptyListState />}
             />
           </View>
         </View>

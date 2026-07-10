@@ -17,6 +17,7 @@ import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
 import Card from '../../components/ui/Card';
+import EmptyListState from '../../components/ui/EmptyListState';
 import {
   ThemedRefreshControl,
   useManagedRefresh,
@@ -246,11 +247,7 @@ export default function ClientsIndexScreen() {
                 </Pressable>
               );
             }}
-            ListEmptyComponent={
-              <View style={styles.emptyWrap}>
-                <Text style={styles.mutedText}>{t('empty_noData')}</Text>
-              </View>
-            }
+            ListEmptyComponent={<EmptyListState />}
           />
         </View>
       </DismissKeyboardArea>

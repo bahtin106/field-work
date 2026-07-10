@@ -4,6 +4,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import AdditionalPhoneInputRow from '../clients/AdditionalPhoneInputRow';
+import Button from '../ui/Button';
+import ClearButton from '../ui/ClearButton';
 import SectionHeader from '../ui/SectionHeader';
 import TextField from '../ui/TextField';
 import { BaseModal } from '../ui/modals';
@@ -108,9 +110,7 @@ export default function ClientObjectEditorModal({
   fieldErrors = {},
   saveLabel = null,
   searchSuggestions = [],
-  searchSuggestionsLoading = false,
   searchSuggestionsVisible = false,
-  searchSuggestionsEmpty = false,
   onSelectSuggestion = null,
   enableAdditionalPhones = false,
 }) {
@@ -229,6 +229,7 @@ export default function ClientObjectEditorModal({
   const canAddAdditionalPhone =
     hiddenEnabledAdditionalPhoneSlots.length > 0 &&
     visibleAdditionalPhoneSlots.length < OBJECT_ADDITIONAL_PHONE_SLOT_COUNT;
+  const hasEnabledAdditionalPhoneFields = enabledAdditionalPhoneSlots.length > 0;
 
   const withRequiredLabel = React.useCallback(
     (fieldKey, label) => getRequiredFieldLabel(label, fieldsByKey.get(fieldKey)?.isRequired === true),
@@ -236,20 +237,25 @@ export default function ClientObjectEditorModal({
   );
 
   const footer = (
-    <View style={styles.footer}>
-      <ModalActionsRow
-        actions={[
-          {
-            key: 'save',
-            title: saveLabel || t('btn_save'),
-            variant: 'primary',
-            loading: saving,
-            disabled: saving,
-            onPress: onSave,
-          },
-        ]}
-      />
-    </View>
+    <ModalActionsRow
+      actions={[
+        {
+          key: 'cancel',
+          title: t('btn_cancel'),
+          variant: 'secondary',
+          disabled: saving,
+          onPress: onClose,
+        },
+        {
+          key: 'save',
+          title: saveLabel || t('btn_save'),
+          variant: 'primary',
+          loading: saving,
+          disabled: saving,
+          onPress: onSave,
+        },
+      ]}
+    />
   );
 
   const setNextLocationMode = React.useCallback((nextMode) => {
@@ -337,28 +343,25 @@ export default function ClientObjectEditorModal({
                 {hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty')}
               </Text>
               {hasMapPoint ? (
-                <Pressable
+                <ClearButton
                   onPress={clearMapPoint}
                   style={styles.mapPointClearBtn}
-                  hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                  accessibilityRole="button"
                   accessibilityLabel={t('objects_location_clear')}
-                >
-                  <Feather name="x-circle" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />
-                </Pressable>
+                />
               ) : null}
             </View>
             <View style={styles.mapActionsRow}>
-              <Pressable onPress={openMapForPoint} style={styles.mapActionBtn}>
-                <Text style={styles.mapActionBtnText}>{t('objects_location_open_map')}</Text>
-              </Pressable>
-              <Pressable
-                onPress={pasteCoordinatesFromClipboard}
-                style={[styles.mapActionBtn, !clipboardHasCoordinates ? styles.mapActionBtnInactive : null]}
-                disabled={!clipboardHasCoordinates}
-              >
-                <Text style={styles.mapActionBtnText}>{t('objects_location_paste')}</Text>
-              </Pressable>
+              <View style={styles.mapActionSlot}>
+                <Button title={t('objects_location_open_map')} variant="secondary" onPress={openMapForPoint} />
+              </View>
+              <View style={styles.mapActionSlot}>
+                <Button
+                  title={t('objects_location_paste')}
+                  variant="secondary"
+                  onPress={pasteCoordinatesFromClipboard}
+                  disabled={!clipboardHasCoordinates}
+                />
+              </View>
             </View>
           </View>
         ) : null}
@@ -390,41 +393,29 @@ export default function ClientObjectEditorModal({
                 'order_object_search_hint',
               )}
             </Text>
-            {searchSuggestionsLoading ? (
-              <Text style={styles.suggestionStateText}>
-                {t('order_object_search_loading')}
-              </Text>
-            ) : null}
-            {!searchSuggestionsLoading && searchSuggestionsEmpty ? (
-              <Text style={styles.suggestionStateText}>
-                {t('order_object_search_empty')}
-              </Text>
-            ) : null}
-            {!searchSuggestionsLoading
-              ? searchSuggestions.map((item) => (
-                  <Pressable
-                    key={`${item.objectId}-${item.clientId}`}
-                    style={({ pressed }) => [
-                      styles.suggestionCard,
-                      pressed ? styles.suggestionCardPressed : null,
-                    ]}
-                    onPress={() => onSelectSuggestion?.(item)}
-                  >
-                    <Text style={styles.suggestionTitle} numberOfLines={1}>
-                      {item.objectName || t('objects_new')}
-                    </Text>
-                    <Text style={styles.suggestionSubtitle} numberOfLines={1}>
-                      {item.shortAddress || t('order_details_address_not_specified')}
-                    </Text>
-                    <Text style={styles.suggestionMeta} numberOfLines={1}>
-                      {item.clientName || t('routes_clients_client')}
-                    </Text>
-                  </Pressable>
-                ))
-              : null}
+            {searchSuggestions.map((item) => (
+              <Pressable
+                key={`${item.objectId}-${item.clientId}`}
+                style={({ pressed }) => [
+                  styles.suggestionCard,
+                  pressed ? styles.suggestionCardPressed : null,
+                ]}
+                onPress={() => onSelectSuggestion?.(item)}
+              >
+                <Text style={styles.suggestionTitle} numberOfLines={1}>
+                  {item.objectName || t('objects_new')}
+                </Text>
+                <Text style={styles.suggestionSubtitle} numberOfLines={1}>
+                  {item.shortAddress || t('order_details_address_not_specified')}
+                </Text>
+                <Text style={styles.suggestionMeta} numberOfLines={1}>
+                  {item.clientName || t('routes_clients_client')}
+                </Text>
+              </Pressable>
+            ))}
           </>
         ) : null}
-        {enableAdditionalPhones ? (
+        {enableAdditionalPhones && hasEnabledAdditionalPhoneFields ? (
           <>
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
               {t('clients_contacts_section')}
@@ -575,45 +566,17 @@ function createStyles(theme) {
       flex: 1,
     },
     mapPointClearBtn: {
-      minWidth: 24,
-      minHeight: 24,
-      alignItems: 'center',
-      justifyContent: 'center',
+      flexShrink: 0,
     },
     mapActionsRow: {
       flexDirection: 'row',
       gap: theme.spacing.sm,
     },
-    mapActionBtn: {
+    mapActionSlot: {
       flex: 1,
-      minHeight: 36,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      borderRadius: theme.radii.md,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.surface,
-      paddingHorizontal: theme.spacing.sm,
-    },
-    mapActionBtnInactive: {
-      opacity: 0.5,
-    },
-    mapActionBtnText: {
-      color: theme.colors.text,
-      fontSize: theme.typography.sizes.sm,
-      fontWeight: theme.typography.weight.medium,
-    },
-    footer: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingBottom: theme.spacing.md,
-      paddingTop: theme.spacing.sm,
+      minWidth: 0,
     },
     suggestionHint: {
-      color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.sm,
-      marginBottom: theme.spacing.sm,
-    },
-    suggestionStateText: {
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
       marginBottom: theme.spacing.sm,

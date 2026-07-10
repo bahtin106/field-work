@@ -18,6 +18,7 @@ import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import BaseModal from '../../../components/ui/modals/BaseModal';
+import { AlertModal } from '../../../components/ui/modals';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
 import {
@@ -112,6 +113,7 @@ export default function WorkTypesSettings() {
 
   const [disableGlobalConfirmOpen, setDisableGlobalConfirmOpen] = React.useState(false);
   const [deleteModal, setDeleteModal] = React.useState({ open: false, id: null, name: '' });
+  const [toggleError, setToggleError] = React.useState({ visible: false, message: '' });
 
   const getErrorMessage = React.useCallback(
     (error, fallbackKey) => {
@@ -372,13 +374,12 @@ export default function WorkTypesSettings() {
           setTypes((prev) =>
             prev.map((existing) => (String(existing.id) === String(item.id) ? updated : existing)),
           );
-          toast.success(
-            nextEnabled
-              ? t('work_types_settings_toast_type_enabled')
-              : t('work_types_settings_toast_type_disabled_preserve_existing'),
-          );
+          toast.success(t('toast_success'));
         } catch (error) {
-          toast.error(getErrorMessage(error, 'work_types_settings_toast_save_failed'));
+          setToggleError({
+            visible: true,
+            message: getErrorMessage(error, 'work_types_settings_toast_save_failed'),
+          });
         }
       });
     },
@@ -460,13 +461,11 @@ export default function WorkTypesSettings() {
           </View>
           <View style={s.separator} />
 
-          <View style={s.captionWrap}>
-            <Text style={s.headerSubtitle}>
-              {useWorkTypes
-                ? t('work_types_settings_master_hint_enabled')
-                : t('work_types_settings_master_hint_disabled')}
-            </Text>
-          </View>
+          {!useWorkTypes ? (
+            <View style={s.captionWrap}>
+              <Text style={s.headerSubtitle}>{t('work_types_settings_master_hint_disabled')}</Text>
+            </View>
+          ) : null}
 
           {useWorkTypes ? (
             <>
@@ -722,6 +721,13 @@ export default function WorkTypesSettings() {
           {`${t('work_types_settings_delete_confirm_message_prefix')} "${deleteModal.name}"?`}
         </Text>
       </BaseModal>
+
+      <AlertModal
+        visible={toggleError.visible}
+        title={t('toast_error')}
+        message={toggleError.message}
+        onClose={() => setToggleError({ visible: false, message: '' })}
+      />
     </Screen>
   );
 }

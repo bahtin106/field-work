@@ -21,6 +21,7 @@ import {
 
 import EditScreenTemplate, { useEditFormStyles } from '../../components/layout/EditScreenTemplate';
 import ClientObjectEditorModal from '../../components/objects/ClientObjectEditorModal';
+import EmptyListState from '../../components/ui/EmptyListState';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import ClearButton from '../../components/ui/ClearButton';
@@ -69,6 +70,11 @@ import {
   useSearchCompanyObjectsForOrder,
   useUpdateClientObjectMutation,
 } from '../../src/features/objects/queries';
+import {
+  findExactCompanyObjectForOrder,
+  hasEnoughObjectSearchInput,
+  searchCompanyObjectsForOrder,
+} from '../../src/features/objects/api';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { parseClientPrefillFromSearch } from '../../src/features/clients/prefillFromSearch';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
@@ -118,6 +124,7 @@ const DEFAULT_FIELDS = [
 ];
 
 const AUTO_FILLED_ORDER_FIELDS = new Set(['title']);
+const OBJECT_SEARCH_DEBOUNCE_MS = 150;
 
 const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
   'fio',
@@ -316,6 +323,7 @@ function CreateOrderContent() {
   });
   const [suggestedMatchingObject, setSuggestedMatchingObject] = useState(null);
   const [suggestedMatchingVisible, setSuggestedMatchingVisible] = useState(false);
+  const [suggestedMatchingSource, setSuggestedMatchingSource] = useState(null);
   const [ignoredMatchSignature, setIgnoredMatchSignature] = useState('');
   const [urgent, setUrgent] = useState(false);
   const [users, setUsers] = useState([]);
@@ -369,7 +377,6 @@ function CreateOrderContent() {
   const { data: clientObjectsByApi = [] } = useClientObjects(selectedClientId, { enabled: !!selectedClientId });
   const {
     data: companyObjectSearchResults = [],
-    isFetching: companyObjectSearchLoading,
   } = useSearchCompanyObjectsForOrder(debouncedObjectSearchParams, {
     enabled: clientObjectEditorVisible && clientObjectEditorMode !== 'update',
   });
@@ -384,6 +391,8 @@ function CreateOrderContent() {
       street,
       house,
       city,
+      apartment,
+      entrance,
       clientId: null,
     };
   }, [draftClientObject]);
@@ -971,6 +980,40 @@ function CreateOrderContent() {
     clearBanner();
     setFieldErrors({});
 
+    if (draftClientObject && !selectedClientId && hasEnoughObjectSearchInput(globalDraftSearchParams)) {
+      try {
+        const exactMatches = await findExactCompanyObjectForOrder(globalDraftSearchParams);
+        const searchResults = exactMatches.length
+          ? exactMatches
+          : await searchCompanyObjectsForOrder({
+              ...globalDraftSearchParams,
+              limit: 1,
+            });
+        const matchingObject = searchResults[0] || null;
+        const matchSignature = matchingObject
+          ? `global:${matchingObject.clientId}:${matchingObject.objectId}:${globalDraftSearchParams.query}:${globalDraftSearchParams.street}:${globalDraftSearchParams.house}`
+          : '';
+
+        if (matchingObject && matchSignature !== ignoredMatchSignature) {
+          setSuggestedMatchingObject({
+            object: {
+              id: matchingObject.objectId,
+              name: matchingObject.objectName || t('objects_new'),
+            },
+            clientId: matchingObject.clientId,
+            clientName: matchingObject.clientName || '',
+            raw: matchingObject,
+            signature: matchSignature,
+          });
+          setSuggestedMatchingSource('order-submit');
+          setSuggestedMatchingVisible(true);
+          return;
+        }
+      } catch {
+        // The lookup is advisory; the regular validation below remains available offline.
+      }
+    }
+
     const reqCheck = validateRequiredFields();
     if (!reqCheck.ok) {
       const nextErrors = {};
@@ -1228,6 +1271,8 @@ function CreateOrderContent() {
     withoutAddressSelected,
     selectedClientObject,
     draftClientObject,
+    globalDraftSearchParams,
+    ignoredMatchSignature,
     getField,
     isFieldRequired,
     normalizePhone,
@@ -2149,6 +2194,8 @@ function CreateOrderContent() {
       street,
       house,
       city,
+      apartment,
+      entrance,
       clientId: selectedClientId || null,
     };
   }, [objectSearchSourceDraft, selectedClientId]);
@@ -2163,10 +2210,7 @@ function CreateOrderContent() {
     [companyObjectSearchResults, getVisibleObjectAddressDraft, selectedClientObjectId],
   );
   const objectSearchHasQuery = useMemo(() => {
-    const street = String(debouncedObjectSearchParams?.street || '').trim();
-    const house = String(debouncedObjectSearchParams?.house || '').trim();
-    const query = String(debouncedObjectSearchParams?.query || '').trim();
-    return street.length >= 3 || query.length >= 8 || (street.length >= 2 && house.length >= 1);
+    return hasEnoughObjectSearchInput(debouncedObjectSearchParams);
   }, [debouncedObjectSearchParams]);
 
   useEffect(() => {
@@ -2176,13 +2220,15 @@ function CreateOrderContent() {
         street: '',
         house: '',
         city: '',
+        apartment: '',
+        entrance: '',
         clientId: selectedClientId || null,
       });
       return;
     }
     const timer = setTimeout(() => {
       setDebouncedObjectSearchParams(objectSearchParams);
-    }, 220);
+    }, OBJECT_SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [clientObjectEditorMode, clientObjectEditorVisible, objectSearchParams, selectedClientId]);
 
@@ -2281,7 +2327,13 @@ function CreateOrderContent() {
   }, [pendingSuggestedObjectSelection, selectedClient, selectedClientId]);
 
   useEffect(() => {
-    if (!draftClientObject || !selectedClientId || !bestMatchingClientObject) {
+    if (!draftClientObject) {
+      setSuggestedMatchingObject(null);
+      setSuggestedMatchingVisible(false);
+      return;
+    }
+    if (!selectedClientId) return;
+    if (!bestMatchingClientObject) {
       setSuggestedMatchingObject(null);
       setSuggestedMatchingVisible(false);
       return;
@@ -2376,10 +2428,7 @@ function CreateOrderContent() {
   }, [departments, isSoloAdmin, users, t]);
 
   const clientItems = useMemo(() => {
-    if (!Array.isArray(clients) || clients.length === 0) {
-      return [{ id: 'empty', label: t('empty_noData'), disabled: true }];
-    }
-    return clients.map((client) => ({
+    return (Array.isArray(clients) ? clients : []).map((client) => ({
       id: client.id,
       label: sanitizeVisibleText(client.fullName, t('common_noName')),
       subtitle: collectClientPhoneSearchValues(client).find(Boolean) || undefined,
@@ -2725,6 +2774,46 @@ function CreateOrderContent() {
           visibleSlotIds: visibleObjectAdditionalPhoneSlots,
         }),
       };
+      if (
+        clientObjectEditorMode !== 'update' &&
+        hasEnoughObjectSearchInput(objectSearchParams)
+      ) {
+        try {
+          const exactMatches = await findExactCompanyObjectForOrder(objectSearchParams);
+          const searchResults = exactMatches.length
+            ? exactMatches
+            : await searchCompanyObjectsForOrder({
+                ...objectSearchParams,
+                limit: 1,
+              });
+          const matchingObject = searchResults.find(
+            (item) => String(item?.objectId || '') !== String(selectedClientObjectId || ''),
+          );
+          const matchSignature = matchingObject
+            ? `global:${matchingObject.clientId}:${matchingObject.objectId}:${objectSearchParams.query}:${objectSearchParams.street}:${objectSearchParams.house}`
+            : '';
+
+          if (matchingObject && matchSignature !== ignoredMatchSignature) {
+            setDraftClientObject(sanitizedDraft);
+            setSuggestedMatchingObject({
+              object: {
+                id: matchingObject.objectId,
+                name: matchingObject.objectName || t('objects_new'),
+              },
+              clientId: matchingObject.clientId,
+              clientName: matchingObject.clientName || '',
+              raw: matchingObject,
+              signature: matchSignature,
+            });
+            setSuggestedMatchingSource('object-editor');
+            setSuggestedMatchingVisible(true);
+            setClientObjectEditorVisible(false);
+            return;
+          }
+        } catch {
+          // The duplicate check is advisory: object creation must remain available offline.
+        }
+      }
       if (clientObjectEditorMode === 'update' && selectedClientObjectId) {
         if (!has('canEditObjects')) {
           setClientObjectEditorMode(selectedClientId ? 'persist' : 'draft');
@@ -2767,6 +2856,8 @@ function CreateOrderContent() {
     clientObjectEditorMode,
     has,
     objectFieldsByKey,
+    objectSearchParams,
+    ignoredMatchSignature,
     promptNewObjectCreation,
     refetchSelectedClient,
     selectedClientId,
@@ -2961,13 +3052,7 @@ function CreateOrderContent() {
         searchPlaceholder={t('order_client_modal_search_placeholder')}
         onSearchChange={setClientModalSearch}
         filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
-        emptyComponent={
-          <View style={{ paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.sm }}>
-            <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
-              {t('order_client_search_empty_hint')}
-            </Text>
-          </View>
-        }
+        emptyComponent={<EmptyListState />}
         footer={
           <View style={{ marginBottom: theme.spacing.lg }}>
             <Button
@@ -3052,9 +3137,9 @@ function CreateOrderContent() {
         onClose={() => setClientObjectEditorVisible(false)}
         saveLabel={t('objects_save_object')}
         searchSuggestions={objectSearchSuggestions}
-        searchSuggestionsLoading={companyObjectSearchLoading}
-        searchSuggestionsVisible={clientObjectEditorMode !== 'update' && objectSearchHasQuery}
-        searchSuggestionsEmpty={objectSearchHasQuery && objectSearchSuggestions.length === 0}
+        searchSuggestionsVisible={
+          clientObjectEditorMode !== 'update' && objectSearchHasQuery && objectSearchSuggestions.length > 0
+        }
         onSelectSuggestion={handleSelectGlobalObjectSuggestion}
       />
 
@@ -3106,6 +3191,13 @@ function CreateOrderContent() {
                   ),
                 ) || t('order_details_address_not_specified')}
               </Text>
+              {String(suggestedMatchingObject?.clientName || selectedClientName || '').trim() ? (
+                <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm }}>
+                  {`${t('routes_clients_client')}: ${String(
+                    suggestedMatchingObject?.clientName || selectedClientName || '',
+                  ).trim()}`}
+                </Text>
+              ) : null}
             </Pressable>
           </View>
         }
@@ -3120,10 +3212,16 @@ function CreateOrderContent() {
             setDraftClientObject(null);
             setIgnoredMatchSignature('');
           }
+          setSuggestedMatchingSource(null);
         }}
         onClose={() => {
           setIgnoredMatchSignature(String(suggestedMatchingObject?.signature || ''));
           setSuggestedMatchingVisible(false);
+          if (suggestedMatchingSource === 'object-editor') {
+            setDraftClientObject(null);
+            setClientObjectEditorVisible(true);
+          }
+          setSuggestedMatchingSource(null);
         }}
       />
 

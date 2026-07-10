@@ -215,8 +215,7 @@ export default function ToastProvider({ children }) {
             ]}
           >
             <View pointerEvents="none" style={styles.toastSurface}>
-              <View pointerEvents="none" style={styles.toastShadowAmbient} />
-              <View pointerEvents="none" style={styles.toastShadowKey} />
+              <View pointerEvents="none" style={styles.toastShadow} />
               <View pointerEvents="none" style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
                 <Text style={[styles.text, { color: p.fg }]}>{msg.text}</Text>
               </View>
@@ -292,17 +291,11 @@ const styles = StyleSheet.create({
     width: Math.min(560, width - 24),
     overflow: 'visible',
   },
-  toastShadowAmbient: {
+  toastShadow: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.10)',
-    transform: [{ translateY: 4 }, { scale: 0.98 }],
-  },
-  toastShadowKey: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.07)',
-    transform: [{ translateY: 8 }, { scaleX: 0.94 }, { scaleY: 0.92 }],
+    backgroundColor: 'rgba(0, 0, 0, 0.09)',
+    transform: [{ translateY: 5 }, { scaleX: 0.97 }, { scaleY: 0.96 }],
   },
   text: { fontSize: 14, fontWeight: '500', textAlign: 'center' },
 });

@@ -144,6 +144,10 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null }: any
   useEffect(() => {
     if (!enabled || !companyId) return;
 
+    const refreshClientLists = () => {
+      void queryClient.invalidateQueries({ queryKey: ['clients'] });
+    };
+
     const channel = supabase
       .channel(`clients:realtime:${companyId}`)
       .on(
@@ -211,7 +215,9 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null }: any
           void invalidateManyNow(queryClient, [['clients'], ['objects'], ['tags']]);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') refreshClientLists();
+      });
 
     return () => {
       try {
