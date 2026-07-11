@@ -34,5 +34,19 @@ allprojects {
   }
 }
 
+// Expo SDK 54 pins keyboard-controller 1.18.5. Its Android sources retain
+// compatibility guards below this app's minSdk 24, which Android lint reports
+// as ObsoleteSdkInt errors. Limit the suppression to that third-party module;
+// application lint remains strict.
+subprojects { subproject ->
+  afterEvaluate {
+    if (subproject.name == 'react-native-keyboard-controller' && subproject.hasProperty('android')) {
+      subproject.android.lint {
+        disable 'ObsoleteSdkInt'
+      }
+    }
+  }
+}
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

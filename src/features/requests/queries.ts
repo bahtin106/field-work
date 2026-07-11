@@ -1,7 +1,9 @@
 import { onlineManager, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { getStatusDbAliases, normalizeOrderStatusFilterKey } from '../../../lib/orderFilters';
 import { queryKeys } from '../../shared/query/queryKeys';
+import { requestScreenRefresh } from '../../shared/query/screenRefreshRegistry';
 import {
   enqueueRequestUpdate,
   getOfflineSnapshot,
@@ -114,6 +116,271 @@ function invalidateClientDeleteBlockersNamespace(queryClient: any) {
   queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers'] });
 }
 
+const requestRealtimeSubscriptions = new Map<string, any>();
+
+function acquireRequestRealtimeSubscription(queryClient: any, companyId: any) {
+  const scope = String(companyId || 'global');
+  const existing = requestRealtimeSubscriptions.get(scope);
+  if (existing) {
+    existing.refs += 1;
+    return () => releaseRequestRealtimeSubscription(scope);
+  }
+
+  const changedIds = new Set<string>();
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  const flushInvalidations = () => {
+    flushTimer = null;
+    const ids = Array.from(changedIds);
+    changedIds.clear();
+    for (const rowId of ids) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(rowId) });
+    }
+    queryClient.invalidateQueries({ queryKey: ['requests', 'all'] });
+    queryClient.invalidateQueries({ queryKey: ['requests', 'my'] });
+    queryClient.invalidateQueries({ queryKey: ['requests', 'calendar'] });
+    invalidateClientDeleteBlockersNamespace(queryClient);
+  };
+  const filter = companyId ? `company_id=eq.${companyId}` : undefined;
+  const channel = supabase
+    .channel(`requests:realtime:${scope}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'orders', ...(filter ? { filter } : {}) },
+      (payload: any) => {
+        const rowId = payload?.new?.id || payload?.old?.id;
+        if (rowId) changedIds.add(String(rowId));
+        if (flushTimer == null) flushTimer = setTimeout(flushInvalidations, 150);
+      },
+    )
+    .subscribe();
+  requestRealtimeSubscriptions.set(scope, {
+    refs: 1,
+    channel,
+    cancel: () => {
+      if (flushTimer != null) clearTimeout(flushTimer);
+    },
+  });
+  return () => releaseRequestRealtimeSubscription(scope);
+}
+
+function releaseRequestRealtimeSubscription(scope: string) {
+  const entry = requestRealtimeSubscriptions.get(scope);
+  if (!entry) return;
+  entry.refs -= 1;
+  if (entry.refs > 0) return;
+  requestRealtimeSubscriptions.delete(scope);
+  entry.cancel?.();
+  try {
+    supabase.removeChannel(entry.channel);
+  } catch {}
+}
+
+function requestStatusMatchesFilter(status: any, filter: any) {
+  const rawStatus = String(status || '').trim();
+  const normalizedStatus = normalizeOrderStatusFilterKey(rawStatus);
+  const normalizedFilter = normalizeOrderStatusFilterKey(filter);
+  if (!normalizedFilter || normalizedFilter === 'all') return true;
+  const aliases = getStatusDbAliases(normalizedFilter).map((value) => String(value || '').trim());
+  return aliases.includes(rawStatus) || normalizedStatus === normalizedFilter;
+}
+
+function requestBelongsInCachedQuery(queryKey: any, previous: any, next: any) {
+  if (!Array.isArray(queryKey)) return true;
+  const merged = { ...(previous || {}), ...(next || {}) };
+  const params = queryKey[0] === 'requests' && queryKey[2] && typeof queryKey[2] === 'object'
+    ? queryKey[2]
+    : null;
+
+  if (params) {
+    const statusFilter = String(params.status || 'all').trim();
+    if (statusFilter === 'feed') {
+      if (String(merged.assigned_to || '').trim()) return false;
+      if (!requestStatusMatchesFilter(merged.status, 'feed')) return false;
+    } else {
+      if (!requestStatusMatchesFilter(merged.status, statusFilter)) return false;
+      if (statusFilter === 'all' && params.excludeFeedWhenAll) {
+        if (requestStatusMatchesFilter(merged.status, 'feed')) return false;
+      }
+    }
+
+    const extraStatuses = Array.isArray(params.statuses) ? params.statuses.filter(Boolean) : [];
+    if (
+      extraStatuses.length > 0 &&
+      !extraStatuses.some((status: any) => requestStatusMatchesFilter(merged.status, status))
+    ) {
+      return false;
+    }
+
+    const executorIds = Array.isArray(params.executorIds)
+      ? params.executorIds.map(String).filter(Boolean)
+      : [];
+    const executorId = String(params.executorId || '').trim();
+    const assignedTo = String(merged.assigned_to || '').trim();
+    if (executorIds.length > 0 && !executorIds.includes(assignedTo)) return false;
+    if (executorIds.length === 0 && executorId && assignedTo !== executorId) return false;
+
+    const clientIds = Array.isArray(params.clientIds) ? params.clientIds.map(String) : [];
+    const clientId = String(merged.client_id || '').trim();
+    if (clientIds.length > 0 && !clientIds.includes(clientId)) return false;
+
+    const relationClientId = String(params.relationClientId || '').trim();
+    const relationObjectIds = Array.isArray(params.relationObjectIds)
+      ? params.relationObjectIds.map(String).filter(Boolean)
+      : [];
+    if (relationClientId || relationObjectIds.length > 0) {
+      const objectId = String(merged.object_id || '').trim();
+      const relationMatches =
+        (relationClientId && clientId === relationClientId) || relationObjectIds.includes(objectId);
+      if (!relationMatches) return false;
+    }
+
+    const workTypeIds = Array.isArray(params.workTypeIds)
+      ? params.workTypeIds.map(String).filter(Boolean)
+      : [];
+    if (workTypeIds.length > 0 && !workTypeIds.includes(String(merged.work_type_id || ''))) {
+      return false;
+    }
+
+    const orderIds = Array.isArray(params.orderIds)
+      ? params.orderIds.map(String).filter(Boolean)
+      : [];
+    if (orderIds.length > 0 && !orderIds.includes(String(merged.id || ''))) return false;
+
+    if (params.departmentId != null) {
+      const departmentValue =
+        merged.department_id ?? merged.executor_department_id ?? merged.assignee_department_id;
+      if (
+        departmentValue !== undefined &&
+        departmentValue !== null &&
+        String(departmentValue) !== String(params.departmentId)
+      ) {
+        return false;
+      }
+    }
+
+    const timeWindowStart = Date.parse(String(merged.time_window_start || ''));
+    const createdAt = Date.parse(String(merged.created_at || ''));
+    if (params.dateFrom && (!Number.isFinite(timeWindowStart) || timeWindowStart < Date.parse(params.dateFrom))) return false;
+    if (params.dateTo && (!Number.isFinite(timeWindowStart) || timeWindowStart > Date.parse(params.dateTo))) return false;
+    if (params.startDate && (!Number.isFinite(timeWindowStart) || timeWindowStart < Date.parse(params.startDate))) return false;
+    if (params.endDate && (!Number.isFinite(timeWindowStart) || timeWindowStart > Date.parse(params.endDate))) return false;
+    if (params.createdFrom && (!Number.isFinite(createdAt) || createdAt < Date.parse(params.createdFrom))) return false;
+    if (params.createdTo && (!Number.isFinite(createdAt) || createdAt > Date.parse(params.createdTo))) return false;
+
+    const price = Number(merged.start_price);
+    const minPrice = String(params.sumMin ?? '').trim() === '' ? NaN : Number(params.sumMin);
+    const maxPrice = String(params.sumMax ?? '').trim() === '' ? NaN : Number(params.sumMax);
+    if (Number.isFinite(minPrice) && (!Number.isFinite(price) || price < minPrice)) return false;
+    if (Number.isFinite(maxPrice) && (!Number.isFinite(price) || price > maxPrice)) return false;
+
+    if (queryKey[1] === 'my' && previous?.assigned_to !== undefined) {
+      const oldAssignee = String(previous.assigned_to || '').trim();
+      if (oldAssignee && assignedTo !== oldAssignee) return false;
+    }
+    if (queryKey[1] === 'calendar' && params.scope !== 'all') {
+      const calendarUserId = String(params.userId || '').trim();
+      if (calendarUserId && assignedTo !== calendarUserId) return false;
+    }
+  }
+
+  if (queryKey[0] === 'orders' && queryKey[2] === 'recent') {
+    const scopeUserId = String(queryKey[3] || '').split(':')[0];
+    if (queryKey[1] === 'my' && scopeUserId) {
+      if (String(merged.assigned_to || '').trim() !== scopeUserId) return false;
+    }
+    if (requestStatusMatchesFilter(merged.status, 'feed')) return false;
+  }
+
+  return true;
+}
+
+function updateRequestInListCaches(queryClient: any, request: any) {
+  const requestId = String(request?.id || '').trim();
+  if (!requestId) return;
+  const patchValue = (value: any, queryKey: any = null) => {
+    if (Array.isArray(value)) {
+      let changed = false;
+      const next = value.flatMap((row: any) => {
+        if (String(row?.id || '').trim() !== requestId) return [row];
+        changed = true;
+        if (!requestBelongsInCachedQuery(queryKey, row, request)) return [];
+        return [{ ...row, ...request }];
+      });
+      return changed ? next : value;
+    }
+    if (!value || !Array.isArray(value.pages)) return value;
+    let changed = false;
+    const pages = value.pages.map((page: any) => {
+      if (!Array.isArray(page)) return page;
+      return page.flatMap((row: any) => {
+        if (String(row?.id || '').trim() !== requestId) return [row];
+        changed = true;
+        if (!requestBelongsInCachedQuery(queryKey, row, request)) return [];
+        return [{ ...row, ...request }];
+      });
+    });
+    return changed ? { ...value, pages } : value;
+  };
+
+  const entries = [
+    ...(queryClient.getQueriesData({ queryKey: ['requests'] }) || []),
+    ...(queryClient.getQueriesData({ queryKey: ['orders'] }) || []),
+  ];
+  entries.forEach(([key, value]: any) => {
+    const next = patchValue(value, key);
+    if (next !== value) queryClient.setQueryData(key, next);
+  });
+
+  const runtimeListCache = (globalThis as any)?.LIST_CACHE?.myByScope;
+  if (runtimeListCache && typeof runtimeListCache === 'object') {
+    Object.values(runtimeListCache).forEach((scopeCache: any) => {
+      if (!scopeCache || typeof scopeCache !== 'object') return;
+      Object.keys(scopeCache).forEach((cacheKey) => {
+        const current = scopeCache[cacheKey];
+        const statusKey = String(cacheKey || '').split(':')[0] || 'all';
+        const previousRow = Array.isArray(current)
+          ? current.find((row: any) => String(row?.id || '').trim() === requestId)
+          : null;
+        const membershipFields = [
+          'assigned_to',
+          'department_id',
+          'executor_department_id',
+          'assignee_department_id',
+          'work_type_id',
+          'object_id',
+          'client_id',
+        ];
+        const membershipChanged =
+          previousRow &&
+          membershipFields.some(
+            (field) =>
+              Object.prototype.hasOwnProperty.call(request || {}, field) &&
+              String(previousRow?.[field] ?? '') !== String(request?.[field] ?? ''),
+          );
+        if (membershipChanged) {
+          delete scopeCache[cacheKey];
+          return;
+        }
+        if (statusKey === '__multiple__' && previousRow) {
+          if (String(previousRow?.status || '').trim() !== String(request?.status || '').trim()) {
+            delete scopeCache[cacheKey];
+          } else {
+            const next = patchValue(current);
+            if (next !== current) scopeCache[cacheKey] = next;
+          }
+          return;
+        }
+        const next = patchValue(current, [
+          'requests',
+          'my',
+          { status: statusKey, excludeFeedWhenAll: statusKey === 'all' },
+        ]);
+        if (next !== current) scopeCache[cacheKey] = next;
+      });
+    });
+  }
+}
+
 export function useAllRequests(params: any = {}, options: any = {}) {
   return useRequestInfiniteQuery(queryKeys.requests.all(params), { ...params, scope: 'all' }, options);
 }
@@ -198,55 +465,8 @@ export function useRequestRealtimeSync({ enabled = true, companyId = null }: any
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!enabled) return;
-    const changedIds = new Set();
-    let flushTimer = null;
-
-    const flushInvalidations = () => {
-      flushTimer = null;
-      const ids = Array.from(changedIds);
-      changedIds.clear();
-
-      for (const rowId of ids) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(rowId) });
-      }
-      queryClient.invalidateQueries({ queryKey: ['requests', 'all'] });
-      queryClient.invalidateQueries({ queryKey: ['requests', 'my'] });
-      queryClient.invalidateQueries({ queryKey: ['requests', 'calendar'] });
-      invalidateClientDeleteBlockersNamespace(queryClient);
-    };
-
-    const filter = companyId ? `company_id=eq.${companyId}` : undefined;
-    const channel = supabase
-      .channel(`requests:realtime:${companyId || 'global'}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'orders',
-          ...(filter ? { filter } : {}),
-        },
-        (payload: any) => {
-          const rowId = payload?.new?.id || payload?.old?.id;
-          if (rowId) {
-            changedIds.add(rowId);
-          }
-          if (flushTimer == null) {
-            flushTimer = setTimeout(flushInvalidations, 150);
-          }
-        },
-      )
-      .subscribe();
-
-    return () => {
-      if (flushTimer != null) {
-        clearTimeout(flushTimer);
-      }
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
-    };
+    if (!enabled) return undefined;
+    return acquireRequestRealtimeSubscription(queryClient, companyId);
   }, [companyId, enabled, queryClient]);
 }
 
@@ -316,10 +536,16 @@ export function useUpdateRequestMutation() {
     },
     onSuccess: (next) => {
       if (next?.id) {
+        const stored = next?.__offlinePending ? markRequestDetailSeed(next) : markRequestDetailLoaded(next);
         queryClient.setQueryData(
           queryKeys.requests.detail(next.id),
-          next?.__offlinePending ? markRequestDetailSeed(next) : markRequestDetailLoaded(next),
+          stored,
         );
+        updateRequestInListCaches(queryClient, stored);
+        requestScreenRefresh(['orders.my'], {
+          reason: 'request-cache-patch',
+          request: stored,
+        }).catch(() => {});
       }
       queryClient.invalidateQueries({ queryKey: ['requests'] });
       invalidateClientDeleteBlockersNamespace(queryClient);
@@ -341,7 +567,7 @@ export async function ensureRequestPrefetch(queryClient: any, id: any) {
   return queryClient.fetchQuery({
     queryKey: queryKeys.requests.detail(id),
     queryFn: async () => markRequestDetailLoaded(await getRequestById(id)),
-    staleTime: 45 * 1000,
+    staleTime: 0,
   });
 }
 

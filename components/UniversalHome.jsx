@@ -1,7 +1,8 @@
 // components/universalhome.jsx
 import FeatherIcon from '@expo/vector-icons/Feather';
+import { useIsFocused } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -37,7 +38,6 @@ import {
 } from '../src/features/supportRequests/api';
 import Button from './ui/Button';
 import Card from './ui/Card';
-import { preloadLazyRouteScreen } from './layout/LazyRouteScreen';
 import { useToast } from './ui/ToastProvider';
 
 const SupportRequestModal = lazy(() => import('../app/company_settings/sections/SupportRequestModal'));
@@ -61,69 +61,7 @@ const HOME_ROUTES = {
   calendar: '/orders/calendar',
 };
 
-let homeAdminWarmupStarted = false;
-let homeCalendarWarmupStarted = false;
-let homePrimaryWarmupStarted = false;
-let homeCreateOrderWarmupStarted = false;
-let homeAppSettingsWarmupStarted = false;
-let homeCompanySettingsWarmupStarted = false;
-let homeBillingWarmupStarted = false;
 const homeMyOrdersPrefetchStartedByScope = new Set();
-
-function warmLazyRoute(cacheKey, load) {
-  preloadLazyRouteScreen(cacheKey, load).catch(() => {});
-}
-
-function warmHomePrimaryRoutes() {
-  if (homePrimaryWarmupStarted) return;
-  homePrimaryWarmupStarted = true;
-  warmLazyRoute('routes.orders/my-orders', () => import('../screens/orders/MyOrdersScreen'));
-}
-
-function warmHomeCreateOrderRoute() {
-  if (homeCreateOrderWarmupStarted) return;
-  homeCreateOrderWarmupStarted = true;
-  warmLazyRoute('routes.orders/create-order', () => import('../screens/orders/CreateOrderScreen'));
-}
-
-function warmHomeAppSettingsRoute() {
-  if (homeAppSettingsWarmupStarted) return;
-  homeAppSettingsWarmupStarted = true;
-  warmLazyRoute('routes.app_settings/AppSettings', () => import('../screens/app_settings/AppSettingsScreen'));
-}
-
-function warmHomeCompanySettingsRoute() {
-  if (homeCompanySettingsWarmupStarted) return;
-  homeCompanySettingsWarmupStarted = true;
-  warmLazyRoute('company_settings_title', () => import('../screens/company_settings/CompanySettingsScreen'));
-}
-
-function warmHomeBillingRoute() {
-  if (homeBillingWarmupStarted) return;
-  homeBillingWarmupStarted = true;
-  warmLazyRoute('routes.billing/index', () => import('../screens/billing/BillingScreen'));
-}
-
-function warmHomeCalendarRoute() {
-  if (homeCalendarWarmupStarted) return;
-  homeCalendarWarmupStarted = true;
-  warmLazyRoute('routes.orders/calendar', () => import('../screens/orders/CalendarScreen'));
-}
-
-function warmHomeAdminRoute() {
-  if (homeAdminWarmupStarted) return;
-  homeAdminWarmupStarted = true;
-  import('../app/admin/index').catch(() => {});
-}
-
-function warmHomeRoute(route) {
-  if (route === HOME_ROUTES.appSettings) warmHomeAppSettingsRoute();
-  else if (route === HOME_ROUTES.companySettings) warmHomeCompanySettingsRoute();
-  else if (route === HOME_ROUTES.billing) warmHomeBillingRoute();
-  else if (route === HOME_ROUTES.createOrder) warmHomeCreateOrderRoute();
-  else if (route === HOME_ROUTES.calendar) warmHomeCalendarRoute();
-  else if (route === HOME_ROUTES.admin) warmHomeAdminRoute();
-}
 
 function isUuid(s) {
   return (
@@ -333,7 +271,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const toast = useToast();
   const qc = useQueryClient();
-  const initialFocusRefreshSkippedRef = useRef(false);
   const navigateTo = useCallback(
     (href) => {
       if (!href) return;
@@ -371,16 +308,18 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const [supportRequestOpen, setSupportRequestOpen] = useState(false);
   const [supportRequestNonce, setSupportRequestNonce] = useState(0);
   const [secondaryNetworkEnabled, setSecondaryNetworkEnabled] = useState(false);
+  const isFocused = useIsFocused();
+  const homeLiveEnabled = secondaryNetworkEnabled && isFocused;
   const { data: unreadSupportCount = 0 } = useQuery({
     queryKey: SUPPORT_UNREAD_QUERY_KEY,
     queryFn: countUnreadSupportRequests,
-    enabled: secondaryNetworkEnabled && isSuperAdmin,
+    enabled: homeLiveEnabled && isSuperAdmin,
     staleTime: 10 * 1000,
-    refetchInterval: SUPPORT_UNREAD_REFETCH_MS,
+    refetchInterval: homeLiveEnabled ? SUPPORT_UNREAD_REFETCH_MS : false,
   });
 
   useEffect(() => {
-    if (!secondaryNetworkEnabled || !isSuperAdmin) return undefined;
+    if (!homeLiveEnabled || !isSuperAdmin) return undefined;
     const channel = supabase
       .channel('home-feedbacks-unread-counter')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feedbacks' }, () => {
@@ -390,7 +329,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isSuperAdmin, qc, secondaryNetworkEnabled]);
+  }, [homeLiveEnabled, isSuperAdmin, qc]);
 
   // ====== Session / profile ======
   const { data: session } = useQuery({
@@ -471,24 +410,39 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const avatarCacheKey = buildAvatarCacheKey(uid, rawAvatarUrl || avatarUrl);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const hasLoadedAvatarRef = useRef(false);
   useEffect(() => {
-    setAvatarLoaded(false);
     setAvatarLoadFailed(false);
+    // Keep the already rendered image visible while a refreshed display URL loads.
+    // Otherwise the initials fallback briefly appears over the photo on navigation.
+    if (!avatarUrl || !hasLoadedAvatarRef.current) setAvatarLoaded(false);
   }, [avatarUrl]);
   const companyId = currentProfile?.company_id || profileFallback?.company_id || null;
   const {
     settings: companySettings,
     useDepartments,
   } = useCompanySettings(companyId || null, {
-    enabled: secondaryNetworkEnabled,
-    subscribe: secondaryNetworkEnabled,
+    enabled: homeLiveEnabled,
+    subscribe: homeLiveEnabled,
   });
-  const subscriptionGuard = useSubscriptionGuard(companyId, { enabled: secondaryNetworkEnabled });
+  const subscriptionGuard = useSubscriptionGuard(companyId, { enabled: homeLiveEnabled });
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
     subscriptionGuard.entitlements != null &&
     subscriptionGuard.reason === 'subscription_expired';
   const deptIdFromProfile = currentProfile?.department_id || null;
+
+  useEffect(() => {
+    if (isFocused) return;
+    const keys = [
+      ['profile'],
+      ...(companyId ? [['company', companyId]] : []),
+      ...(deptIdFromProfile ? [['department', deptIdFromProfile]] : []),
+    ];
+    keys.forEach((queryKey) => {
+      qc.invalidateQueries({ queryKey, refetchType: 'none' }).catch(() => {});
+    });
+  }, [companyId, deptIdFromProfile, isFocused, qc]);
 
   // The profile query is the live source for the home screen; the prop is only a boot-time seed.
   const resolvedRole = currentProfile?.role || role || roleFromPerms || 'worker';
@@ -548,11 +502,13 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [applyAvatarSnapshot, avatarDisplayUrl, rawAvatarUrl, storedAvatarDisplayUrl, uid]);
 
   const handleAvatarLoad = useCallback(() => {
+    hasLoadedAvatarRef.current = true;
     setAvatarLoaded(true);
     setAvatarLoadFailed(false);
   }, []);
 
   const handleAvatarLoadError = useCallback(() => {
+    hasLoadedAvatarRef.current = false;
     setAvatarLoaded(false);
     setAvatarLoadFailed(true);
     if (!uid || !rawAvatarUrl) return;
@@ -612,7 +568,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       const { yandexDiskIntegration } = await import('../lib/yandexDiskIntegration');
       return yandexDiskIntegration('status');
     },
-    enabled: secondaryNetworkEnabled && shouldCheckCloudHealth,
+    enabled: homeLiveEnabled && shouldCheckCloudHealth,
     staleTime: 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnMount: false,
@@ -718,35 +674,18 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     ],
   );
 
-  useEffect(() => {
-    if (!uid || !currentProfile?.id) return undefined;
-    const cancelTasks = [
-      scheduleUiIdleTask(warmHomePrimaryRoutes, { delayMs: 400 }),
-      scheduleUiIdleTask(warmHomeCalendarRoute, { delayMs: 3200 }),
-      scheduleUiIdleTask(warmHomeCreateOrderRoute, { delayMs: 6000 }),
-      scheduleUiIdleTask(warmHomeAppSettingsRoute, { delayMs: 9000 }),
-      scheduleUiIdleTask(warmHomeCompanySettingsRoute, { delayMs: 12000 }),
-      scheduleUiIdleTask(warmHomeBillingRoute, { delayMs: 15000 }),
-    ];
-    if (isSuperAdmin) {
-      cancelTasks.push(scheduleUiIdleTask(warmHomeAdminRoute, { delayMs: 18000 }));
-    }
-
-    return () => {
-      cancelTasks.forEach((cancel) => cancel());
-    };
-  }, [currentProfile?.id, isSuperAdmin, uid]);
-
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   useEffect(() => {
-    if (!secondaryNetworkEnabled || !uid) return undefined;
+    if (!homeLiveEnabled || !uid) return undefined;
     const profileId = String(currentProfile?.id || uid || '').trim();
     if (!isUuid(profileId)) return undefined;
     const applyProfileChange = (payload) => {
       const snapshot = payload?.eventType === 'DELETE' ? null : payload?.new || null;
       if (snapshot?.id) {
         qc.setQueryData(['profile', uid], (prev) => mergeProfileSnapshot(prev, snapshot));
+        qc.setQueryData(queryKeys.profile.me(), (prev) => mergeProfileSnapshot(prev, snapshot));
+        return;
       }
       qc.invalidateQueries({ queryKey: ['profile', uid] });
     };
@@ -762,7 +701,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentProfile?.id, qc, secondaryNetworkEnabled, uid]);
+  }, [currentProfile?.id, homeLiveEnabled, qc, uid]);
 
   const cachedSelfProfileDetail = useMemo(() => {
     const selfProfileId = String(currentProfile?.id || uid || '').trim();
@@ -855,7 +794,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [router, seedSelfProfileEmployeeDetail]);
 
   useEffect(() => {
-    if (!secondaryNetworkEnabled || !companyId) return undefined;
+    if (!homeLiveEnabled || !companyId) return undefined;
     const refreshCompanyData = (payload) => {
       if (payload?.new?.id) {
         qc.setQueryData(['company', companyId], (prev) => ({ ...(prev || {}), ...payload.new }));
@@ -876,10 +815,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [companyId, qc, secondaryNetworkEnabled]);
+  }, [companyId, homeLiveEnabled, qc]);
 
   useEffect(() => {
-    if (!secondaryNetworkEnabled || !departmentIdToUse) return undefined;
+    if (!homeLiveEnabled || !departmentIdToUse) return undefined;
     const channel = supabase
       .channel(`home-department-${departmentIdToUse}`)
       .on(
@@ -896,31 +835,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [departmentIdToUse, qc, secondaryNetworkEnabled]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!uid) return undefined;
-      if (!initialFocusRefreshSkippedRef.current) {
-        initialFocusRefreshSkippedRef.current = true;
-        return undefined;
-      }
-      qc.invalidateQueries({ queryKey: ['profile', uid] });
-      if (companyId) {
-        qc.invalidateQueries({ queryKey: ['company', companyId] });
-        qc.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
-        qc.invalidateQueries({ queryKey: ['companyEntitlements', companyId] });
-        qc.invalidateQueries({ queryKey: ['cloud-storage-status', companyId] });
-      }
-      if (departmentIdToUse) {
-        qc.invalidateQueries({ queryKey: ['department', departmentIdToUse] });
-      }
-      if (isSuperAdmin) {
-        qc.invalidateQueries({ queryKey: SUPPORT_UNREAD_QUERY_KEY });
-      }
-      return undefined;
-    }, [companyId, departmentIdToUse, isSuperAdmin, qc, uid]),
-  );
+  }, [departmentIdToUse, homeLiveEnabled, qc]);
 
   const initials = useMemo(() => {
     return formatPersonInitials({ firstName, middleName, lastName }, fullName) || '??';
@@ -962,21 +877,23 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [homeCriticalReady]);
 
   useEffect(() => {
-    if (!homeCriticalReady || !companyId || companySettings?.use_order_statuses !== true) return;
+    if (!homeCriticalReady || !isFocused || !companyId || companySettings?.use_order_statuses !== true) return;
     qc.prefetchQuery({
       queryKey: getOrderStatusesQueryKey(companyId),
       queryFn: () => fetchCompanyOrderStatuses(companyId),
       staleTime: 5 * 60 * 1000,
     }).catch(() => {});
-  }, [companyId, companySettings?.use_order_statuses, homeCriticalReady, qc]);
+  }, [companyId, companySettings?.use_order_statuses, homeCriticalReady, isFocused, qc]);
 
   useEffect(() => {
-    if (!homeCriticalReady || !uid) return undefined;
+    if (!homeCriticalReady || !isFocused || !uid) return undefined;
     const scopeKey = `${uid}:${String(companyId || 'no-company')}`;
     if (homeMyOrdersPrefetchStartedByScope.has(scopeKey)) return undefined;
     homeMyOrdersPrefetchStartedByScope.add(scopeKey);
+    let prefetchStarted = false;
 
     const cancelPrefetch = scheduleUiIdleTask(() => {
+      prefetchStarted = true;
       if (!getOfflineSnapshot().isOnline) {
         homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
         return;
@@ -1004,11 +921,12 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
     return () => {
       cancelPrefetch();
+      if (!prefetchStarted) homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
     };
-  }, [companyId, homeCriticalReady, qc, uid]);
+  }, [companyId, homeCriticalReady, isFocused, qc, uid]);
 
   useEffect(() => {
-    if (!homeCriticalReady || !uid) return;
+    if (!homeCriticalReady || !isFocused || !uid) return;
     let cancelPrefetch = null;
     const timer = setTimeout(() => {
       cancelPrefetch = scheduleSmartPrefetch(qc);
@@ -1019,7 +937,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         cancelPrefetch?.();
       } catch {}
     };
-  }, [homeCriticalReady, qc, uid]);
+  }, [homeCriticalReady, isFocused, qc, uid]);
 
   if (shouldShowHomeLoader) {
     return (
@@ -1060,9 +978,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         >
           {avatarUrl && !avatarLoadFailed ? (
             <View style={styles.avatarWrap}>
-              <View style={styles.avatarImageFallback}>
-                <Text style={styles.avatarText}>{initials}</Text>
-              </View>
               <ExpoImage
                 source={{ uri: avatarUrl, cacheKey: avatarCacheKey }}
                 style={[styles.avatarImg, !avatarLoaded && styles.avatarImgHidden]}
@@ -1123,7 +1038,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           body={t('home_subscription_expired_body')}
           cta={t('home_subscription_expired_cta')}
           onPress={openBilling}
-          onPressIn={() => warmHomeRoute(HOME_ROUTES.billing)}
         />
       ) : null}
 
@@ -1149,7 +1063,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             <Pressable
               key={item.key}
               onPress={item.onPress}
-              onPressIn={() => warmHomeRoute(item.route)}
               unstable_pressDelay={0}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
@@ -1230,7 +1143,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           <Button
             title={t('home_btn_create_order')}
             onPress={openCreateOrder}
-            onPressIn={warmHomeCreateOrderRoute}
           />
         </View>
       )}
@@ -1311,12 +1223,6 @@ const createStyles = (theme) => {
       marginRight: spacing.md,
       alignSelf: 'center',
       position: 'relative',
-    },
-    avatarImageFallback: {
-      ...StyleSheet.absoluteFillObject,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.inputBg || colors.surface,
     },
     avatarImg: {
       width: '100%',

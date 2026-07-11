@@ -1,0 +1,770 @@
+// Heavy implementation lives outside the route wrapper so the destination
+// frame can render before this module is evaluated.
+
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  InteractionManager,
+  Platform,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
+
+import AppHeader from '../../components/navigation/AppHeader';
+import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
+import { useToast } from '../../components/ui/ToastProvider';
+import { useTheme } from '../../theme/ThemeProvider';
+// Unified filter system: import our reusable components
+import FiltersPanel from '../../components/filters/FiltersPanel';
+import EmptyListState from '../../components/ui/EmptyListState';
+import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
+import SortSelectModal from '../../components/filters/SortSelectModal';
+import { useFilters } from '../../components/hooks/useFilters';
+import { UserCard } from '../../components/users/UserCard';
+import { ROLE, getRoleLabel } from '../../constants/roles';
+import { formatPersonName } from '../../lib/personName';
+import { resolveAppLocale } from '../../lib/localeFormatting';
+import { pluralizeRu } from '../../lib/pluralize';
+import {
+  ensureEmployeePrefetch,
+  useDepartmentsQuery,
+  useEmployees,
+  useEmployeesRealtimeSync,
+} from '../../src/features/employees/queries';
+import { isNoDepartmentFilterId } from '../../src/features/employees/departments';
+import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import { t } from '../../src/i18n';
+import { useTranslation } from '../../src/i18n/useTranslation';
+import { queryKeys } from '../../src/shared/query/queryKeys';
+import { useOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
+import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
+import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
+import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
+import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
+import { useCompanySettings } from '../../hooks/useCompanySettings';
+
+// Safe alpha helper for both hex/rgb strings and dynamic PlatformColor objects
+function withAlpha(color, a) {
+  if (typeof color === 'string') {
+    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
+    if (hex) {
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
+      return color + alpha;
+    }
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) {
+      return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
+    }
+  }
+  return color;
+}
+const USER_OPEN_GUARD_MS = 900;
+
+function UsersIndexContent() {
+  const { theme } = useTheme();
+  useTranslation(); // subscribe to i18n changes without re-plumbing
+
+  const router = useRouter();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { isOnline } = useOfflineSnapshot();
+  const [filtersVisible, setFiltersVisible] = useState(false);
+  const [sortVisible, setSortVisible] = useState(false);
+  const [sortKey, setSortKey] = useState(EMPLOYEE_SORT.NAME_ASC);
+  const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const openUserNavGuardRef = useRef({ userId: null, startedAt: 0, inFlight: false });
+
+  const filters = useFilters({
+    screenKey: 'users',
+    defaults: { departments: [], roles: [], suspended: null },
+  });
+  const revalidateFilters = filters.revalidate;
+
+  const { data: companyId, isLoading: companyIdLoading } = useMyCompanyIdQuery();
+  const { useDepartments } = useCompanySettings(companyId || null);
+  const subscriptionGuard = useSubscriptionGuard(companyId);
+
+  const {
+    data: users = [],
+    isLoading: usersLoading,
+    refetch: refreshUsers,
+    dataUpdatedAt: usersUpdatedAt,
+  } = useEmployees({ ...filters.values, companyId }, {
+    enabled: !companyIdLoading && !!companyId,
+    refetchInterval: false,
+  });
+
+  const {
+    data: departments = [],
+    isLoading: departmentsLoading,
+    refetch: refreshDepartments,
+  } = useDepartmentsQuery({
+    companyId,
+    enabled: !!companyId && useDepartments,
+    onlyEnabled: true,
+  });
+  useEmployeesRealtimeSync({ enabled: !!companyId, companyId });
+
+  // Combined loading state - wait for initial data from both sources
+  // Once cached data is available, show it immediately (stale-while-revalidate pattern)
+  const hasAnyData = users.length > 0 || departments.length > 0;
+  const isLoading = (usersLoading || departmentsLoading) && !hasAnyData;
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshUsers(), refreshDepartments()]);
+  }, [refreshUsers, refreshDepartments]);
+
+  useFocusEffect(
+    useCallback(() => {
+      revalidateFilters({ extend: true });
+    }, [revalidateFilters]),
+  );
+
+  const setFilterValue = filters.setValue;
+  const openFiltersPanel = () => setFiltersVisible(true);
+
+  const c = theme.colors;
+  const sz = theme.spacing;
+  const ty = theme.typography;
+  const rad = theme.radii;
+  const scrollPaddingBottom = theme?.components?.scrollView?.paddingBottom ?? 80;
+  const activityIndicatorSize = theme?.components?.activityIndicator?.size ?? 'large';
+  const ALPHA_PILL_BG = theme?.components?.pill?.backgroundAlpha ?? 0.13;
+  const ALPHA_PILL_BORDER = theme?.components?.pill?.borderAlpha ?? 0.2;
+  const styles = React.useMemo(
+    () =>
+      StyleSheet.create({
+        safe: { flex: 1, backgroundColor: c.background },
+        container: { flex: 1 },
+        loaderWrap: {
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: c.background,
+        },
+        header: { paddingHorizontal: 0, paddingTop: sz.xs, paddingBottom: sz.sm },
+        title: {
+          fontSize: ty.sizes.xl,
+          fontWeight: ty.weight.bold,
+          color: c.text,
+          marginBottom: sz.sm,
+        },
+        metaRow: { marginTop: sz.xs },
+        metaText: { fontSize: ty.sizes.sm, color: c.textSecondary },
+        errorCard: {
+          marginTop: sz.xs,
+          backgroundColor: theme.colors.surfaceMutedDanger,
+          borderColor: theme.colors.danger,
+          borderWidth: 1,
+          paddingHorizontal: sz.sm,
+          paddingVertical: sz.xs,
+          borderRadius: theme.components.card.radius,
+        },
+        errorText: { color: c.danger, fontSize: ty.sizes.sm },
+        listContent: {
+          paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+          paddingBottom: Math.max(
+            scrollPaddingBottom,
+            theme.components.screenLayout.contentPaddingBottom,
+          ),
+        },
+        rolePill: {
+          paddingHorizontal: sz.sm,
+          paddingVertical: sz.xs || 6,
+          borderRadius: rad.md,
+          borderWidth: 1,
+        },
+        rolePillText: { fontSize: ty.sizes.xs, fontWeight: ty.weight.semibold },
+        emptyWrap: { padding: sz.lg, alignItems: 'center' },
+        emptyText: { color: c.textSecondary },
+      }),
+    [
+      theme,
+      c.background,
+      c.danger,
+      c.text,
+      c.textSecondary,
+      rad.md,
+      scrollPaddingBottom,
+      sz.lg,
+      sz.sm,
+      sz.xs,
+      ty.sizes.sm,
+      ty.sizes.xl,
+      ty.sizes.xs,
+      ty.weight.bold,
+      ty.weight.semibold,
+    ],
+  );
+
+  // --- Debounce for search (theme.timings)
+  useEffect(() => {
+    const ms = Number(theme?.timings?.backDelayMs ?? 300);
+    const tmr = setTimeout(() => setDebouncedQ(q.trim().toLowerCase()), ms);
+    return () => clearTimeout(tmr);
+  }, [q, theme?.timings?.backDelayMs]);
+
+  // Pull-to-refresh handler
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
+
+  const onViewableItemsChanged = useMemo(
+    () => ({ viewableItems }) => {
+      const visibleUsers = viewableItems
+        .map((item) => item?.item)
+        .filter((item) => item?.id)
+        .slice(0, 2);
+
+      const task = InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        visibleUsers.forEach((item) => {
+          const id = String(item.id);
+          queryClient.setQueryData(queryKeys.employees.detail(id), (previous) =>
+            previous || { ...item, __listSeed: true },
+          );
+          registry.run(`employee-detail:${id}`, () => ensureEmployeePrefetch(queryClient, id)).catch(() => {});
+        });
+      });
+
+      return () => {
+        try {
+          task.cancel?.();
+        } catch {}
+      };
+    },
+    [queryClient],
+  );
+
+  // Memoized department map for fast lookup
+  const departmentMap = useMemo(() => {
+    const map = new Map();
+    if (Array.isArray(departments)) {
+      departments.forEach((dept) => {
+        map.set(String(dept.id), dept.name);
+      });
+    }
+    return map;
+  }, [departments]);
+
+  const filtered = useMemo(() => {
+    if (!debouncedQ) return users;
+    return users.filter((u) => {
+      const departmentLabel =
+        useDepartments
+          ? u?.department_id
+            ? departmentMap.get(String(u.department_id)) || ''
+            : t('placeholder_department')
+          : '';
+      return matchesSearch(
+        buildSearchIndex({
+          texts: [
+            formatPersonName(u),
+            u?.display_name,
+            u?.full_name,
+            u?.email,
+            u?.role,
+            getRoleLabel(u?.role, t),
+            departmentLabel,
+            u?.license_state,
+            u?.last_seen_at,
+          ],
+          phones: [u?.phone, u?.phone_number, u?.mobile_phone],
+        }),
+        debouncedQ,
+      );
+    });
+  }, [debouncedQ, departmentMap, useDepartments, users]);
+
+  const sortOptions = employeeSortOptions(t);
+
+  const sortedFiltered = useMemo(
+    () =>
+      sortEmployees(filtered, {
+        sortKey,
+        getName: (item) =>
+          formatPersonName(item) ||
+          (item?.display_name || '').trim() ||
+          item?.full_name ||
+          '',
+        getDepartmentName: (item) => {
+          if (!useDepartments) return '';
+          const dep = item?.department_id ? departmentMap.get(String(item.department_id)) : null;
+          return dep || t('placeholder_department');
+        },
+        getRoleLabel: (item) => t(`role_${item?.role || ROLE.WORKER}`, item?.role || ROLE.WORKER),
+        getLastSeenAt: (item) => item?.last_seen_at || null,
+      }),
+    [departmentMap, filtered, sortKey, useDepartments],
+  );
+
+  const goToUser = useCallback(
+    (id) => {
+      const normalizedId = String(id || '');
+      if (!normalizedId) return;
+
+      const now = Date.now();
+      const last = openUserNavGuardRef.current;
+      const sameUserRapidTap =
+        last.userId === normalizedId && now - last.startedAt < USER_OPEN_GUARD_MS;
+      const sameUserInFlight = last.userId === normalizedId && last.inFlight;
+      if (sameUserRapidTap || sameUserInFlight) return;
+
+      openUserNavGuardRef.current = {
+        userId: normalizedId,
+        startedAt: now,
+        inFlight: true,
+      };
+      const seed = users.find((item) => String(item?.id || '') === normalizedId);
+      if (seed) {
+        queryClient.setQueryData(queryKeys.employees.detail(normalizedId), (previous) =>
+          previous || { ...seed, __listSeed: true },
+        );
+      }
+      router.push(`/users/${normalizedId}`);
+      runAfterNavigationFrame(() => {
+        getPrefetchRegistry()
+          .run(`employee-detail:${normalizedId}`, () => ensureEmployeePrefetch(queryClient, normalizedId))
+          .catch(() => {});
+      });
+
+      const releaseGuard = () => {
+        const prev = openUserNavGuardRef.current;
+        if (prev.userId === normalizedId && prev.startedAt === now) {
+          openUserNavGuardRef.current = { ...prev, inFlight: false };
+        }
+      };
+
+      const fallbackTimer = setTimeout(releaseGuard, USER_OPEN_GUARD_MS);
+      InteractionManager.runAfterInteractions(() => {
+        clearTimeout(fallbackTimer);
+        releaseGuard();
+      });
+    },
+    [queryClient, router, users],
+  );
+
+  useFocusEffect(
+    useCallback(
+      () => {
+        // Realtime patches presence locally. Only revalidate an actually stale
+        // list so returning to the screen stays instant on low-end devices.
+        if (companyId && (!usersUpdatedAt || Date.now() - usersUpdatedAt >= 60 * 1000)) {
+          refreshUsers().catch(() => {});
+        }
+
+        return () => {
+          queryClient.cancelQueries({ queryKey: ['employees', 'list'] });
+          queryClient.cancelQueries({
+            queryKey: queryKeys.employees.departments(companyId, true),
+          });
+        };
+      },
+      [companyId, queryClient, refreshUsers, usersUpdatedAt],
+    ),
+  );
+
+  const rolePillStyle = useCallback((role) => {
+    const color =
+      role === ROLE.ADMIN
+        ? theme.colors?.primary
+        : role === ROLE.DISPATCHER
+          ? theme.colors?.success
+          : theme.colors?.worker || theme.colors?.primary;
+    return {
+      container: [
+        styles.rolePill,
+        {
+          backgroundColor: withAlpha(color, ALPHA_PILL_BG),
+          borderColor: withAlpha(color, ALPHA_PILL_BORDER),
+        },
+      ],
+      text: [styles.rolePillText, { color }],
+    };
+  }, [theme.colors, ALPHA_PILL_BG, ALPHA_PILL_BORDER, styles.rolePill, styles.rolePillText]);
+
+  // Robust Postgres timestamptz parser
+  function parsePgTs(ts) {
+    if (!ts) return null;
+    if (ts instanceof Date) return isNaN(ts) ? null : ts;
+
+    const toDateFromParts = (y, m, d, hh, mm, ss, ms, tzSign, tzH, tzM) => {
+      const utcMs = Date.UTC(y, m - 1, d, hh, mm, ss, ms);
+      if (tzSign) {
+        const offMin = (tzH || 0) * 60 + (tzM || 0);
+        const offMs = offMin * 60 * 1000;
+        return new Date(utcMs - (tzSign === '-' ? -offMs : offMs));
+      }
+      return new Date(utcMs); // treat no-TZ as UTC
+    };
+
+    try {
+      if (typeof ts === 'string') {
+        let s = ts.trim();
+        if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s) && s.indexOf('T') === -1) {
+          s = s.replace(' ', 'T');
+        }
+
+        const m = s.match(
+          /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):?(\d{2})|([+-])(\d{2}))?$/,
+        );
+        if (m) {
+          const year = +m[1],
+            month = +m[2],
+            day = +m[3];
+          const hh = +m[4],
+            mi = +m[5],
+            ss = +m[6];
+          const frac = m[7] ? m[7] : null;
+          let ms = 0;
+          if (frac) {
+            const msStr = (frac + '000').slice(0, 3);
+            ms = +msStr;
+          }
+
+          if (m[8] === 'Z') {
+            return new Date(Date.UTC(year, month - 1, day, hh, mi, ss, ms));
+          }
+          if (m[9] && m[10]) {
+            const sign = m[9];
+            const tzH = +m[10];
+            const tzM = +(m[11] || 0);
+            return toDateFromParts(year, month, day, hh, mi, ss, ms, sign, tzH, tzM);
+          }
+          if (m[12] && m[13]) {
+            const sign = m[12];
+            const tzH = +m[13];
+            return toDateFromParts(year, month, day, hh, mi, ss, ms, sign, tzH, 0);
+          }
+          return toDateFromParts(year, month, day, hh, mi, ss, ms, null, 0, 0);
+        }
+
+        const d = new Date(s);
+        return isNaN(d) ? null : d;
+      }
+
+      const d = new Date(ts);
+      return isNaN(d) ? null : d;
+    } catch {
+      return null;
+    }
+  }
+
+  // --- Filter definitions ---
+  // Compose summary string for active filters to display in UI
+  const filterSummaryData = useMemo(() => {
+    const fullParts = [];
+    const compactParts = [];
+    // Department summary
+    if (
+      useDepartments &&
+      Array.isArray(filters.values.departments) &&
+      filters.values.departments.length &&
+      Array.isArray(departments)
+    ) {
+      const names = filters.values.departments
+        .map((id) => {
+          if (isNoDepartmentFilterId(id)) return t('placeholder_department');
+          const d = departments.find((dept) => String(dept.id) === String(id));
+          return d ? d.name : null;
+        })
+        .filter(Boolean);
+      if (names.length) {
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('users_department'),
+            values: names,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('users_department'),
+            values: names,
+            countWhenMany: true,
+          }),
+        );
+      }
+    }
+    // Role summary
+    if (Array.isArray(filters.values.roles) && filters.values.roles.length) {
+      const roleNames = filters.values.roles.map((r) => getRoleLabel(r, t)).filter(Boolean);
+      if (roleNames.length) {
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('users_role'),
+            values: roleNames,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('users_role'),
+            values: roleNames,
+            countWhenMany: true,
+          }),
+        );
+      }
+    }
+    // Suspended summary
+    if (filters.values.suspended === true) {
+      fullParts.push(t('users_onlySuspended'));
+      compactParts.push(t('users_onlySuspended'));
+    } else if (filters.values.suspended === false) {
+      fullParts.push(t('users_withoutSuspended'));
+      compactParts.push(t('users_withoutSuspended'));
+    }
+    return {
+      full: joinFilterSummary(fullParts, t('common_bullet')),
+      compact: joinFilterSummary(compactParts, t('common_bullet')),
+    };
+  }, [filters.values, departments, useDepartments]);
+
+  // --- Presence helpers (i18n-driven, no hardcoded strings)
+  const isOnlineNow = React.useCallback(
+    (ts) => {
+      // online if last_seen within past 2 minutes (allow small future skew up to 5 min)
+      const d = parsePgTs(ts);
+      if (!isOnline) return false;
+      if (!d) return false;
+      const diff = Date.now() - d.getTime(); // positive if past
+      const onlineWindowMs = Number(theme?.timings?.presenceOnlineWindowMs ?? 120000); // 2 min default
+      const futureSkewMs = Number(theme?.timings?.presenceFutureSkewMs ?? 300000); // 5 min default
+      return diff <= onlineWindowMs && diff >= -futureSkewMs;
+    },
+    [isOnline, theme?.timings?.presenceOnlineWindowMs, theme?.timings?.presenceFutureSkewMs],
+  );
+
+  /**
+   * Helper: Format relative time for last seen
+   * Returns a human-readable relative time string.
+   * Up to 3 days uses relative format, 4+ days shows date only
+   */
+  const getRelativeTime = React.useCallback((now, past) => {
+    const diffMs = now - past;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+
+    // Less than a minute
+    if (diffMin < 1) {
+      return t('users_relativeTime_now');
+    }
+
+    // Minutes (1-59)
+    if (diffMin < 60) {
+      const n = diffMin;
+      const word = pluralizeRu(
+        n,
+        t('users_relativeTime_min_1'),
+        t('users_relativeTime_min_2_4'),
+        t('users_relativeTime_min_5'),
+      );
+      return `${n} ${word} ${t('users_relativeTime_ago')}`;
+    }
+
+    // Hours (1-23)
+    if (diffHour < 24) {
+      const n = diffHour;
+      const word = pluralizeRu(
+        n,
+        t('users_relativeTime_hour_1'),
+        t('users_relativeTime_hour_2_4'),
+        t('users_relativeTime_hour_5'),
+      );
+      return `${n} ${word} ${t('users_relativeTime_ago')}`;
+    }
+
+    // Days (1-3)
+    if (diffDay <= 3) {
+      const n = diffDay;
+      const word = pluralizeRu(
+        n,
+        t('users_relativeTime_day_1'),
+        t('users_relativeTime_day_2_4'),
+        t('users_relativeTime_day_5'),
+      );
+      return `${n} ${word} ${t('users_relativeTime_ago')}`;
+    }
+
+    // 4+ days: return null to signal date-only format should be used
+    return null;
+  }, []);
+
+  const formatPresence = React.useCallback(
+    (ts) => {
+      // Online or last-seen label
+      if (isOnlineNow(ts)) return t('users_online');
+
+      if (!ts) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
+      const d = parsePgTs(ts);
+      if (!d) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
+
+      const relativeTime = getRelativeTime(Date.now(), d.getTime());
+
+      // If within 3 days, use relative time format
+      if (relativeTime) {
+        return `${t('users_lastSeen_prefix')} ${relativeTime}`;
+      }
+
+      // For 4+ days, use date-only format (no time)
+      const datePart = new Intl.DateTimeFormat(resolveAppLocale(), {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(d);
+      return `${t('users_lastSeen_prefix')} ${datePart}`;
+    },
+    [isOnlineNow, getRelativeTime],
+  );
+
+  const renderItem = useCallback(
+    ({ item }) => {
+      // Fast department lookup from memoized map
+      const deptName = item?.department_id ? departmentMap.get(String(item.department_id)) : null;
+
+      return (
+        <UserCard
+          item={item}
+          departmentName={deptName}
+          showDepartment={useDepartments}
+          onPress={goToUser}
+          rolePillStyle={rolePillStyle}
+          formatPresence={formatPresence}
+          isOnlineNow={isOnlineNow}
+          translate={t}
+        />
+      );
+    },
+    [departmentMap, goToUser, rolePillStyle, formatPresence, isOnlineNow, useDepartments],
+  );
+
+  const keyExtractor = useCallback((item) => String(item.id), []);
+
+  // Show loader only on initial load (when we don't have cached data yet)
+  if (isLoading && users.length === 0) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['left', 'right']}>
+        <View style={styles.loaderWrap}>
+          <ActivityIndicator size={activityIndicatorSize} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['left', 'right']}>
+      <DismissKeyboardArea style={{ flex: 1 }}>
+        <View style={styles.container}>
+          <AppHeader
+            back
+            options={{
+              headerTitleAlign: 'left',
+              title: t('routes_users_index'),
+              rightTextLabel: t('btn_create'),
+              onRightPress: () => {
+                if (
+                  !subscriptionGuard.isLoading &&
+                  String(subscriptionGuard.reason || '').startsWith('subscription_')
+                ) {
+                  toast.warning(t('invite_no_license_warning'));
+                }
+                router.push('/users/new');
+              },
+            }}
+          />
+
+          <View style={styles.header}>
+            <SearchFiltersBar
+              value={q}
+              onChangeText={setQ}
+              onClear={() => setQ('')}
+              placeholder={t('users_search_placeholder')}
+              onOpenFilters={openFiltersPanel}
+              onOpenSort={() => setSortVisible(true)}
+              filterSummary={filterSummaryData.full}
+              filterSummaryCompact={filterSummaryData.compact}
+              onResetFilters={async () => {
+                const resetValues = filters.reset();
+                await filters.apply(resetValues);
+              }}
+              metaText={`${t('common_total')}: ${sortedFiltered.length}`}
+            />
+
+            {/* Removed error display - errors now handled by hooks */}
+          </View>
+
+          <View style={{ flex: 1 }}>
+            {refreshIndicator}
+            <FlatList
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.listContent}
+              data={sortedFiltered}
+              keyExtractor={keyExtractor}
+              renderItem={renderItem}
+              initialNumToRender={10}
+              maxToRenderPerBatch={8}
+              updateCellsBatchingPeriod={34}
+              windowSize={9}
+              removeClippedSubviews={Platform.OS === 'android'}
+              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+              refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+              ListEmptyComponent={<EmptyListState />}
+            />
+          </View>
+        </View>
+      </DismissKeyboardArea>
+
+      <SortSelectModal
+        visible={sortVisible}
+        onClose={() => setSortVisible(false)}
+        options={sortOptions}
+        value={sortKey}
+        onChange={(nextSort) => {
+          if (nextSort) setSortKey(nextSort);
+        }}
+      />
+
+      {/* DNS-like full-screen Filters Panel */}
+      <FiltersPanel
+        visible={filtersVisible}
+        onClose={() => setFiltersVisible(false)}
+        departments={useDepartments ? departments : []}
+        includeNoDepartment={useDepartments}
+        rolesOptions={Object.values(ROLE).map((r) => ({
+          id: r,
+          value: r,
+          label: getRoleLabel(r, t),
+        }))}
+        searchItems={users}
+        showSearchCategory={false}
+        values={filters.values}
+        setValue={setFilterValue}
+        defaults={{ departments: [], roles: [], suspended: null }}
+        onReset={() => filters.reset()}
+        onApply={async (nextValues) => {
+          await filters.apply(nextValues);
+          // Users will be refreshed automatically via useEffect
+        }}
+      />
+    </SafeAreaView>
+  );
+}
+export default function UsersIndex() {
+  return <UsersIndexContent />;
+}

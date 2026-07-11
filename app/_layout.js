@@ -42,8 +42,18 @@ import { getSupportRequestById } from '../src/features/supportRequests/api';
 import { initI18n, setLocale } from '../src/i18n';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { FeedbackProvider } from '../src/shared/feedback';
+import { FormAutoScrollProvider } from '../src/shared/forms/FormAutoScrollContext';
 import OfflineStatusBanner from '../src/shared/offline/OfflineStatusBanner';
-import { getOfflineSnapshot, isOfflineLikeError } from '../src/shared/offline/offlineStatus';
+import {
+  getOfflineSnapshot,
+  isOfflineLikeError,
+  subscribeOfflineState,
+} from '../src/shared/offline/offlineStatus';
+import {
+  registerOfflineBackgroundSync,
+  recoverInterruptedOrderPhotoQueue,
+  runBackgroundSync,
+} from '../src/shared/offline/backgroundSync';
 import QueryProvider from '../src/shared/query/QueryProvider';
 import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
 import { withAlpha } from '../theme/colors';
@@ -73,7 +83,8 @@ function ensureForegroundNotificationHandler() {
 }
 
 function LastSeenTracker() {
-  useAppLastSeen(30_000);
+  const { user } = useAuthContext();
+  useAppLastSeen(60_000, user?.id || null);
   return null;
 }
 
@@ -379,6 +390,49 @@ function RootLayoutInner() {
       .maybeSingle();
     return byId || null;
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return undefined;
+    let active = true;
+    let running = false;
+    let initialized = false;
+
+    const run = async () => {
+      if (!active || !initialized || running) return;
+      const network = getOfflineSnapshot();
+      if (network.isNetworkKnown && !network.isOnline) return;
+      running = true;
+      try {
+        await runBackgroundSync();
+      } finally {
+        running = false;
+      }
+    };
+
+    registerOfflineBackgroundSync().catch(() => {});
+    recoverInterruptedOrderPhotoQueue()
+      .catch(() => {})
+      .finally(() => {
+        initialized = true;
+        run().catch(() => {});
+      });
+    const unsubscribeNetwork = subscribeOfflineState(() => {
+      run().catch(() => {});
+    });
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') run().catch(() => {});
+    });
+    const retryTimer = setInterval(() => {
+      run().catch(() => {});
+    }, 60_000);
+
+    return () => {
+      active = false;
+      unsubscribeNetwork();
+      appStateSubscription.remove();
+      clearInterval(retryTimer);
+    };
+  }, [isAuthenticated, user?.id]);
 
   const enforceAccess = useCallback(async () => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
@@ -1062,6 +1116,7 @@ function RootLayoutInner() {
       onLayout={hideSplash}
     >
       <PermissionsProvider>
+        <FormAutoScrollProvider scopeKey={pathname} enabled>
           <SafeAreaView
             edges={rootSafeEdges}
             style={{ flex: 1, backgroundColor: theme.colors.background }}
@@ -1151,6 +1206,7 @@ function RootLayoutInner() {
             {isAuthenticated && !isBlockedScreen && <BottomNav />}
             {isAuthenticated && <LastSeenTracker />}
           </SafeAreaView>
+        </FormAutoScrollProvider>
       </PermissionsProvider>
     </GestureHandlerRootView>
   );

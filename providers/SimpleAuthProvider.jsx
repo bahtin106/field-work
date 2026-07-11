@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import NetInfo from '@react-native-community/netinfo';
 import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { createLogger } from '../lib/logger';
 import { formatPersonNameParts } from '../lib/personName';
@@ -7,11 +8,12 @@ import { supabase } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
 import { queryClient } from '../src/shared/query/queryClient';
 import { queryKeys } from '../src/shared/query/queryKeys';
+import { getOfflineSnapshot, setOfflineNetState } from '../src/shared/offline/offlineStatus';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS =
   'id, first_name, middle_name, last_name, full_name, role, avatar_url, company_id, department_id';
-const PROFILE_LOAD_TIMEOUT_MS = 8000;
+const PROFILE_LOAD_TIMEOUT_MS = 4000;
 const PROFILE_RECOVERY_ATTEMPTS = 4;
 const PROFILE_RECOVERY_BASE_DELAY_MS = 1200;
 const INVALID_REFRESH_TOKEN_RE = /invalid refresh token|refresh token.+already used/i;
@@ -304,18 +306,12 @@ export function SimpleAuthProvider({ children }) {
           const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_LOAD_TIMEOUT_MS - 300;
 
           if (isTimeout || isTimeoutLikeNetwork) {
-            const cachedProfile = getCachedProfileForUser(userId);
-            if (cachedProfile) return cachedProfile;
             log.warn('Profile load timed out');
             throw new Error('profile-load-timeout');
           } else if (isNetworkError) {
-            const cachedProfile = getCachedProfileForUser(userId);
-            if (cachedProfile) return cachedProfile;
             log.warn('Profile network error:', error);
             throw new Error('profile-load-network-error');
           } else if (isSessionExpiredLikeError(error)) {
-            const cachedProfile = getCachedProfileForUser(userId);
-            if (cachedProfile) return cachedProfile;
             throw new Error('profile-load-session-expired');
           } else {
             log.error('Profile error:', error);
@@ -332,7 +328,7 @@ export function SimpleAuthProvider({ children }) {
       profileLoadInFlightRef.current.set(userId, loadPromise);
       return loadPromise;
     },
-    [debugLog, getCachedProfileForUser, rememberProfileSnapshot],
+    [debugLog, rememberProfileSnapshot],
   );
 
   const scheduleProfileRecovery = useCallback(
@@ -354,12 +350,19 @@ export function SimpleAuthProvider({ children }) {
           if (recoveryJobId !== recoveryJobIdRef.current) return;
           if (currentUserIdRef.current !== userId) return;
           if (!profile) return;
+          const previousProfile = profileRef.current || getCachedProfileSnapshot();
+          if (hasProfileScopeChanged(previousProfile, profile, userId)) {
+            await cleanupSessionRuntime('profile-recovery-scope-changed');
+            if (recoveryJobId !== recoveryJobIdRef.current) return;
+            if (currentUserIdRef.current !== userId) return;
+          }
           rememberProfileSnapshot(profile, userId);
 
           setState((prev) => {
             if (prev.user?.id !== userId) return prev;
             return {
               ...prev,
+              isInitializing: false,
               profile,
               profileError: null,
             };
@@ -505,11 +508,26 @@ export function SimpleAuthProvider({ children }) {
       const hasCurrentProfile = profileRef.current?.id === nextUserId;
       const cachedProfileForCurrentUser = getCachedProfileForUser(nextUserId);
       const metadataProfileForCurrentUser = buildProfileFromUser(user, 'metadata-bootstrap');
+      const networkSnapshot = getOfflineSnapshot();
+      const isConfirmedOffline = networkSnapshot.isNetworkKnown && !networkSnapshot.isOnline;
+      // A same-user cache may paint immediately only for a cold session restore,
+      // and only when the device is confirmed offline. Online startup waits for
+      // the authoritative profile, preventing an old persisted snapshot from
+      // flashing even if the app was killed before the cache flush completed.
+      const canUseColdCachedProfile =
+        event === 'INITIAL_SESSION' &&
+        !!cachedProfileForCurrentUser &&
+        isConfirmedOffline;
+      const shouldBlockUi =
+        !hasCurrentProfile &&
+        !canUseColdCachedProfile &&
+        (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || userChanged);
       const bootstrapProfile =
-        cachedProfileForCurrentUser ||
-        (hasCurrentProfile ? profileRef.current : null) ||
-        metadataProfileForCurrentUser;
-      const shouldBlockUi = false;
+        shouldBlockUi
+          ? null
+          : cachedProfileForCurrentUser ||
+            (hasCurrentProfile ? profileRef.current : null) ||
+            metadataProfileForCurrentUser;
 
       if (isNonBlockingSameUserEvent && hasCurrentProfile) {
         setState((prev) => ({
@@ -524,7 +542,7 @@ export function SimpleAuthProvider({ children }) {
 
       const requestId = ++authRequestIdRef.current;
       setState((prev) => ({
-        isInitializing: false,
+        isInitializing: shouldBlockUi,
         isSigningOut: false,
         isAuthenticated: true,
         user,
@@ -570,6 +588,7 @@ export function SimpleAuthProvider({ children }) {
                 ? 'refresh-network-error-using-current-profile'
                 : 'refresh-error-using-current-profile',
           }));
+          scheduleProfileRecovery(user);
           return;
         }
 
@@ -601,6 +620,14 @@ export function SimpleAuthProvider({ children }) {
 
   useEffect(() => {
     let mounted = true;
+    const initialNetworkStatePromise = Promise.race([
+      NetInfo.fetch()
+        .then((networkState) => {
+          if (mounted) setOfflineNetState(networkState);
+        })
+        .catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 1200)),
+    ]);
 
     const loadInitialSession = async () => {
       const MAX_ATTEMPTS = 3;
@@ -629,6 +656,7 @@ export function SimpleAuthProvider({ children }) {
 
           if (!initialSessionHandledRef.current) {
             initialSessionHandledRef.current = true;
+            await initialNetworkStatePromise;
             await handleAuthChange('INITIAL_SESSION', session);
           }
           return;
@@ -654,7 +682,9 @@ export function SimpleAuthProvider({ children }) {
       if (mounted) {
         setState((prev) => ({
           ...prev,
-          isInitializing: false,
+          // A fresh authenticated session must not reveal persisted profile data
+          // while its authoritative profile request is still in flight.
+          isInitializing: prev.isAuthenticated && !prev.profile ? prev.isInitializing : false,
         }));
       }
     }, 3000);
@@ -668,7 +698,11 @@ export function SimpleAuthProvider({ children }) {
       }
       // Supabase auth callbacks must stay synchronous; deferring async work
       // avoids deadlocks with methods like auth.updateUser() in React Native.
-      setTimeout(() => {
+      setTimeout(async () => {
+        if (event === 'INITIAL_SESSION') {
+          await initialNetworkStatePromise;
+          if (!mounted) return;
+        }
         handleAuthChange(event, session).catch((error) => {
           log.error('onAuthStateChange handler failed:', error);
         });

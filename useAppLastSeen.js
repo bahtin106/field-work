@@ -3,13 +3,13 @@ import { useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { supabase } from './lib/supabase';
 
-export function useAppLastSeen(minIntervalMs = 60_000) {
+export function useAppLastSeen(minIntervalMs = 60_000, userId = null) {
   const lastSentAtRef = useRef(0);
   const appStateRef = useRef(AppState.currentState);
   const inFlightRef = useRef(false);
   const mountedRef = useRef(false);
 
-  const updateLastSeen = useCallback(async (_uid, _src) => {
+  const updateLastSeen = useCallback(async () => {
     // 1) RPC (предпочтительно)
     try {
       const { error } = await supabase.rpc('touch_last_seen');
@@ -24,7 +24,7 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
     return false;
   }, []);
 
-  const ping = useCallback(async (src = 'unknown') => {
+  const ping = useCallback(async (_src = 'unknown') => {
     // Не шевелимся, если приложение не активно — убираем сетевые ошибки в фоне
     if (appStateRef.current !== 'active') {
       return;
@@ -37,23 +37,14 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
 
     try {
       // безопасный вызов без крашей при отсутствии сессии
-      const { data: { user } = {}, error: userErr } = await supabase.auth
-        .getUser()
-        .catch((_e) => ({ error: _e }));
-
-      if (userErr?.message?.includes?.('Auth session missing')) {
-        return;
-      }
-      if (!user?.id) {
-        return;
-      }
+      if (!userId) return;
 
       const now = Date.now();
       if (now - lastSentAtRef.current < minIntervalMs) {
         return;
       }
 
-      const ok = await updateLastSeen(user.id, src);
+      const ok = await updateLastSeen();
       if (ok) {
         lastSentAtRef.current = now;
       }
@@ -65,7 +56,7 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
     } finally {
       inFlightRef.current = false;
     }
-  }, [minIntervalMs, updateLastSeen]);
+  }, [minIntervalMs, updateLastSeen, userId]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { AppState } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 
 async function fetchCompanyAccessState(companyId) {
@@ -40,23 +41,25 @@ async function fetchCompanyAccessState(companyId) {
 
 export function useCompanyAccessState(companyId) {
   const queryClient = useQueryClient();
+  const isFocused = useIsFocused();
   const query = useQuery({
     queryKey: ['companyAccessState', companyId],
     enabled: !!companyId,
     queryFn: () => fetchCompanyAccessState(companyId),
     staleTime: 30 * 1000,
-    refetchInterval: companyId ? 30 * 1000 : false,
+    refetchInterval: companyId && isFocused ? 30 * 1000 : false,
     refetchIntervalInBackground: false,
     refetchOnMount: 'stale',
     refetchOnReconnect: true,
   });
+  const { refetch, dataUpdatedAt } = query;
 
   useFocusEffect(
     React.useCallback(() => {
       if (!companyId) return undefined;
-      query.refetch();
+      if (!dataUpdatedAt || Date.now() - dataUpdatedAt >= 30 * 1000) refetch();
       return undefined;
-    }, [companyId, query]),
+    }, [companyId, dataUpdatedAt, refetch]),
   );
 
   React.useEffect(() => {
@@ -70,6 +73,6 @@ export function useCompanyAccessState(companyId) {
 
   return {
     ...query,
-    refresh: query.refetch,
+    refresh: refetch,
   };
 }

@@ -47,9 +47,12 @@ export default function LazyRouteScreen({
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const resolvedCacheKey = cacheKey || titleKey || titleFallback || null;
+  const resolvedCacheKey = String(cacheKey || titleKey || titleFallback || '').trim() || null;
   const [LoadedScreen, setLoadedScreen] = React.useState(() =>
     resolvedCacheKey ? loadedScreenCache.get(resolvedCacheKey) || null : null,
+  );
+  const [canMountScreen, setCanMountScreen] = React.useState(() =>
+    Boolean(resolvedCacheKey && loadedScreenCache.get(resolvedCacheKey)),
   );
   const [loadError, setLoadError] = React.useState(false);
   const loadRef = React.useRef(load);
@@ -65,6 +68,7 @@ export default function LazyRouteScreen({
       const cachedScreen = loadedScreenCache.get(resolvedCacheKey);
       if (cachedScreen) {
         setLoadedScreen(() => cachedScreen);
+        setCanMountScreen(true);
         setLoadError(false);
         return Promise.resolve(cachedScreen);
       }
@@ -88,13 +92,30 @@ export default function LazyRouteScreen({
       });
   }, [resolvedCacheKey]);
 
-  React.useLayoutEffect(() => {
-    if (LoadedScreen) return undefined;
-    startLoad();
-    return undefined;
-  }, [LoadedScreen, startLoad]);
+  React.useEffect(() => {
+    if (LoadedScreen && canMountScreen) return undefined;
+    let cancelled = false;
+    let timer = null;
 
-  if (LoadedScreen) return <LoadedScreen {...screenProps} />;
+    // Only a genuinely new module needs the lightweight first frame. Once the
+    // module is cached, subsequent route mounts render the real screen
+    // immediately and never flash an intermediate placeholder.
+    const frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        if (LoadedScreen) setCanMountScreen(true);
+        else startLoad();
+      }, 0);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      if (timer) clearTimeout(timer);
+    };
+  }, [LoadedScreen, canMountScreen, startLoad]);
+
+  if (LoadedScreen && canMountScreen) return <LoadedScreen {...screenProps} />;
 
   return (
     <Screen background="background" headerOptions={{ title }}>

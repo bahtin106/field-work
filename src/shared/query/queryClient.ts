@@ -18,7 +18,12 @@ const DEFAULT_QUERY_STALE_MS = 60 * 1000;
 const HOT_REQUEST_LIST_STALE_MS = 60 * 1000;
 const DEFAULT_QUERY_GC_MS = PERSIST_MAX_AGE_MS;
 const DEFAULT_MAX_RETRIES = 2;
-const PERSIST_THROTTLE_MS = 5000;
+const PERSIST_THROTTLE_MS = 12_000;
+// Keep hydration bounded on low-memory Android devices. This is a soft budget:
+// paused mutations and optimistic offline data are never removed from disk.
+const PERSIST_TARGET_SERIALIZED_CHARS = 3 * 1024 * 1024;
+const PERSIST_HARD_SERIALIZED_CHARS = 4 * 1024 * 1024;
+const PERSISTED_QUERY_OVERHEAD_CHARS = 512;
 
 function getErrorStatus(error: any): number | null {
   const status = Number(error?.status || error?.statusCode || error?.response?.status);
@@ -224,6 +229,7 @@ queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: PERSIST_MAX_AGE_MS
 export const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
   throttleTime: PERSIST_THROTTLE_MS,
+  serialize: serializePersistedClient,
 });
 
 let listenersConfigured = false;
@@ -366,25 +372,170 @@ export function configureQueryEnvironment() {
   startCacheMaintenance();
 }
 
-const serializedSizeCache = new WeakMap<object, number>();
+type SerializedDataStats = {
+  chars: number;
+  hasOfflinePending: boolean;
+};
 
-function isPersistableSize(data: unknown, maxBytes: number) {
+const serializedDataStatsCache = new WeakMap<object, SerializedDataStats>();
+
+function getSerializedDataStats(data: unknown): SerializedDataStats {
   if (data && typeof data === 'object') {
-    const cached = serializedSizeCache.get(data as object);
-    if (cached != null) return cached <= maxBytes;
+    const cached = serializedDataStatsCache.get(data as object);
+    if (cached) return cached;
     try {
-      const size = JSON.stringify(data).length;
-      serializedSizeCache.set(data as object, size);
-      return size <= maxBytes;
+      const serialized = JSON.stringify(data);
+      const stats = {
+        chars: serialized?.length || 0,
+        hasOfflinePending: serialized?.includes('"__offlinePending":true') || false,
+      };
+      serializedDataStatsCache.set(data as object, stats);
+      return stats;
     } catch {
-      return false;
+      return { chars: Number.POSITIVE_INFINITY, hasOfflinePending: false };
     }
   }
   try {
-    return JSON.stringify(data).length <= maxBytes;
+    return { chars: JSON.stringify(data)?.length || 0, hasOfflinePending: false };
   } catch {
-    return false;
+    return { chars: Number.POSITIVE_INFINITY, hasOfflinePending: false };
   }
+}
+
+function isPersistableSize(data: unknown, maxBytes: number) {
+  return getSerializedDataStats(data).chars <= maxBytes;
+}
+
+function getPersistedQueryPriority(query: any) {
+  const dataStats = getSerializedDataStats(query?.state?.data);
+  if (dataStats.hasOfflinePending) return 0;
+
+  const key = Array.isArray(query?.queryKey) ? query.queryKey : [];
+  const key0 = key[0];
+  const key1 = key[1];
+  if (
+    key0 === 'profile' ||
+    key0 === 'company' ||
+    key0 === 'department' ||
+    key0 === 'appSettings' ||
+    key0 === 'companyEntitlements' ||
+    key0 === 'companyAccessState' ||
+    key0 === 'companyPaidSeatsTotal' ||
+    key0 === 'billingMemberStats' ||
+    key0 === 'company-order-statuses' ||
+    key0 === 'field-settings' ||
+    key0 === 'tags' ||
+    (Array.isArray(COMPANY_SETTINGS_QUERY_KEY) &&
+      COMPANY_SETTINGS_QUERY_KEY.every((part, index) => key[index] === part))
+  ) {
+    return 1;
+  }
+  if (
+    (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar')) ||
+    (key0 === 'orders' && (key1 === 'all' || key1 === 'my') && key[2] === 'recent') ||
+    (key0 === 'employees' && (key1 === 'list' || key1 === 'departments')) ||
+    (key0 === 'clients' && key1 === 'list') ||
+    (key0 === 'objects' && (key1 === 'by-company' || key1 === 'by-client'))
+  ) {
+    return 2;
+  }
+  if (key1 === 'detail') return 3;
+  return 4;
+}
+
+function estimatePersistedQueryChars(query: any) {
+  const dataChars = getSerializedDataStats(query?.state?.data).chars;
+  if (!Number.isFinite(dataChars)) return Number.POSITIVE_INFINITY;
+  let keyChars = 0;
+  try {
+    keyChars = JSON.stringify(query?.queryKey)?.length || 0;
+  } catch {}
+  return dataChars + keyChars + String(query?.queryHash || '').length + PERSISTED_QUERY_OVERHEAD_CHARS;
+}
+
+function sortPersistedQueriesByValue(queries: any[]) {
+  return [...queries].sort((left, right) => {
+    const priorityDelta = getPersistedQueryPriority(left) - getPersistedQueryPriority(right);
+    if (priorityDelta !== 0) return priorityDelta;
+    return Number(right?.state?.dataUpdatedAt || 0) - Number(left?.state?.dataUpdatedAt || 0);
+  });
+}
+
+function compactPersistedClient(persistedClient: any) {
+  const queries = Array.isArray(persistedClient?.clientState?.queries)
+    ? persistedClient.clientState.queries
+    : [];
+  if (!queries.length) return persistedClient;
+
+  let fixedChars = 0;
+  try {
+    fixedChars = JSON.stringify({
+      ...persistedClient,
+      clientState: {
+        ...(persistedClient.clientState || {}),
+        queries: [],
+      },
+    }).length;
+  } catch {
+    return persistedClient;
+  }
+
+  let remainingChars = Math.max(0, PERSIST_TARGET_SERIALIZED_CHARS - fixedChars);
+  const selected: any[] = [];
+  for (const query of sortPersistedQueriesByValue(queries)) {
+    const estimate = estimatePersistedQueryChars(query);
+    const isOfflinePending = getSerializedDataStats(query?.state?.data).hasOfflinePending;
+    if (isOfflinePending || estimate <= remainingChars) {
+      selected.push(query);
+      if (Number.isFinite(estimate)) remainingChars = Math.max(0, remainingChars - estimate);
+    }
+  }
+
+  if (selected.length === queries.length) return persistedClient;
+  return {
+    ...persistedClient,
+    clientState: {
+      ...(persistedClient.clientState || {}),
+      queries: selected,
+    },
+  };
+}
+
+function serializePersistedClient(persistedClient: any) {
+  let compacted = compactPersistedClient(persistedClient);
+  let serialized = JSON.stringify(compacted);
+  if (serialized.length <= PERSIST_HARD_SERIALIZED_CHARS) return serialized;
+
+  // The estimate intentionally leaves headroom, but unusually large query
+  // metadata can still cross the hard bound. Remove the least valuable cached
+  // rows in one more pass while retaining optimistic offline state.
+  const queries = Array.isArray(compacted?.clientState?.queries)
+    ? compacted.clientState.queries
+    : [];
+  const required = queries.filter(
+    (query: any) => getSerializedDataStats(query?.state?.data).hasOfflinePending,
+  );
+  const optional = sortPersistedQueriesByValue(
+    queries.filter((query: any) => !getSerializedDataStats(query?.state?.data).hasOfflinePending),
+  );
+  let overflow = serialized.length - PERSIST_HARD_SERIALIZED_CHARS;
+  while (overflow > 0 && optional.length) {
+    const removed = optional.pop();
+    try {
+      overflow -= Math.max(1, JSON.stringify(removed)?.length || 0);
+    } catch {
+      overflow = 0;
+    }
+  }
+  compacted = {
+    ...compacted,
+    clientState: {
+      ...(compacted.clientState || {}),
+      queries: [...required, ...optional],
+    },
+  };
+  serialized = JSON.stringify(compacted);
+  return serialized;
 }
 
 export const persistOptions = {
@@ -399,6 +550,7 @@ export const persistOptions = {
       if (key0 === 'session' || key0 === 'userRole' || key0 === 'perm-canViewAll') {
         return false;
       }
+      if (getSerializedDataStats(q.state.data).hasOfflinePending) return true;
       if (
         key0 === 'profile' &&
         key1 !== 'me' &&

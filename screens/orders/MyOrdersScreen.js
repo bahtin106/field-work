@@ -79,7 +79,6 @@ import {
   seedExecutorNames,
 } from '../../src/features/requests/executorNameCache';
 import { listRequests } from '../../src/features/requests/api';
-import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import {
   applyOrderRelationFilters,
   hasRelationFilters,
@@ -96,6 +95,7 @@ import {
 } from '../../src/shared/perf/devMetrics';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -879,9 +879,17 @@ function MyOrdersContent() {
     () => makeCacheKey('all', listFingerprint, relationFingerprint),
     [listFingerprint, makeCacheKey, relationFingerprint],
   );
+  const recentOrdersPrefetchData = queryClient.getQueryData(recentOrdersQueryKey);
+  if (!recentOrdersCacheKeyRef.current && Array.isArray(recentOrdersPrefetchData)) {
+    recentOrdersCacheKeyRef.current = defaultListCacheKey;
+    const recentUpdatedAt = Number(queryClient.getQueryState(recentOrdersQueryKey)?.dataUpdatedAt || 0);
+    if (recentUpdatedAt > 0 && !listCacheFetchedAtRef.current[defaultListCacheKey]) {
+      listCacheFetchedAtRef.current[defaultListCacheKey] = recentUpdatedAt;
+    }
+  }
 
   const [orders, setOrders] = useState(() => {
-    const prefetchData = queryClient.getQueryData(recentOrdersQueryKey);
+    const prefetchData = recentOrdersPrefetchData;
     if (Array.isArray(prefetchData)) {
       return prefetchData;
     }
@@ -1395,17 +1403,6 @@ function MyOrdersContent() {
 
   useEffect(() => {
     return startFpsProbe(MY_ORDERS_SCREEN_KEY, MY_ORDERS_FPS_PROBE_MS);
-  }, []);
-
-  useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
-      preloadOrderDetailsScreen().catch(() => {});
-    });
-    return () => {
-      try {
-        task.cancel?.();
-      } catch {}
-    };
   }, []);
 
   const feedState = !feedHasAny
@@ -2048,9 +2045,8 @@ function MyOrdersContent() {
           returnParams: JSON.stringify(returnParamsRef.current),
         },
       });
-      InteractionManager.runAfterInteractions(() => {
-        const registry = getPrefetchRegistry();
-        registry
+      runAfterNavigationFrame(() => {
+        getPrefetchRegistry()
           .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
           .catch(() => {});
       });
@@ -2062,14 +2058,17 @@ function MyOrdersContent() {
       <DynamicOrderCard
         order={order}
         context="my_orders"
+        viewerRole={auth.profile?.role}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
         companySettingsOverride={companySettings || null}
+        orderStatuses={statusSystem.statuses}
+        orderStatusesEnabled={statusSystem.isEnabled}
       />
     ),
-    [companySettings, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
+    [auth.profile?.role, companySettings, departureTimeEnabled, openOrderDetails, orderFieldsByKey, statusSystem.isEnabled, statusSystem.statuses],
   );
 
   const loadMoreOrders = useCallback(() => {
@@ -2107,15 +2106,6 @@ function MyOrdersContent() {
       });
     },
     [queryClient],
-  );
-
-  useFocusEffect(
-    useCallback(
-      () => () => {
-        queryClient.cancelQueries({ queryKey: ['requests', 'detail'] });
-      },
-      [queryClient],
-    ),
   );
 
   // Footer spinner for pagination
@@ -2400,10 +2390,92 @@ function MyOrdersContent() {
   const { refreshing: bgRefreshing, didSucceed, onRefresh } = useManagedRefresh(refreshWithIndicator);
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(bgRefreshing, { didSucceed });
 
+  const handleRegisteredRefresh = useCallback(
+    (context = {}) => {
+      if (context?.reason !== 'request-cache-patch' || !context?.request?.id) {
+        return refreshCurrentList(context);
+      }
+
+      const incoming = context.request;
+      const incomingId = String(incoming.id || '').trim();
+      const rawStatus = String(incoming.status || '').trim();
+      const mappedStatus =
+        statusAliasToFilterKey.get(rawStatus) || normalizeOrderStatusFilterKey(rawStatus);
+      const normalizedActiveStatus = normalizeOrderStatusFilterKey(activeStatusFilter);
+      const selectedStatuses = new Set(
+        (Array.isArray(selectedStatusFilters) ? selectedStatusFilters : [])
+          .map(normalizeOrderStatusFilterKey)
+          .filter(Boolean),
+      );
+      let belongsToActiveStatus = true;
+      if (statusSystem.isEnabled) {
+        if (activeStatusFilter === 'feed') {
+          belongsToActiveStatus = mappedStatus === 'feed';
+        } else if (activeStatusFilter === MULTIPLE_STATUS_FILTER) {
+          belongsToActiveStatus = selectedStatuses.has(mappedStatus);
+        } else if (normalizedActiveStatus && normalizedActiveStatus !== 'all') {
+          belongsToActiveStatus = mappedStatus === normalizedActiveStatus;
+        } else if (isFeedFeatureEnabled) {
+          belongsToActiveStatus = mappedStatus !== 'feed';
+        }
+      }
+
+      const assignedTo = Object.prototype.hasOwnProperty.call(incoming, 'assigned_to')
+        ? String(incoming.assigned_to || '').trim()
+        : null;
+      const currentUserId = String(auth.user?.id || auth.profile?.id || '').trim();
+      if (activeStatusFilter === 'feed') {
+        if (assignedTo) belongsToActiveStatus = false;
+      } else if (assignedTo != null && currentUserId && assignedTo !== currentUserId) {
+        belongsToActiveStatus = false;
+      }
+
+      const patchRows = (rows) => {
+        if (!Array.isArray(rows)) return rows;
+        let changed = false;
+        const next = [];
+        rows.forEach((row) => {
+          if (String(row?.id || '').trim() !== incomingId) {
+            next.push(row);
+            return;
+          }
+          changed = true;
+          if (belongsToActiveStatus) next.push({ ...row, ...incoming });
+        });
+        return changed ? next : rows;
+      };
+
+      const key = (typeof effectiveFilter === 'string' ? effectiveFilter : 'all') || 'all';
+      const cacheKey = makeCacheKey(key, listFingerprint, relationFingerprint);
+      const cachedRows = listCacheMy[cacheKey];
+      const nextCachedRows = patchRows(cachedRows);
+      if (nextCachedRows !== cachedRows) listCacheMy[cacheKey] = nextCachedRows;
+      delete listCacheFetchedAtRef.current[cacheKey];
+      setOrders((current) => patchRows(current));
+
+      return refreshCurrentList({ ...context, reason: 'route-focus' });
+    },
+    [
+      activeStatusFilter,
+      auth.profile?.id,
+      auth.user?.id,
+      effectiveFilter,
+      isFeedFeatureEnabled,
+      listCacheMy,
+      listFingerprint,
+      makeCacheKey,
+      refreshCurrentList,
+      relationFingerprint,
+      selectedStatusFilters,
+      statusAliasToFilterKey,
+      statusSystem.isEnabled,
+    ],
+  );
+
   useScreenRefreshRegistration(
     'orders.my',
-      (context) => refreshCurrentList(context),
-      true,
+    handleRegisteredRefresh,
+    true,
   );
 
   return (

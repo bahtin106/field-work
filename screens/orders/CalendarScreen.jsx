@@ -11,7 +11,6 @@ import {
   ActivityIndicator,
   BackHandler,
   FlatList,
-  InteractionManager,
   Platform,
   Pressable,
   SectionList,
@@ -51,6 +50,7 @@ import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { clamp, getMonthWeeks } from '../../hooks/useCalendarLogic';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
+import { useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import { usePermissions } from '../../lib/permissions';
 import { formatPersonName } from '../../lib/personName';
 import {
@@ -61,16 +61,18 @@ import {
 import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import {
   ensureRequestPrefetch,
+  markRequestDetailSeed,
   useCalendarRequests,
   useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { enrichOrdersWithKnownExecutorRows } from '../../src/features/requests/executorNameCache';
-import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import { useDepartmentsQuery } from '../../src/features/employees/queries';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { isPerfLoggingEnabled, markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
+import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -382,6 +384,7 @@ function CalendarScreenContent() {
   const canUseCalendarAllScope = canViewAllOrders && !isSoloAdmin;
   const companyId = profile?.company_id || null;
   const { settings: companySettings } = useCompanySettings(companyId);
+  const statusSystem = useCompanyOrderStatuses(companyId);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: !!companyId,
   });
@@ -398,17 +401,6 @@ function CalendarScreenContent() {
 
   useEffect(() => {
     markScreenMount('Calendar');
-  }, []);
-
-  useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
-      preloadOrderDetailsScreen().catch(() => {});
-    });
-    return () => {
-      try {
-        task.cancel?.();
-      } catch {}
-    };
   }, []);
 
   const calendarQueryRange = useMemo(() => {
@@ -2110,17 +2102,21 @@ function CalendarScreenContent() {
     [],
   );
   const openOrderDetails = useCallback(
-    (orderIdRaw) => {
+    (orderIdRaw, orderSeed = null) => {
       const orderId = String(orderIdRaw || '').trim();
       if (!orderId) return;
       const now = Date.now();
       const prev = detailNavLockRef.current;
       if (prev.id === orderId && now - prev.ts < CALENDAR_NAV_LOCK_MS) return;
       detailNavLockRef.current = { id: orderId, ts: now };
+      if (orderSeed && typeof orderSeed === 'object') {
+        queryClient.setQueryData(queryKeys.requests.detail(orderId), (previous) =>
+          markRequestDetailSeed({ ...orderSeed, id: orderId }, previous),
+        );
+      }
       router.push(`/orders/${orderId}`);
-      InteractionManager.runAfterInteractions(() => {
-        const registry = getPrefetchRegistry();
-        registry
+      runAfterNavigationFrame(() => {
+        getPrefetchRegistry()
           .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
           .catch(() => {});
       });
@@ -2132,14 +2128,17 @@ function CalendarScreenContent() {
       <DynamicOrderCard
         order={item}
         context={scope === CALENDAR_SCOPE.MY ? 'my_orders' : 'all_orders'}
+        viewerRole={profile?.role}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
         companySettingsOverride={companySettings || null}
+        orderStatuses={statusSystem.statuses}
+        orderStatusesEnabled={statusSystem.isEnabled}
       />
     ),
-    [companySettings, departureTimeEnabled, openOrderDetails, orderFieldsByKey, scope],
+    [companySettings, departureTimeEnabled, openOrderDetails, orderFieldsByKey, profile?.role, scope, statusSystem.isEnabled, statusSystem.statuses],
   );
   const ordersEmptyComponent = useMemo(
     () =>
@@ -2175,11 +2174,14 @@ function CalendarScreenContent() {
             <DynamicOrderCard
               order={item}
               context="calendar"
+              viewerRole={profile?.role}
               onPress={openOrderDetails}
               departureTimeEnabled={departureTimeEnabled}
               orderFieldsByKey={orderFieldsByKey}
               companyCurrency={companySettings?.currency || null}
               companySettingsOverride={companySettings || null}
+              orderStatuses={statusSystem.statuses}
+              orderStatusesEnabled={statusSystem.isEnabled}
             />
           </View>
         </View>
@@ -2187,6 +2189,9 @@ function CalendarScreenContent() {
     },
     [
       companySettings,
+      profile?.role,
+      statusSystem.isEnabled,
+      statusSystem.statuses,
       departureTimeEnabled,
       openOrderDetails,
       orderFieldsByKey,
@@ -2278,17 +2283,23 @@ function CalendarScreenContent() {
           <DynamicOrderCard
             order={item}
             context="calendar"
+            viewerRole={profile?.role}
             onPress={openOrderDetails}
             departureTimeEnabled={departureTimeEnabled}
             orderFieldsByKey={orderFieldsByKey}
             companyCurrency={companySettings?.currency || null}
             companySettingsOverride={companySettings || null}
+            orderStatuses={statusSystem.statuses}
+            orderStatusesEnabled={statusSystem.isEnabled}
           />
         </View>
       </View>
     ),
     [
       companySettings,
+      profile?.role,
+      statusSystem.isEnabled,
+      statusSystem.statuses,
       departureTimeEnabled,
       openOrderDetails,
       orderFieldsByKey,
@@ -2420,15 +2431,6 @@ function CalendarScreenContent() {
     theme.colors.textSecondary,
     theme.icons.sm,
   ]);
-  useFocusEffect(
-    useCallback(
-      () => () => {
-        queryClient.cancelQueries({ queryKey: ['requests', 'detail'] });
-      },
-      [queryClient],
-    ),
-  );
-
   const ordersSwipeFadeStyle = useAnimatedStyle(() => ({ opacity: 1 }));
 
   return (

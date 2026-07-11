@@ -88,33 +88,190 @@ export function useDepartmentsQuery({ companyId, onlyEnabled = true, enabled = t
   });
 }
 
+type EmployeesRealtimeSubscription = {
+  refs: number;
+  channel: any;
+};
+
+const EMPLOYEE_REALTIME_WATCHED_FIELDS = [
+  'first_name',
+  'middle_name',
+  'last_name',
+  'full_name',
+  'role',
+  'department_id',
+  'is_admin_blocked',
+  'license_state',
+  'avatar_url',
+] as const;
+
+const EMPLOYEE_CACHE_FIELD_ALIASES: Record<string, string[]> = {
+  first_name: ['firstName'],
+  middle_name: ['middleName'],
+  last_name: ['lastName'],
+  full_name: ['fullName'],
+  avatar_url: ['avatarUrl'],
+  license_state: ['licenseState'],
+};
+
+function readKnownEmployeeCacheField(row: any, field: string) {
+  if (!row || typeof row !== 'object') return { known: false, value: undefined };
+  if (Object.prototype.hasOwnProperty.call(row, field)) {
+    return { known: true, value: row[field] };
+  }
+  for (const alias of EMPLOYEE_CACHE_FIELD_ALIASES[field] || []) {
+    if (Object.prototype.hasOwnProperty.call(row, alias)) {
+      return { known: true, value: row[alias] };
+    }
+  }
+  return { known: false, value: undefined };
+}
+
+function employeeRealtimeValuesEqual(left: any, right: any) {
+  return String(left ?? '') === String(right ?? '');
+}
+
+function hasEmployeeRealtimeCacheDifference(queryClient: any, employeeId: string, nextRow: any) {
+  const cachedRows: any[] = [];
+  const detail = queryClient.getQueryData(queryKeys.employees.detail(employeeId));
+  if (detail) cachedRows.push(detail);
+
+  const lists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] }) || [];
+  for (const [, value] of lists) {
+    if (!Array.isArray(value)) continue;
+    const cached = value.find((row: any) => String(row?.id || '') === employeeId);
+    if (cached) cachedRows.push(cached);
+  }
+
+  return cachedRows.some((cached) => {
+    if (cached?.__offlinePending === true) return false;
+    return EMPLOYEE_REALTIME_WATCHED_FIELDS.some((field) => {
+      if (!Object.prototype.hasOwnProperty.call(nextRow || {}, field)) return false;
+      const current = readKnownEmployeeCacheField(cached, field);
+      return current.known && !employeeRealtimeValuesEqual(current.value, nextRow[field]);
+    });
+  });
+}
+
+function hasEmployeeRealtimePayloadDifference(previousRow: any, nextRow: any) {
+  return EMPLOYEE_REALTIME_WATCHED_FIELDS.some((field) => {
+    if (!Object.prototype.hasOwnProperty.call(previousRow || {}, field)) return false;
+    if (!Object.prototype.hasOwnProperty.call(nextRow || {}, field)) return false;
+    return !employeeRealtimeValuesEqual(previousRow[field], nextRow[field]);
+  });
+}
+
+function isLikelyEmployeePresenceHeartbeat(payload: any) {
+  if (!Object.prototype.hasOwnProperty.call(payload?.new || {}, 'last_seen_at')) return false;
+  const lastSeenAt = Date.parse(String(payload?.new?.last_seen_at || ''));
+  if (!Number.isFinite(lastSeenAt)) return false;
+  const committedAt = Date.parse(String(payload?.commit_timestamp || ''));
+  const referenceTime = Number.isFinite(committedAt) ? committedAt : Date.now();
+  return Math.abs(referenceTime - lastSeenAt) <= 5_000;
+}
+
+function patchEmployeeLastSeenInExistingCaches(queryClient: any, employeeId: string, lastSeenAt: any) {
+  const detailKey = queryKeys.employees.detail(employeeId);
+  if (queryClient.getQueryData(detailKey)) {
+    queryClient.setQueryData(detailKey, (previous: any) =>
+      previous ? { ...previous, last_seen_at: lastSeenAt } : previous,
+    );
+  }
+
+  const lists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] }) || [];
+  lists.forEach(([key, value]: any) => {
+    if (!Array.isArray(value)) return;
+    let changed = false;
+    const next = value.map((row: any) => {
+      if (String(row?.id || '') !== employeeId) return row;
+      changed = true;
+      return { ...row, last_seen_at: lastSeenAt };
+    });
+    if (changed) queryClient.setQueryData(key, next);
+  });
+}
+
+const employeesRealtimeSubscriptions = new WeakMap<
+  object,
+  Map<string, EmployeesRealtimeSubscription>
+>();
+
+function releaseEmployeesRealtimeSubscription(queryClient: any, scopeKey: string) {
+  const subscriptions = employeesRealtimeSubscriptions.get(queryClient);
+  const entry = subscriptions?.get(scopeKey);
+  if (!entry) return;
+
+  entry.refs -= 1;
+  if (entry.refs > 0) return;
+
+  subscriptions?.delete(scopeKey);
+  if (subscriptions?.size === 0) employeesRealtimeSubscriptions.delete(queryClient);
+  try {
+    supabase.removeChannel(entry.channel);
+  } catch {}
+}
+
+function acquireEmployeesRealtimeSubscription(queryClient: any, companyId: any) {
+  const normalizedCompanyId = String(companyId || '').trim();
+  const scopeKey = normalizedCompanyId || '__global__';
+
+  let subscriptions = employeesRealtimeSubscriptions.get(queryClient);
+  if (!subscriptions) {
+    subscriptions = new Map();
+    employeesRealtimeSubscriptions.set(queryClient, subscriptions);
+  }
+
+  const existing = subscriptions.get(scopeKey);
+  if (existing) {
+    existing.refs += 1;
+    return () => releaseEmployeesRealtimeSubscription(queryClient, scopeKey);
+  }
+
+  const filter = normalizedCompanyId ? `company_id=eq.${normalizedCompanyId}` : undefined;
+  const channel = supabase
+    .channel(`employees:realtime:${scopeKey}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'profiles', ...(filter ? { filter } : {}) },
+      (payload: any) => {
+        const rowId = payload?.new?.id || payload?.old?.id;
+        if (payload?.eventType === 'UPDATE' && rowId && payload?.new) {
+          const normalizedRowId = String(rowId);
+          const changedKnownField =
+            hasEmployeeRealtimePayloadDifference(payload.old, payload.new) ||
+            hasEmployeeRealtimeCacheDifference(queryClient, normalizedRowId, payload.new);
+          const presenceHeartbeat = isLikelyEmployeePresenceHeartbeat(payload);
+          if (Object.prototype.hasOwnProperty.call(payload.new, 'last_seen_at')) {
+            patchEmployeeLastSeenInExistingCaches(
+              queryClient,
+              normalizedRowId,
+              payload.new.last_seen_at || null,
+            );
+          }
+          if (changedKnownField || !presenceHeartbeat) {
+            queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(rowId) });
+            queryClient.invalidateQueries({ queryKey: ['employees'] });
+          }
+          return;
+        }
+        if (rowId) {
+          queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(rowId) });
+        }
+        queryClient.invalidateQueries({ queryKey: ['employees'] });
+      },
+    )
+    .subscribe();
+
+  subscriptions.set(scopeKey, { refs: 1, channel });
+  return () => releaseEmployeesRealtimeSubscription(queryClient, scopeKey);
+}
+
 export function useEmployeesRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!enabled) return;
-    const filter = companyId ? `company_id=eq.${companyId}` : undefined;
-
-    const channel = supabase
-      .channel('employees:realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles', ...(filter ? { filter } : {}) },
-        (payload: any) => {
-          const rowId = payload?.new?.id || payload?.old?.id;
-          if (rowId) {
-            queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(rowId) });
-          }
-          queryClient.invalidateQueries({ queryKey: ['employees'] });
-        },
-      )
-      .subscribe();
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
-    };
+    if (!enabled) return undefined;
+    return acquireEmployeesRealtimeSubscription(queryClient, companyId);
   }, [companyId, enabled, queryClient]);
 }
 
@@ -239,9 +396,11 @@ export function updateEmployeeQueryCaches(queryClient: any, employeeId: any, pat
 
 export async function ensureEmployeePrefetch(queryClient: any, id: any) {
   if (!id) return null;
-  return queryClient.ensureQueryData({
+  const existing = queryClient.getQueryData(queryKeys.employees.detail(id));
+  if (existing && !existing.__listSeed) return existing;
+  return queryClient.fetchQuery({
     queryKey: queryKeys.employees.detail(id),
     queryFn: () => getEmployeeById(id),
-    staleTime: 120 * 1000,
+    staleTime: 0,
   });
 }

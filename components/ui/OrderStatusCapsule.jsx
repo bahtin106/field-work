@@ -28,10 +28,16 @@ function createStyles(theme) {
   });
 }
 
-function OrderStatusCapsuleImpl({ status, companyId = null, style, textStyle, numberOfLines = 1 }) {
+function OrderStatusCapsuleViewImpl({
+  status,
+  statuses = [],
+  isEnabled = true,
+  style,
+  textStyle,
+  numberOfLines = 1,
+}) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const { isEnabled, statuses } = useCompanyOrderStatuses(companyId);
   const color = useMemo(() => getOrderStatusColor(status, statuses), [status, statuses]);
   const palette = useMemo(() => getOrderStatusPalette(status, theme, color), [color, status, theme]);
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -45,6 +51,20 @@ function OrderStatusCapsuleImpl({ status, companyId = null, style, textStyle, nu
         {label}
       </Text>
     </View>
+  );
+}
+
+export const OrderStatusCapsuleView = memo(OrderStatusCapsuleViewImpl);
+
+function OrderStatusCapsuleImpl({ status, companyId = null, ...viewProps }) {
+  const { isEnabled, statuses } = useCompanyOrderStatuses(companyId);
+  return (
+    <OrderStatusCapsuleView
+      {...viewProps}
+      status={status}
+      statuses={statuses}
+      isEnabled={isEnabled}
+    />
   );
 }
 

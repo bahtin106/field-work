@@ -6,11 +6,9 @@ export function useEntityFieldSettings(entityType, options = {}) {
   return useQuery({
     queryKey: queryKeys.fieldSettings.detail(entityType),
     queryFn: () => listEntityFieldSettings(entityType),
-    staleTime: 60 * 1000,
-    // Field visibility/requiredness is a company-wide setting. Do not let a
-    // persisted per-device cache hide an admin's change after an app restart.
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: 'stale',
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     ...options,
   });

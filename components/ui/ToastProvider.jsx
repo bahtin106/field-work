@@ -1,5 +1,5 @@
 // components/ui/ToastProvider.jsx
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Dimensions, Keyboard, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FullWindowOverlay } from 'react-native-screens';
@@ -16,6 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 const Ctx = createContext(null);
+const OverlayCtx = createContext(() => null);
 const TOAST_SHADOW_PAD = 12;
 const TOAST_ENTER_DURATION = 180;
 const TOAST_EXIT_DURATION = 140;
@@ -154,16 +155,16 @@ export default function ToastProvider({ children }) {
     [ty, op, scale, hide],
   );
 
-  const value = {
-    show,
-    hide,
-    setAnchorOffset,
-    success: (t) => show(t, 'success'),
-    error: (t) => show(t, 'error'),
-    warning: (t) => show(t, 'warning'),
-    info: (t) => show(t, 'info'),
-    loading: (text) => show(text ?? i18nT('toast.loading'), 'info', { sticky: true }),
-    promise: (p, m = {}) => {
+  const success = useCallback((text) => show(text, 'success'), [show]);
+  const error = useCallback((text) => show(text, 'error'), [show]);
+  const warning = useCallback((text) => show(text, 'warning'), [show]);
+  const info = useCallback((text) => show(text, 'info'), [show]);
+  const loading = useCallback(
+    (text) => show(text ?? i18nT('toast.loading'), 'info', { sticky: true }),
+    [show],
+  );
+  const promise = useCallback(
+    (p, m = {}) => {
       const {
         loading = i18nT('toast.loading'),
         success = i18nT('toast.success'),
@@ -181,7 +182,22 @@ export default function ToastProvider({ children }) {
           throw e;
         });
     },
-  };
+    [show],
+  );
+  const value = useMemo(
+    () => ({
+      show,
+      hide,
+      setAnchorOffset,
+      success,
+      error,
+      warning,
+      info,
+      loading,
+      promise,
+    }),
+    [error, hide, info, loading, promise, show, success, warning],
+  );
 
   const palette = (t) => ({
     info: { bg: t.colors.surface, fg: t.colors.text, border: t.colors.border },
@@ -228,20 +244,26 @@ export default function ToastProvider({ children }) {
   );
 
   return (
-    <Ctx.Provider value={{ ...value, renderOverlay }}>
-      {children}
+    <Ctx.Provider value={value}>
+      <OverlayCtx.Provider value={renderOverlay}>
+        {children}
 
-      {msg ? (
-        Platform.OS === 'ios' ? (
-          <FullWindowOverlay>
-            {renderOverlay()}
-          </FullWindowOverlay>
-        ) : (
-          renderOverlay()
-        )
-      ) : null}
+        {msg ? (
+          Platform.OS === 'ios' ? (
+            <FullWindowOverlay>
+              {renderOverlay()}
+            </FullWindowOverlay>
+          ) : (
+            renderOverlay()
+          )
+        ) : null}
+      </OverlayCtx.Provider>
     </Ctx.Provider>
   );
+}
+
+export function useToastOverlay() {
+  return useContext(OverlayCtx);
 }
 
 export function useToast() {

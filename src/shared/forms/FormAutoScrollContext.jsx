@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 
 const FormAutoScrollContext = createContext(null);
+const DEFAULT_FORM_SCOPE = '__default-form-scope__';
 
 function measureFieldTop(field) {
   return new Promise((resolve) => {
@@ -38,12 +39,19 @@ export function FormAutoScrollProvider({
   headerHeight = 56,
   enabled = true,
   validationAttempt = 0,
+  scopeKey = null,
 }) {
   const lastScrollAtRef = useRef(0);
-  const [internalValidationAttempt, setInternalValidationAttempt] = useState(0);
+  const [validationAttemptsByScope, setValidationAttemptsByScope] = useState(() => new Map());
   const fieldsRef = useRef(new Map());
   const nextFieldOrderRef = useRef(0);
+  const inputsRef = useRef(new Map());
+  const nextInputOrderRef = useRef(0);
+  const submitActionsRef = useRef(new Map());
+  const nextSubmitActionOrderRef = useRef(0);
   const pendingScrollRef = useRef(null);
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
 
   const requestScrollToField = useCallback(
     (fieldRef, { focus = false, cooldownMs = 450 } = {}) => {
@@ -78,6 +86,7 @@ export function FormAutoScrollProvider({
       fieldRef,
       isInvalid: current?.isInvalid === true,
       order: current?.order ?? nextFieldOrderRef.current++,
+      scopeKey: scopeKeyRef.current,
     });
   }, []);
 
@@ -88,6 +97,7 @@ export function FormAutoScrollProvider({
       fieldRef,
       isInvalid: isInvalid === true,
       order: current?.order ?? nextFieldOrderRef.current++,
+      scopeKey: scopeKeyRef.current,
     });
   }, []);
 
@@ -95,12 +105,77 @@ export function FormAutoScrollProvider({
     fieldsRef.current.delete(fieldId);
   }, []);
 
+  const registerInput = useCallback((inputId, inputRef, { disabled = false } = {}) => {
+    if (!inputId) return;
+    const current = inputsRef.current.get(inputId);
+    inputsRef.current.set(inputId, {
+      inputRef,
+      disabled: disabled === true,
+      order: current?.order ?? nextInputOrderRef.current++,
+      scopeKey: scopeKeyRef.current,
+    });
+  }, []);
+
+  const unregisterInput = useCallback((inputId) => {
+    inputsRef.current.delete(inputId);
+  }, []);
+
+  const registerSubmitAction = useCallback((actionId, action, { disabled = false } = {}) => {
+    if (!actionId || typeof action !== 'function') return;
+    const current = submitActionsRef.current.get(actionId);
+    submitActionsRef.current.set(actionId, {
+      action,
+      disabled: disabled === true,
+      order: current?.order ?? nextSubmitActionOrderRef.current++,
+      scopeKey: scopeKeyRef.current,
+    });
+  }, []);
+
+  const unregisterSubmitAction = useCallback((actionId) => {
+    submitActionsRef.current.delete(actionId);
+  }, []);
+
+  const focusNextInputOrSubmit = useCallback((inputId) => {
+    const current = inputsRef.current.get(inputId);
+    if (!current) return false;
+    const nextInput = [...inputsRef.current.values()]
+      .filter(
+        (input) =>
+          input.scopeKey === scopeKeyRef.current &&
+          !input.disabled &&
+          input.order > current.order &&
+          input.inputRef?.current,
+      )
+      .sort((left, right) => left.order - right.order)[0];
+    if (nextInput?.inputRef?.current?.focus) {
+      nextInput.inputRef.current.focus();
+      return true;
+    }
+
+    const submitAction = [...submitActionsRef.current.values()]
+      .filter(
+        (entry) =>
+          entry.scopeKey === scopeKeyRef.current &&
+          !entry.disabled &&
+          typeof entry.action === 'function',
+      )
+      .sort((left, right) => right.order - left.order)[0];
+    if (!submitAction) return false;
+    submitAction.action();
+    return true;
+  }, []);
+
   const requestScrollToFirstInvalid = useCallback(() => {
     if (!enabled || pendingScrollRef.current) return;
     pendingScrollRef.current = setTimeout(async () => {
       pendingScrollRef.current = null;
       const invalidFields = [...fieldsRef.current.values()]
-        .filter((field) => field?.isInvalid && field?.fieldRef?.current);
+        .filter(
+          (field) =>
+            field?.scopeKey === scopeKeyRef.current &&
+            field?.isInvalid &&
+            field?.fieldRef?.current,
+        );
       const measuredFields = await Promise.all(invalidFields.map(measureFieldTop));
       const firstInvalid = measuredFields
         .sort((left, right) => {
@@ -115,9 +190,18 @@ export function FormAutoScrollProvider({
   }, [enabled, requestScrollToField]);
 
   const beginValidationAttempt = useCallback(() => {
-    setInternalValidationAttempt((current) => current + 1);
+    const activeScope = scopeKeyRef.current ?? DEFAULT_FORM_SCOPE;
+    setValidationAttemptsByScope((current) => {
+      const next = new Map(current);
+      next.set(activeScope, Number(next.get(activeScope) || 0) + 1);
+      return next;
+    });
   }, []);
 
+  const activeValidationScope = scopeKey ?? DEFAULT_FORM_SCOPE;
+  const internalValidationAttempt = Number(
+    validationAttemptsByScope.get(activeValidationScope) || 0,
+  );
   const effectiveValidationAttempt =
     Math.max(0, Number(validationAttempt) || 0) + internalValidationAttempt;
 
@@ -130,6 +214,8 @@ export function FormAutoScrollProvider({
       if (pendingScrollRef.current) clearTimeout(pendingScrollRef.current);
       pendingScrollRef.current = null;
       fieldsRef.current.clear();
+      inputsRef.current.clear();
+      submitActionsRef.current.clear();
     },
     [],
   );
@@ -144,6 +230,11 @@ export function FormAutoScrollProvider({
       registerField,
       updateField,
       unregisterField,
+      registerInput,
+      unregisterInput,
+      registerSubmitAction,
+      unregisterSubmitAction,
+      focusNextInputOrSubmit,
     }),
     [
       enabled,
@@ -153,6 +244,11 @@ export function FormAutoScrollProvider({
       requestScrollToField,
       requestScrollToFirstInvalid,
       unregisterField,
+      registerInput,
+      unregisterInput,
+      registerSubmitAction,
+      unregisterSubmitAction,
+      focusNextInputOrSubmit,
       updateField,
     ],
   );
@@ -162,6 +258,12 @@ export function FormAutoScrollProvider({
 
 export function useFormAutoScrollContext() {
   return useContext(FormAutoScrollContext);
+}
+
+export function useValidationAttemptSinceMount(validationAttempt = 0) {
+  const normalizedAttempt = Math.max(0, Number(validationAttempt) || 0);
+  const initialAttemptRef = useRef(normalizedAttempt);
+  return normalizedAttempt > initialAttemptRef.current;
 }
 
 export function useAutoScrollOnInvalid({

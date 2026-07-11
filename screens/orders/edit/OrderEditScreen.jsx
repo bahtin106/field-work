@@ -90,7 +90,6 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { t as T } from '../../../src/i18n';
 import { formatRuMask } from '../../../components/ui/phone';
-import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { FEEDBACK_CODES, FieldErrorText, getMessageByCode } from '../../../src/shared/feedback';
 import { getRequiredFieldLabel } from '../../../src/shared/forms/fieldValidation';
 import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
@@ -1768,15 +1767,6 @@ function EditOrderContent() {
     ),
   );
 
-  useFocusEffect(
-    useCallback(
-      () => () => {
-        if (!id) return;
-        queryClient.cancelQueries({ queryKey: queryKeys.requests.detail(id) });
-      },
-      [id, queryClient],
-    ),
-  );
   useFocusEffect(
     useCallback(() => {
       if (!selectedClientId) return undefined;

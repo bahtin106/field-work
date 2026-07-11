@@ -1,5 +1,5 @@
 // components/ui/Button.jsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -37,6 +37,7 @@ export default function Button({
   const [autoLoading, setAutoLoading] = useState(false);
   const mountedRef = useRef(true);
   const pressLockedRef = useRef(false);
+  const submitActionIdRef = useRef(Symbol('form-submit-action'));
 
   const buttonTokens = useMemo(() => theme?.components?.button || {}, [theme]);
 
@@ -156,7 +157,7 @@ export default function Button({
     () => styles(theme, buttonTokens, palette, sizes, isDisabled),
     [buttonTokens, isDisabled, palette, sizes, theme],
   );
-  const handlePress = () => {
+  const handlePress = useCallback(() => {
     if (isDisabled || pressLockedRef.current) return;
     if (formSubmit) prepareFormSubmit(formContext);
     else if (dismissKeyboardOnPress) dismissKeyboardBeforeAction();
@@ -175,7 +176,14 @@ export default function Button({
         },
       );
     }
-  };
+  }, [dismissKeyboardOnPress, formContext, formSubmit, isDisabled, onPress]);
+
+  useEffect(() => {
+    if (!formSubmit) return undefined;
+    const actionId = submitActionIdRef.current;
+    formContext?.registerSubmitAction?.(actionId, handlePress, { disabled: isDisabled });
+    return () => formContext?.unregisterSubmitAction?.(actionId);
+  }, [formContext, formSubmit, handlePress, isDisabled]);
 
   return (
     <TouchableOpacity

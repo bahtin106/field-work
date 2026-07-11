@@ -158,82 +158,122 @@ export function useSearchCompanyObjectsForOrder(params: any = {}, options: any =
   });
 }
 
+type ObjectsRealtimeSubscription = {
+  refs: number;
+  channel: any;
+};
+
+const objectsRealtimeSubscriptions = new WeakMap<
+  object,
+  Map<string, ObjectsRealtimeSubscription>
+>();
+
+function releaseObjectsRealtimeSubscription(queryClient: any, companyKey: string) {
+  const subscriptions = objectsRealtimeSubscriptions.get(queryClient);
+  const entry = subscriptions?.get(companyKey);
+  if (!entry) return;
+
+  entry.refs -= 1;
+  if (entry.refs > 0) return;
+
+  subscriptions?.delete(companyKey);
+  if (subscriptions?.size === 0) objectsRealtimeSubscriptions.delete(queryClient);
+  try {
+    supabase.removeChannel(entry.channel);
+  } catch {}
+}
+
+function acquireObjectsRealtimeSubscription(queryClient: any, companyId: any) {
+  const companyKey = String(companyId || '').trim();
+  if (!companyKey) return () => {};
+
+  let subscriptions = objectsRealtimeSubscriptions.get(queryClient);
+  if (!subscriptions) {
+    subscriptions = new Map();
+    objectsRealtimeSubscriptions.set(queryClient, subscriptions);
+  }
+
+  const existing = subscriptions.get(companyKey);
+  if (existing) {
+    existing.refs += 1;
+    return () => releaseObjectsRealtimeSubscription(queryClient, companyKey);
+  }
+
+  const refreshObjectLists = () => {
+    void queryClient.invalidateQueries({ queryKey: ['objects'] });
+  };
+
+  const channel = supabase
+    .channel(`client-objects:realtime:${companyKey}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'client_objects',
+        filter: `company_id=eq.${companyKey}`,
+      },
+      (payload: any) => {
+        try {
+          const objectId = payload?.new?.id || payload?.old?.id;
+          const clientId = payload?.new?.client_id || payload?.old?.client_id;
+          if (objectId) {
+            queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(objectId) });
+          }
+          if (clientId) {
+            queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
+          }
+          queryClient.invalidateQueries({ queryKey: ['objects'] });
+          queryClient.invalidateQueries({ queryKey: ['clients'] });
+          queryClient.invalidateQueries({ queryKey: ['requests'] });
+        } catch (e) {
+          // Realtime is best-effort; cached screens still refresh through focus/reconnect.
+        }
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'object_tag_links',
+        filter: `company_id=eq.${companyKey}`,
+      },
+      (payload: any) => {
+        const objectId = String(payload?.new?.object_id || payload?.old?.object_id || '');
+        if (objectId) {
+          void invalidateNow(queryClient, queryKeys.objects.detail(objectId));
+        }
+        void invalidateManyNow(queryClient, [['objects'], ['clients'], ['tags']]);
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'company_tags',
+        filter: `company_id=eq.${companyKey}`,
+      },
+      () => {
+        void invalidateManyNow(queryClient, [['objects'], ['clients'], ['tags']]);
+      },
+    )
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') refreshObjectLists();
+    });
+
+  subscriptions.set(companyKey, { refs: 1, channel });
+  return () => releaseObjectsRealtimeSubscription(queryClient, companyKey);
+}
+
 export function useClientObjectsRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!enabled || !companyId) return;
-
-    const refreshObjectLists = () => {
-      void queryClient.invalidateQueries({ queryKey: ['objects'] });
-    };
-
-    const channel = supabase
-      .channel(`client-objects:realtime:${companyId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'client_objects',
-          filter: `company_id=eq.${companyId}`,
-        },
-        (payload: any) => {
-          try {
-            const objectId = payload?.new?.id || payload?.old?.id;
-            const clientId = payload?.new?.client_id || payload?.old?.client_id;
-            if (objectId) {
-              queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(objectId) });
-            }
-            if (clientId) {
-              queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
-              queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
-            }
-            queryClient.invalidateQueries({ queryKey: ['objects'] });
-            queryClient.invalidateQueries({ queryKey: ['clients'] });
-            queryClient.invalidateQueries({ queryKey: ['requests'] });
-          } catch (e) {
-            // Realtime is best-effort; cached screens still refresh through focus/reconnect.
-          }
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'object_tag_links',
-          filter: `company_id=eq.${companyId}`,
-        },
-        (payload: any) => {
-          const objectId = String(payload?.new?.object_id || payload?.old?.object_id || '');
-          if (objectId) {
-            void invalidateNow(queryClient, queryKeys.objects.detail(objectId));
-          }
-          void invalidateManyNow(queryClient, [['objects'], ['clients'], ['tags']]);
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'company_tags',
-          filter: `company_id=eq.${companyId}`,
-        },
-        () => {
-          void invalidateManyNow(queryClient, [['objects'], ['clients'], ['tags']]);
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') refreshObjectLists();
-      });
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
-    };
+    if (!enabled || !companyId) return undefined;
+    return acquireObjectsRealtimeSubscription(queryClient, companyId);
   }, [companyId, enabled, queryClient]);
 }
 

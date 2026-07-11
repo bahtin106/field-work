@@ -136,6 +136,37 @@ const GalleryPhoto = memo(function GalleryPhoto({
   );
 });
 
+const ZoomGallery = memo(function ZoomGallery({
+  galleryKey,
+  galleryRef,
+  images,
+  initialIndex,
+  renderItem,
+  keyExtractor,
+  onIndexChange,
+  onTap,
+}) {
+  return (
+    <Gallery
+      key={galleryKey}
+      ref={galleryRef}
+      data={images}
+      initialIndex={initialIndex}
+      renderItem={renderItem}
+      keyExtractor={keyExtractor}
+      onIndexChange={onIndexChange}
+      onTap={onTap}
+      maxScale={5}
+      windowSize={5}
+      tapOnEdgeToItem={false}
+      allowPinchPanning
+      allowOverflow={false}
+      scaleMode="bounce"
+      pinchMode="clamp"
+    />
+  );
+});
+
 const styles = StyleSheet.create({
   rootFill: {
     flex: 1,
@@ -168,6 +199,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const closeInFlightRef = useRef(false);
   const dismissTimerRef = useRef(null);
   const dismissNotifiedRef = useRef(false);
+  const modalOverlayOpenRef = useRef(false);
 
   const initialImages = normalizeImages(images);
   const imageSignature = initialImages.join('\u001f');
@@ -340,6 +372,10 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   useEffect(() => {
     rotationsRef.current = rotations;
   }, [rotations]);
+
+  useEffect(() => {
+    modalOverlayOpenRef.current = Boolean(menuOpen || infoOpen || confirmDelete);
+  }, [confirmDelete, infoOpen, menuOpen]);
 
   useEffect(() => {
     localImages.forEach((uri) => {
@@ -585,14 +621,14 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   }, [localImages.length]);
 
   const handleGalleryTap = useCallback(() => {
-    if (menuOpen || infoOpen || confirmDelete) {
+    if (modalOverlayOpenRef.current) {
       setMenuOpen(false);
       setInfoOpen(false);
       setConfirmDelete(false);
       return;
     }
     setToolbarVisible((value) => !value);
-  }, [confirmDelete, infoOpen, menuOpen]);
+  }, []);
 
   const renderGalleryItem = useCallback(
     (uri) => (
@@ -632,22 +668,15 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
           <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
           <View style={ds.modalRoot}>
             <View style={ds.gallery}>
-              <Gallery
-                key={galleryKey}
-                ref={galleryRef}
-                data={localImages}
+              <ZoomGallery
+                galleryKey={galleryKey}
+                galleryRef={galleryRef}
+                images={localImages}
                 initialIndex={clampIndex(viewerIndex, localImages.length)}
                 renderItem={renderGalleryItem}
                 keyExtractor={galleryKeyExtractor}
                 onIndexChange={handleIndexChange}
                 onTap={handleGalleryTap}
-                maxScale={5}
-                windowSize={5}
-                tapOnEdgeToItem
-                allowPinchPanning
-                allowOverflow={false}
-                scaleMode="bounce"
-                pinchMode="clamp"
               />
             </View>
 

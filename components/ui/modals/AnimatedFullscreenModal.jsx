@@ -15,7 +15,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '../../../theme';
-import { useToast } from '../ToastProvider';
+import { useToastOverlay } from '../ToastProvider';
 import {
   notifyIOSModalDismissed,
   registerIOSModal,
@@ -37,7 +37,7 @@ export default function AnimatedFullscreenModal({
   ...rest
 }) {
   const { theme } = useTheme();
-  const toast = useToast();
+  const renderToastOverlay = useToastOverlay();
   const exitDuration = theme.timings?.panelToggleMs ?? 220;
   const [mounted, setMounted] = useState(false);
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
@@ -160,7 +160,7 @@ export default function AnimatedFullscreenModal({
       <Animated.View style={[styles.fill, animStyle]}>
         {children}
       </Animated.View>
-      {toast?.renderOverlay?.() || null}
+      {Platform.OS === 'ios' ? null : renderToastOverlay?.() || null}
     </Modal>
   );
 }

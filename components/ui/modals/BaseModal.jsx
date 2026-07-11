@@ -22,19 +22,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from '@expo/vector-icons/Feather';
+import { FullWindowOverlay } from 'react-native-screens';
 import { applyAndroidNavigationBar, applyAndroidSystemBars } from '../../../lib/systemBars';
 import { t as T } from '../../../src/i18n';
-import { useToast } from '../ToastProvider';
+import { useToastOverlay } from '../ToastProvider';
 import { useTheme } from '../../../theme';
 import { withAlpha as withThemeAlpha } from '../../../theme/colors';
 import DismissKeyboardArea from '../../layout/DismissKeyboardArea';
-import {
-  notifyIOSModalDismissed,
-  registerIOSModal,
-  releaseIOSModal,
-  requestIOSModalPresentation,
-  unregisterIOSModal,
-} from './iosModalCoordinator';
 
 const OPEN_SPRING = { damping: 28, stiffness: 500, mass: 0.5 };
 const MIN_TOP_GAP_FROM_STATUS_BAR_DP = 38;
@@ -114,7 +108,7 @@ const BaseModalImpl = (
   ref,
 ) => {
   const { theme } = useTheme();
-  const toast = useToast();
+  const renderToastOverlay = useToastOverlay();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => baseSheetStyles(theme), [theme]);
   const modalTokens = theme.components?.modal || {};
@@ -123,10 +117,6 @@ const BaseModalImpl = (
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
   const [modalKey, _setModalKey] = useState(0);
   const dismissNotifiedRef = useRef(false);
-  const iosModalIdRef = useRef(null);
-  const iosSuspendedRef = useRef(false);
-  const openRef = useRef(null);
-  const suspendRef = useRef(null);
 
   // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
   const [kbInset, setKbInset] = useState(0);
@@ -263,14 +253,11 @@ const BaseModalImpl = (
   };
 
   const doUnmount = () => {
-    if (Platform.OS === 'ios') {
-      setNativeDismissPending(true);
-    }
     setRnVisible(false);
     try {
       onClose?.();
     } catch {}
-    if (Platform.OS !== 'ios') notifyDismiss();
+    notifyDismiss();
   };
 
   // ── "Material Emerge" animation ──────────────────────────────
@@ -314,26 +301,6 @@ const BaseModalImpl = (
     });
   };
 
-  openRef.current = open;
-  suspendRef.current = () => {
-    if (!rnVisible) return;
-    iosSuspendedRef.current = true;
-    setNativeDismissPending(true);
-    setRnVisible(false);
-  };
-
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return undefined;
-    const id = registerIOSModal({
-      present: () => openRef.current?.(),
-      suspend: () => suspendRef.current?.(),
-    });
-    iosModalIdRef.current = id;
-    return () => {
-      unregisterIOSModal(id);
-      iosModalIdRef.current = null;
-    };
-  }, []);
   useImperativeHandle(ref, () => ({ close }));
 
   const requestClose = () => {
@@ -388,21 +355,23 @@ const BaseModalImpl = (
   ).current;
 
   useEffect(() => {
-    if (Platform.OS === 'ios') {
-      const id = iosModalIdRef.current;
-      if (!id) return;
-      if (visible) {
-        requestIOSModalPresentation(id);
-      } else {
-        releaseIOSModal(id);
-        if (rnVisible) close();
-      }
-      return;
-    }
     if (visible) open();
     else if (rnVisible) close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !rnVisible) return;
+    const frame = requestAnimationFrame(() => {
+      runOpenAnimation();
+      try {
+        onShow?.();
+      } catch {}
+    });
+    return () => cancelAnimationFrame(frame);
+    // Opening is intentionally tied to the overlay mount, not prop rerenders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rnVisible]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -428,34 +397,34 @@ const BaseModalImpl = (
 
   if (!visible && !rnVisible && !nativeDismissPending) return null;
 
+  const ModalContainer = Platform.OS === 'ios' ? FullWindowOverlay : Modal;
+  const containerProps =
+    Platform.OS === 'ios'
+      ? { unstable_accessibilityContainerViewIsModal: true }
+      : {
+        visible: !!rnVisible,
+        transparent: true,
+        presentationStyle: 'overFullScreen',
+        animationType: 'none',
+        statusBarTranslucent: true,
+        navigationBarTranslucent: true,
+        onRequestClose: fullscreenContent ? (onFullscreenRequestClose || requestClose) : requestClose,
+        onShow: () => {
+          runOpenAnimation();
+          try {
+            onShow?.();
+          } catch {}
+        },
+        onDismiss: () => {
+          // Safety-net: ensure state is reset even if native dismisses unexpectedly
+          setRnVisible(false);
+          setNativeDismissPending(false);
+          notifyDismiss();
+        },
+      };
+
   return (
-    <Modal
-      key={modalKey}
-      visible={!!rnVisible}
-      transparent
-      presentationStyle="overFullScreen"
-      animationType="none"
-      statusBarTranslucent
-      navigationBarTranslucent
-      onRequestClose={fullscreenContent ? (onFullscreenRequestClose || requestClose) : requestClose}
-      onShow={() => {
-        runOpenAnimation();
-        try {
-          onShow?.();
-        } catch {}
-      }}
-      onDismiss={() => {
-        const wasSuspended = iosSuspendedRef.current;
-        iosSuspendedRef.current = false;
-        // Safety-net: ensure state is reset even if native dismisses unexpectedly
-        setRnVisible(false);
-        setNativeDismissPending(false);
-        if (Platform.OS === 'ios' && iosModalIdRef.current != null) {
-          notifyIOSModalDismissed(iosModalIdRef.current, { suspended: wasSuspended });
-        }
-        if (!wasSuspended) notifyDismiss();
-      }}
-    >
+    <ModalContainer key={modalKey} {...containerProps}>
       {fullscreenContent ? (
         <View style={StyleSheet.absoluteFill}>{fullscreenContent}</View>
       ) : (
@@ -507,7 +476,10 @@ const BaseModalImpl = (
             },
           ]}
         >
-          <DismissKeyboardArea style={{ width: '100%', flexShrink: 1, minHeight: 0 }}>
+          <DismissKeyboardArea
+            enabled={false}
+            style={{ width: '100%', flexShrink: 1, minHeight: 0 }}
+          >
           {/* Drag handle */}
             {showHandle ? (
               <View style={s.handleHit} {...(disablePanClose ? {} : pan.panHandlers)}>
@@ -588,8 +560,8 @@ const BaseModalImpl = (
         </Animated.View>
         </>
       )}
-      {toast?.renderOverlay?.() || null}
-    </Modal>
+      {Platform.OS === 'ios' ? null : renderToastOverlay?.() || null}
+    </ModalContainer>
   );
 };
 

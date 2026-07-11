@@ -1,15 +1,7 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatPersonName } from '../../lib/personName';
-import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
-import { useClient } from '../../src/features/clients/queries';
-import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
-import {
-  ENTITY_FIELD_TYPES,
-  buildFallbackEntityFieldSettings,
-  getEntityFieldMap,
-} from '../../src/features/fieldSettings/catalog';
 import {
   buildOrderAddressShort,
   extractOrderAddressFromObject,
@@ -18,8 +10,7 @@ import {
 import { withAlpha } from '../../theme/colors';
 import { getCardSurfaceStyle } from '../../theme/surfaceStyles';
 
-export default function ObjectCard({ item, onPress, canViewClients: canViewClientsProp = null }) {
-  const { has } = usePermissions();
+function ObjectCard({ item, onPress, canViewClients = false, objectFieldsByKey }) {
   const { theme } = useTheme();
   const c = theme.colors;
   const sz = theme.spacing;
@@ -44,15 +35,7 @@ export default function ObjectCard({ item, onPress, canViewClients: canViewClien
   );
 
   const name = String(item?.name || '').trim();
-  const canViewClients =
-    typeof canViewClientsProp === 'boolean' ? canViewClientsProp : has('canViewClients');
-  const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT);
-  const objectFieldSettings = useMemo(
-    () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
-    [objectFieldSettingsData],
-  );
-  const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
-  const { data: client } = useClient(item?.client_id, { enabled: !!item?.client_id && canViewClients });
+  const client = canViewClients ? item?.client || null : null;
   const owner =
     String(formatPersonName(client) || item?._client?.name || formatPersonName(item?.client) || '').trim() || '';
   const visibleAddress = useMemo(
@@ -87,3 +70,5 @@ export default function ObjectCard({ item, onPress, canViewClients: canViewClien
     </Pressable>
   );
 }
+
+export default memo(ObjectCard);

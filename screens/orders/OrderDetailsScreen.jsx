@@ -1,6 +1,5 @@
 ﻿import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -64,7 +63,7 @@ import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import MediaUploadRow from '../../components/media/MediaUploadRow';
-import OrderStatusCapsule from '../../components/ui/OrderStatusCapsule';
+import { OrderStatusCapsuleView } from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import AnimatedChevron from '../../components/ui/AnimatedChevron';
 import { BaseModal, ConfirmModal, AlertModal, SelectModal } from '../../components/ui/modals';
@@ -127,7 +126,17 @@ import Feather from '@expo/vector-icons/Feather';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useToast } from '../../components/ui/ToastProvider';
 import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
-import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
+import { getOfflineSnapshot, useOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
+import {
+  enqueueOrderPhotoDeletes,
+  enqueueOrderPhotoUpload,
+  enqueueOrderPhotoUploads,
+  flushOrderPhotoQueue,
+  getOrderPhotoQueueItems,
+  getQueuedOrderPhotoUrls,
+  removeOrderPhotoUploadFromQueue,
+  setOrderPhotoUploadQueueStatus,
+} from '../../src/shared/media/orderPhotoQueue';
 
 const MediaUploadModal = lazy(() => import('../../components/media/MediaUploadModal'));
 const FullscreenImageViewer = lazy(() => import('../../app/orders/components/FullscreenImageViewer'));
@@ -194,7 +203,6 @@ async function uploadPreparedImageFile(...args) {
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
 const PHOTO_MIME_TYPE = 'image/jpeg';
-const ORDER_PHOTO_UPLOAD_QUEUE_KEY = 'offline.orderPhotoUploadQueue.v1';
 const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
 const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
@@ -291,23 +299,6 @@ function formatDateOnlyForStorage(input) {
   const parsed = input instanceof Date ? input : new Date(input);
   if (!parsed || Number.isNaN(parsed?.getTime?.())) return null;
   return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
-}
-
-async function readOrderPhotoUploadQueue() {
-  try {
-    const raw = await AsyncStorage.getItem(ORDER_PHOTO_UPLOAD_QUEUE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function writeOrderPhotoUploadQueue(items) {
-  await AsyncStorage.setItem(
-    ORDER_PHOTO_UPLOAD_QUEUE_KEY,
-    JSON.stringify(Array.isArray(items) ? items : []),
-  );
 }
 
 const REQUEST_SYNC_FIELDS = [
@@ -523,6 +514,7 @@ function OrderDetailsContent() {
   const { t } = useTranslation();
   const titlePrefix = useMemo(() => t('order_auto_title_prefix'), [t]);
   const toast = useToast();
+  const { isOnline: isOnlineForPhotoQueue } = useOfflineSnapshot();
   const { has, loading: permsLoading } = usePermissions();
   const { settings: companySettings } = useCompanySettings();
   const auth = useAuth();
@@ -947,8 +939,10 @@ function OrderDetailsContent() {
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
   const [resolvedClientId, setResolvedClientId] = useState(null);
   const [localPendingMap, setLocalPendingMap] = useState({});
+  const [pendingPhotoDeleteMap, setPendingPhotoDeleteMap] = useState({});
+  const [photoQueueHydrated, setPhotoQueueHydrated] = useState(false);
   const cloudFallbackNoticeShownRef = useRef(false);
-  const orderPhotoQueueFlushInFlightRef = useRef(false);
+  const activeOrderPhotoUploadsRef = useRef(new Set());
   const orderPhotoRotateJobsRef = useRef(new Map());
   const financePhotoRotateJobsRef = useRef(new Map());
 
@@ -959,7 +953,19 @@ function OrderDetailsContent() {
   }, [assigneeModalVisible, isSoloAdmin, toFeed]);
 
   // в”Ђв”Ђв”Ђ Centralised media hook (caching, resolution, Yandex/Storage) в”Ђв”Ђв”Ђ
-  const orderMedia = useOrderMedia({ order, mediaProvider, t });
+  const orderWithPendingDeletesHidden = useMemo(() => {
+    if (!order) return order;
+    const next = { ...order };
+    for (const category of ORDER_MEDIA_FIELD_KEYS) {
+      const hidden = new Set(pendingPhotoDeleteMap?.[category] || []);
+      if (!hidden.size) continue;
+      next[category] = (Array.isArray(order?.[category]) ? order[category] : []).filter(
+        (url) => !hidden.has(String(url || '')),
+      );
+    }
+    return next;
+  }, [order, pendingPhotoDeleteMap]);
+  const orderMedia = useOrderMedia({ order: orderWithPendingDeletesHidden, mediaProvider, t });
   // Stable ref so fetchData doesn't re-create when orderMedia resolves URLs
   const orderMediaRef = useRef(orderMedia);
   useEffect(() => { orderMediaRef.current = orderMedia; }, [orderMedia]);
@@ -1011,6 +1017,27 @@ function OrderDetailsContent() {
       return next;
     },
     [queryClient, updateRequestMutation],
+  );
+  const applyPersistedOrderMedia = useCallback(
+    (orderId, category, mediaUrls, updatedAt) => {
+      const uniqueMediaUrls = Array.from(
+        new Set((Array.isArray(mediaUrls) ? mediaUrls : []).map((value) => String(value || '').trim()).filter(Boolean)),
+      );
+      const patch = {
+        [category]: uniqueMediaUrls,
+        ...(updatedAt ? { updated_at: updatedAt } : null),
+      };
+      setOrder((prev) => {
+        if (!prev || String(prev.id || '') !== String(orderId || '')) return prev;
+        const next = { ...prev, ...patch };
+        orderRef.current = next;
+        return next;
+      });
+      queryClient.setQueryData(queryKeys.requests.detail(orderId), (previous) =>
+        previous ? { ...previous, ...patch } : previous,
+      );
+    },
+    [queryClient],
   );
   const financeEntries = useMemo(
     () => (Array.isArray(financeEntriesQuery.data) ? financeEntriesQuery.data : []),
@@ -1749,7 +1776,21 @@ function OrderDetailsContent() {
         const cur = orderRef.current;
         const orderId = cur?.id;
         if (!orderId) return false;
+        const activeUploadKey = `${orderId}:${category}:${String(uri || '').trim()}`;
+        if (activeOrderPhotoUploadsRef.current.has(activeUploadKey)) return false;
+        activeOrderPhotoUploadsRef.current.add(activeUploadKey);
+        try {
+        const shouldPersistUpload = opts?.allowOfflineQueue !== false;
         const isOnlineNow = getOfflineSnapshot().isOnline;
+        const queueEntryId = shouldPersistUpload
+          ? await enqueueOrderPhotoUpload({
+              orderId,
+              category,
+              localUrl: uri,
+              mediaProvider: effectiveMediaProvider,
+              status: isOnlineNow ? 'foreground' : 'pending',
+            })
+          : null;
         if (!isOnlineNow && opts?.allowOfflineQueue !== false) {
           const localUrl = String(uri || '').trim();
           if (!localUrl) return false;
@@ -1783,15 +1824,6 @@ function OrderDetailsContent() {
             return { ...old, [category]: buildUpdatedLocal(old?.[category]) };
           });
 
-          const queueItems = await readOrderPhotoUploadQueue();
-          queueItems.push({
-            id: `order-photo:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-            orderId: String(orderId),
-            category: String(category || ''),
-            localUrl,
-            createdAt: new Date().toISOString(),
-          });
-          await writeOrderPhotoUploadQueue(queueItems);
           if (!silent) showToast(t('order_photo_saved_offline'));
           return true;
         }
@@ -1970,7 +2002,9 @@ function OrderDetailsContent() {
             return list;
           }
           if (replaceOnly) return list;
-          if (providerMediaUrls) return [...providerMediaUrls];
+          if (providerMediaUrls) {
+            return Array.from(new Set(providerMediaUrls.map((value) => String(value || '').trim()).filter(Boolean)));
+          }
           // Prepend new photos so they appear at the start
           if (!list.includes(publicUrl)) list.unshift(publicUrl);
           return list;
@@ -2016,6 +2050,7 @@ function OrderDetailsContent() {
             if (!old) return old;
             return { ...old, [category]: buildUpdated(old[category]) };
           });
+          await removeOrderPhotoUploadFromQueue(queueEntryId);
           return true;
         } catch {
           if (publicUrl) {
@@ -2042,6 +2077,9 @@ function OrderDetailsContent() {
           }
           return false;
         }
+        } finally {
+          activeOrderPhotoUploadsRef.current.delete(activeUploadKey);
+        }
       } catch (e) {
         console.warn('uploadLocalUri error', e);
         return false;
@@ -2055,9 +2093,14 @@ function OrderDetailsContent() {
       if (!uris.length) return;
       const onItemSettled =
         options && typeof options.onItemSettled === 'function' ? options.onItemSettled : null;
+      const onItemUploaded =
+        options && typeof options.onItemUploaded === 'function' ? options.onItemUploaded : null;
       const results = await runMediaUploadQueue(
         uris,
-        async (uri) => uploadLocalUri(category, uri),
+        async (uri) =>
+          uploadLocalUri(category, uri, {
+            onUploaded: (payload) => onItemUploaded?.(uri, payload),
+          }),
         {
           concurrency: 3,
           onItemSettled: (uri) => onItemSettled?.(uri),
@@ -2071,6 +2114,7 @@ function OrderDetailsContent() {
             : t('order_toast_photos_uploaded').replace('{count}', String(ok)),
         );
       }
+      return results;
     },
     [uploadLocalUri, showToast, t],
   );
@@ -3129,6 +3173,31 @@ function OrderDetailsContent() {
       const photos = cur[category] || [];
       const removed = photos[index];
       if (!removed) return;
+      const isOnlineNow = getOfflineSnapshot().isOnline;
+      setLocalPendingMap((previous) => ({
+        ...(previous || {}),
+        [category]: (previous?.[category] || []).filter(
+          (entry) => String(entry?.uploadedUrl || '') !== String(removed || ''),
+        ),
+      }));
+      let deleteQueueId = null;
+      try {
+        const queued = await enqueueOrderPhotoDeletes({
+          orderId,
+          category,
+          targetUrls: [removed],
+          mediaProvider: effectiveMediaProvider,
+          status: isOnlineNow ? 'foreground' : 'pending',
+        });
+        deleteQueueId = queued[String(removed)] || null;
+      } catch {
+        showToast(t('order_toast_delete_error'));
+        return;
+      }
+      setPendingPhotoDeleteMap((previous) => ({
+        ...(previous || {}),
+        [category]: Array.from(new Set([...(previous?.[category] || []), String(removed)])),
+      }));
 
       // Optimistic: remove from UI immediately
       const filterOut = (arr) => (arr || []).filter((u) => u !== removed);
@@ -3139,31 +3208,8 @@ function OrderDetailsContent() {
         return { ...old, [category]: filterOut(old[category]) };
       });
 
-      const isOnlineNow = getOfflineSnapshot().isOnline;
       if (!isOnlineNow) {
-        try {
-          const queueItems = await readOrderPhotoUploadQueue();
-          const remaining = queueItems.filter((item) => {
-            if (String(item?.orderId || '') !== String(orderId)) return true;
-            if (String(item?.category || '') !== String(category || '')) return true;
-            if (String(item?.localUrl || '') !== String(removed || '')) return true;
-            return String(item?.operation || 'upload') !== 'upload';
-          });
-          if (/^https?:\/\//i.test(String(removed || ''))) {
-            remaining.push({
-              id: `order-photo-delete:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-              orderId: String(orderId),
-              category: String(category || ''),
-              targetUrl: String(removed || ''),
-              operation: 'delete',
-              createdAt: new Date().toISOString(),
-            });
-          }
-          await writeOrderPhotoUploadQueue(remaining);
-          showToast(t('order_photo_deleted_offline'));
-        } catch {
-          showToast(t('order_toast_delete_error'));
-        }
+        showToast(t('order_photo_deleted_offline'));
         return;
       }
 
@@ -3194,15 +3240,27 @@ function OrderDetailsContent() {
         const mediaUrls = Array.isArray(data?.media_urls)
           ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
           : null;
-        if (!mediaUrls) {
+        if (mediaUrls) {
+          applyPersistedOrderMedia(orderId, category, mediaUrls, data?.order_updated_at);
+        } else {
           await saveOrderPatch(orderId, { [category]: updated }, { base: cur });
         }
+        await removeOrderPhotoUploadFromQueue(deleteQueueId);
+        setPendingPhotoDeleteMap((previous) => ({
+          ...(previous || {}),
+          [category]: (previous?.[category] || []).filter((url) => String(url || '') !== String(removed)),
+        }));
       } catch (e) {
         console.warn('[removePhoto] background deletion failed:', e);
+        await removeOrderPhotoUploadFromQueue(deleteQueueId);
+        setPendingPhotoDeleteMap((previous) => ({
+          ...(previous || {}),
+          [category]: (previous?.[category] || []).filter((url) => String(url || '') !== String(removed)),
+        }));
         rollback();
       }
     },
-    [deleteOrderMediaByUrl, queryClient, saveOrderPatch, showToast, t],
+    [applyPersistedOrderMedia, deleteOrderMediaByUrl, effectiveMediaProvider, queryClient, saveOrderPatch, showToast, t],
   );
 
   const removePhotosBatch = useCallback(
@@ -3213,10 +3271,35 @@ function OrderDetailsContent() {
 
       const selected = (urls || []).map((value) => String(value || '')).filter(Boolean);
       if (!selected.length) return;
+      const isOnlineNow = getOfflineSnapshot().isOnline;
+      const selectedPendingSet = new Set(selected);
+      setLocalPendingMap((previous) => ({
+        ...(previous || {}),
+        [category]: (previous?.[category] || []).filter(
+          (entry) => !selectedPendingSet.has(String(entry?.uploadedUrl || '')),
+        ),
+      }));
 
       const originalPhotos = Array.isArray(cur?.[category]) ? [...cur[category]] : [];
       const selectedSet = new Set(selected);
       const nextPhotos = originalPhotos.filter((url) => !selectedSet.has(String(url)));
+      let deleteQueueIds = {};
+      try {
+        deleteQueueIds = await enqueueOrderPhotoDeletes({
+          orderId,
+          category,
+          targetUrls: selected,
+          mediaProvider: effectiveMediaProvider,
+          status: isOnlineNow ? 'foreground' : 'pending',
+        });
+      } catch {
+        showToast(t('order_toast_delete_error'));
+        return;
+      }
+      setPendingPhotoDeleteMap((previous) => ({
+        ...(previous || {}),
+        [category]: Array.from(new Set([...(previous?.[category] || []), ...selected])),
+      }));
       const buildPersistedPhotos = (failedUrls = []) => {
         const failedSet = new Set((failedUrls || []).map((value) => String(value || '')));
         return originalPhotos.filter(
@@ -3233,34 +3316,8 @@ function OrderDetailsContent() {
         return { ...old, [category]: nextPhotos };
       });
 
-      const isOnlineNow = getOfflineSnapshot().isOnline;
       if (!isOnlineNow) {
-        try {
-          const queueItems = await readOrderPhotoUploadQueue();
-          let nextQueue = queueItems.filter((item) => {
-            if (String(item?.orderId || '') !== String(orderId)) return true;
-            if (String(item?.category || '') !== String(category || '')) return true;
-            const localUrl = String(item?.localUrl || '');
-            if (!localUrl) return true;
-            if (!selectedSet.has(localUrl)) return true;
-            return String(item?.operation || 'upload') !== 'upload';
-          });
-          for (const removed of selected) {
-            if (!/^https?:\/\//i.test(String(removed || ''))) continue;
-            nextQueue.push({
-              id: `order-photo-delete:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-              orderId: String(orderId),
-              category: String(category || ''),
-              targetUrl: String(removed || ''),
-              operation: 'delete',
-              createdAt: new Date().toISOString(),
-            });
-          }
-          await writeOrderPhotoUploadQueue(nextQueue);
-          showToast(t('order_photos_deleted_offline'));
-        } catch {
-          showToast(t('order_toast_delete_error'));
-        }
+        showToast(t('order_photos_deleted_offline'));
         return;
       }
 
@@ -3299,6 +3356,9 @@ function OrderDetailsContent() {
       };
 
       const failedUrls = [];
+      let persistedPhotos = nextPhotos;
+      let persistedUpdatedAt = null;
+      let hasPersistedMediaResponse = false;
       for (const removed of selected) {
         try {
           const updated = buildPersistedPhotos(failedUrls);
@@ -3306,12 +3366,18 @@ function OrderDetailsContent() {
           const mediaUrls = Array.isArray(data?.media_urls)
             ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
             : null;
-          if (!mediaUrls) {
+          if (mediaUrls) {
+            persistedPhotos = mediaUrls;
+            persistedUpdatedAt = data?.order_updated_at || persistedUpdatedAt;
+            hasPersistedMediaResponse = true;
+          } else {
             await saveOrderPatch(orderId, { [category]: updated }, { base: cur });
           }
+          await removeOrderPhotoUploadFromQueue(deleteQueueIds[removed]);
         } catch (error) {
           console.warn('[removePhotosBatch] background deletion failed:', error);
           failedUrls.push(removed);
+          await removeOrderPhotoUploadFromQueue(deleteQueueIds[removed]);
         }
       }
 
@@ -3322,9 +3388,18 @@ function OrderDetailsContent() {
             ? t('order_toast_delete_error')
             : t('order_toast_delete_partial_error'),
         );
+        if (hasPersistedMediaResponse) {
+          applyPersistedOrderMedia(orderId, category, persistedPhotos, persistedUpdatedAt);
+        }
+      } else {
+        applyPersistedOrderMedia(orderId, category, persistedPhotos, persistedUpdatedAt);
       }
+      setPendingPhotoDeleteMap((previous) => ({
+        ...(previous || {}),
+        [category]: (previous?.[category] || []).filter((url) => !selectedSet.has(String(url || ''))),
+      }));
     },
-    [deleteOrderMediaByUrl, queryClient, saveOrderPatch, showToast, t],
+    [applyPersistedOrderMedia, deleteOrderMediaByUrl, effectiveMediaProvider, queryClient, saveOrderPatch, showToast, t],
   );
 
   const canFinishOrder = useCallback(() => {
@@ -4091,13 +4166,43 @@ function OrderDetailsContent() {
   const handleUploadUri = useCallback(
     async (category, uri) => {
       const id = `local:${Date.now()}`;
+      let uploadSucceeded = false;
       setLocalPendingMap((p) => ({ ...(p || {}), [category]: [...((p && p[category]) || []), { id, uri, pending: true }] }));
       try {
-        await uploadLocalUri(category, uri);
+        uploadSucceeded = await uploadLocalUri(category, uri, {
+          onUploaded: ({ publicUrl }) => {
+            setLocalPendingMap((previous) => ({
+              ...(previous || {}),
+              [category]: (previous?.[category] || []).map((entry) =>
+                entry.id === id
+                  ? { ...entry, uploadedUrl: String(publicUrl || '').trim(), pending: false, failed: false }
+                  : entry,
+              ),
+            }));
+          },
+        });
       } catch (e) {
         console.warn('handleUploadUri error', e);
       } finally {
-        setLocalPendingMap((p) => ({ ...(p || {}), [category]: ((p && p[category]) || []).filter((x) => x.uri !== uri) }));
+        const orderId = orderRef.current?.id;
+        const queued = await getQueuedOrderPhotoUrls(orderId, category);
+        if (!queued.has(String(uri || '').trim())) {
+          setLocalPendingMap((previous) => ({
+            ...(previous || {}),
+            [category]: (previous?.[category] || []).flatMap((entry) => {
+              if (entry.id !== id) return [entry];
+              return entry.uploadedUrl ? [{ ...entry, pending: false, failed: false }] : [];
+            }),
+          }));
+        } else if (!uploadSucceeded && getOfflineSnapshot().isOnline) {
+          await setOrderPhotoUploadQueueStatus(orderId, category, uri, 'failed');
+          setLocalPendingMap((p) => ({
+            ...(p || {}),
+            [category]: ((p && p[category]) || []).map((entry) =>
+              String(entry?.uri || '') === String(uri || '') ? { ...entry, failed: true } : entry,
+            ),
+          }));
+        }
       }
     },
     [uploadLocalUri],
@@ -4105,85 +4210,240 @@ function OrderDetailsContent() {
 
   const handleUploadMultiple = useCallback(
     async (category, uris = []) => {
-      const ids = uris.map((u) => ({ id: `local:${Date.now()}_${Math.random()}`, uri: u, pending: true }));
+      const safeUris = Array.from(
+        new Set((Array.isArray(uris) ? uris : []).map((value) => String(value || '').trim()).filter(Boolean)),
+      );
+      if (!safeUris.length) return;
+      const orderId = orderRef.current?.id;
+      if (orderId) {
+        await enqueueOrderPhotoUploads({
+          orderId,
+          category,
+          localUrls: safeUris,
+          mediaProvider: effectiveMediaProvider,
+          status: getOfflineSnapshot().isOnline ? 'foreground' : 'pending',
+        });
+      }
+      const ids = safeUris.map((u) => ({ id: `local:${Date.now()}_${Math.random()}`, uri: u, pending: true }));
       setLocalPendingMap((p) => ({ ...(p || {}), [category]: [...((p && p[category]) || []), ...ids] }));
       try {
-        await compressAndUploadMultiple(category, uris, {
-          onItemSettled: (uri) => {
-            setLocalPendingMap((p) => ({
-              ...(p || {}),
-              [category]: ((p && p[category]) || []).filter((x) => x.uri !== uri),
+        await compressAndUploadMultiple(category, safeUris, {
+          onItemUploaded: (localUri, { publicUrl }) => {
+            setLocalPendingMap((previous) => ({
+              ...(previous || {}),
+              [category]: (previous?.[category] || []).map((entry) =>
+                String(entry?.uri || '') === String(localUri || '')
+                  ? { ...entry, uploadedUrl: String(publicUrl || '').trim(), pending: false, failed: false }
+                  : entry,
+              ),
             }));
           },
         });
       } catch (e) {
         console.warn('handleUploadMultiple error', e);
       } finally {
+        const queued = await getQueuedOrderPhotoUrls(orderId, category);
+        if (getOfflineSnapshot().isOnline) {
+          await Promise.all(
+            safeUris
+              .filter((uri) => queued.has(uri))
+              .map((uri) => setOrderPhotoUploadQueueStatus(orderId, category, uri, 'failed')),
+          );
+        }
         setLocalPendingMap((p) => ({
           ...(p || {}),
-          [category]: ((p && p[category]) || []).filter((x) => !ids.find((y) => y.id === x.id)),
+          [category]: ((p && p[category]) || []).flatMap((entry) => {
+            const belongsToBatch = ids.some((pending) => pending.id === entry.id);
+            if (!belongsToBatch) return [entry];
+            const remainsQueued = queued.has(String(entry?.uri || '').trim());
+            if (!remainsQueued) {
+              return entry.uploadedUrl ? [{ ...entry, pending: false, failed: false }] : [];
+            }
+            return [{ ...entry, failed: getOfflineSnapshot().isOnline }];
+          }),
         }));
       }
     },
-    [compressAndUploadMultiple],
+    [compressAndUploadMultiple, effectiveMediaProvider],
+  );
+
+  const handleRetryPendingPhoto = useCallback(
+    async (category, pendingPhoto) => {
+      const uri = String(pendingPhoto?.uri || '').trim();
+      const orderId = orderRef.current?.id;
+      if (!uri || !orderId) return;
+      await setOrderPhotoUploadQueueStatus(orderId, category, uri, 'foreground');
+      setLocalPendingMap((previous) => ({
+        ...(previous || {}),
+        [category]: (previous?.[category] || []).map((entry) =>
+          String(entry?.uri || '') === uri ? { ...entry, failed: false } : entry,
+        ),
+      }));
+      const success = await uploadLocalUri(category, uri, {
+        onUploaded: ({ publicUrl }) => {
+          setLocalPendingMap((previous) => ({
+            ...(previous || {}),
+            [category]: (previous?.[category] || []).map((entry) =>
+              String(entry?.uri || '') === uri
+                ? { ...entry, uploadedUrl: String(publicUrl || '').trim(), pending: false, failed: false }
+                : entry,
+            ),
+          }));
+        },
+      });
+      const queued = await getQueuedOrderPhotoUrls(orderId, category);
+      if (success && !queued.has(uri)) {
+        return;
+      }
+      if (!success && getOfflineSnapshot().isOnline) {
+        await setOrderPhotoUploadQueueStatus(orderId, category, uri, 'failed');
+        setLocalPendingMap((previous) => ({
+          ...(previous || {}),
+          [category]: (previous?.[category] || []).map((entry) =>
+            String(entry?.uri || '') === uri ? { ...entry, failed: true } : entry,
+          ),
+        }));
+      }
+    },
+    [uploadLocalUri],
   );
 
   useEffect(() => {
-    if (!id || !order?.id) return;
-    if (!getOfflineSnapshot().isOnline) return;
-    if (orderPhotoQueueFlushInFlightRef.current) return;
-
-    let cancelled = false;
-    const flushQueue = async () => {
-      orderPhotoQueueFlushInFlightRef.current = true;
-      try {
-        let queueItems = await readOrderPhotoUploadQueue();
-        if (!Array.isArray(queueItems) || !queueItems.length) return;
-        const mine = queueItems.filter((item) => String(item?.orderId || '') === String(order.id));
-        if (!mine.length) return;
-
-        for (const item of mine) {
-          if (cancelled) break;
-          if (!getOfflineSnapshot().isOnline) break;
-          const operation = String(item?.operation || 'upload');
-          const category = String(item?.category || '').trim();
-          if (!category) continue;
-
-          let ok = false;
-          if (operation === 'delete') {
-            const targetUrl = String(item?.targetUrl || '').trim();
-            if (!targetUrl) continue;
-            try {
-              await deleteOrderMediaByUrl(order.id, category, targetUrl);
-              ok = true;
-            } catch (error) {
-              console.warn('[order-photo-queue] delete flush failed', error);
+    if (!order?.id) return undefined;
+    setPhotoQueueHydrated(false);
+    let active = true;
+    getOrderPhotoQueueItems(order.id)
+      .then((items) => {
+        if (!active) return;
+        const mine = Array.isArray(items) ? items : [];
+        const pendingUploads = mine.filter((item) => String(item?.operation || 'upload') === 'upload');
+        setLocalPendingMap((previous) => {
+          const next = { ...(previous || {}) };
+          pendingUploads.forEach((item) => {
+            const category = String(item?.category || '').trim();
+            const uri = String(item?.localUrl || '').trim();
+            if (!category || !uri) return;
+            const current = Array.isArray(next[category]) ? next[category] : [];
+            if (!current.some((entry) => String(entry?.uri || '') === uri)) {
+              next[category] = [
+                ...current,
+                { id: String(item?.id || uri), uri, pending: true, failed: item?.status === 'failed' },
+              ];
             }
-          } else {
-            const localUrl = String(item?.localUrl || '').trim();
-            if (!localUrl) continue;
-            ok = await uploadLocalUri(category, localUrl, {
-              replaceUrl: localUrl,
-              silent: true,
-              allowOfflineQueue: false,
-            });
-          }
-          if (!ok) continue;
-          queueItems = queueItems.filter((entry) => String(entry?.id || '') !== String(item?.id || ''));
-          await writeOrderPhotoUploadQueue(queueItems);
-        }
-      } catch (error) {
-        console.warn('[order-photo-queue] flush failed', error);
-      } finally {
-        orderPhotoQueueFlushInFlightRef.current = false;
-      }
-    };
-
-    flushQueue().catch(() => {});
+          });
+          return next;
+        });
+        const deletes = {};
+        mine
+          .filter((item) => String(item?.operation || '') === 'delete')
+          .forEach((item) => {
+            const category = String(item?.category || '').trim();
+            const targetUrl = String(item?.targetUrl || '').trim();
+            if (!category || !targetUrl) return;
+            deletes[category] = [...(deletes[category] || []), targetUrl];
+          });
+        setPendingPhotoDeleteMap(deletes);
+        setPhotoQueueHydrated(true);
+      })
+      .catch(() => {
+        if (active) setPhotoQueueHydrated(true);
+      });
     return () => {
-      cancelled = true;
+      active = false;
     };
-  }, [deleteOrderMediaByUrl, id, order?.id, uploadLocalUri]);
+  }, [order?.id]);
+
+  useEffect(() => {
+    setLocalPendingMap((previous) => {
+      let changed = false;
+      const next = { ...(previous || {}) };
+      for (const [category, entries] of Object.entries(previous || {})) {
+        const persisted = new Set(
+          (Array.isArray(order?.[category]) ? order[category] : []).map((value) => String(value || '')),
+        );
+        const filtered = (Array.isArray(entries) ? entries : []).filter((entry) => {
+          const uploadedUrl = String(entry?.uploadedUrl || '').trim();
+          return !uploadedUrl || !persisted.has(uploadedUrl);
+        });
+        if (filtered.length !== (Array.isArray(entries) ? entries.length : 0)) {
+          next[category] = filtered;
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+  }, [order]);
+
+  useEffect(() => {
+    if (!id || !order?.id) return;
+    if (!isOnlineForPhotoQueue) return;
+
+    let active = true;
+    flushOrderPhotoQueue({
+      onItemSettled: (item, succeeded) => {
+        if (!active || String(item?.orderId || '') !== String(order.id)) return;
+        const category = String(item?.category || '').trim();
+        if (!category) return;
+        if (String(item?.operation || 'upload') === 'delete') {
+          const targetUrl = String(item?.targetUrl || '').trim();
+          setPendingPhotoDeleteMap((previous) => ({
+            ...(previous || {}),
+            [category]: (previous?.[category] || []).filter((url) => String(url || '') !== targetUrl),
+          }));
+          return;
+        }
+        const localUrl = String(item?.localUrl || '').trim();
+        setLocalPendingMap((previous) => ({
+          ...(previous || {}),
+          [category]: (previous?.[category] || []).flatMap((entry) =>
+            String(entry?.uri || '') === localUrl
+              ? succeeded
+                ? []
+                : [{ ...entry, pending: true, failed: true }]
+              : [entry],
+          ),
+        }));
+      },
+    })
+      .then(async ({ completed, failed }) => {
+        if (!active || (!completed && !failed)) return;
+        const remaining = await getOrderPhotoQueueItems(order.id);
+        if (!active) return;
+        const remainingUploads = new Set(
+          remaining
+            .filter((item) => String(item?.operation || 'upload') === 'upload')
+            .map((item) => String(item?.localUrl || '').trim())
+            .filter(Boolean),
+        );
+        setLocalPendingMap((previous) => {
+          const next = { ...(previous || {}) };
+          for (const category of Object.keys(next)) {
+            next[category] = (next[category] || []).filter((entry) =>
+              remainingUploads.has(String(entry?.uri || '').trim()),
+            );
+          }
+          return next;
+        });
+        const remainingDeletes = {};
+        remaining
+          .filter((item) => String(item?.operation || '') === 'delete')
+          .forEach((item) => {
+            const category = String(item?.category || '').trim();
+            const targetUrl = String(item?.targetUrl || '').trim();
+            if (category && targetUrl) {
+              remainingDeletes[category] = [...(remainingDeletes[category] || []), targetUrl];
+            }
+          });
+        setPendingPhotoDeleteMap(remainingDeletes);
+        await refetchRequestData?.();
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(order.id) });
+        queryClient.invalidateQueries({ queryKey: ['requests'] });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [id, isOnlineForPhotoQueue, order?.id, queryClient, refetchRequestData]);
 
   useEffect(() => {
     if (!id) return;
@@ -4301,26 +4561,6 @@ function OrderDetailsContent() {
     returnParams,
     formIsDirty,
   ]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!id) return;
-      const task = InteractionManager.runAfterInteractions(() => {
-        refetchRequestData?.();
-      });
-      return () => task.cancel();
-    }, [id, refetchRequestData]),
-  );
-
-  useFocusEffect(
-    useCallback(
-      () => () => {
-        if (!id) return;
-        queryClient.cancelQueries({ queryKey: queryKeys.requests.detail(id) });
-      },
-      [id, queryClient],
-    ),
-  );
 
   useFocusEffect(
     useCallback(() => {
@@ -4640,7 +4880,7 @@ function OrderDetailsContent() {
   const visibleMediaFields = canViewOrderPhotos
     ? ORDER_MEDIA_FIELD_KEYS.filter((fieldKey) => isOrderFieldVisible(fieldKey))
     : [];
-  const orderMediaSnapshotReady = isRequestDetailLoaded(order);
+  const orderMediaSnapshotReady = isRequestDetailLoaded(order) && photoQueueHydrated;
   const financeEntryPhotosContent = financeEntryPhotosModalVisible ? (
     <Suspense fallback={null}>
       <MediaUploadModal
@@ -4765,7 +5005,11 @@ function OrderDetailsContent() {
                         <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
                       </View>
                     )}
-                    <OrderStatusCapsule status={order.status} companyId={order.company_id || companyId} />
+                    <OrderStatusCapsuleView
+                      status={order.status}
+                      statuses={statusSystem.statuses}
+                      isEnabled={statusSystem.isEnabled}
+                    />
                   </View>
                 </View>
               </> : null}
@@ -5354,7 +5598,8 @@ function OrderDetailsContent() {
                     }))
                     .map((row, idx) => {
                     const count = orderMediaSnapshotReady
-                      ? (order?.[row.key] || []).length + (localPendingMap[row.key] || []).length
+                      ? (orderWithPendingDeletesHidden?.[row.key] || []).length +
+                        (localPendingMap[row.key] || []).filter((entry) => !entry?.uploadedUrl).length
                       : 0;
                     return (
                       <View key={row.key}>
@@ -5362,7 +5607,8 @@ function OrderDetailsContent() {
                         <MediaUploadRow
                           label={row.label}
                           countLabel={t('order_photos_count').replace('{count}', String(count))}
-                          busy={!orderMediaSnapshotReady}
+                          busy={!orderMediaSnapshotReady || (localPendingMap[row.key] || []).length > 0}
+                          allowPressWhenBusy={orderMediaSnapshotReady}
                           disabled={!orderMediaSnapshotReady}
                           onPress={() => setOrderPhotosModal({ visible: true, category: row.key })}
                         />
@@ -5385,8 +5631,11 @@ function OrderDetailsContent() {
                     setOrderPhotosModal({ visible: false, category: null });
                   }}
                   category={orderPhotosModal.category}
-                  photos={orderMediaSnapshotReady ? order?.[orderPhotosModal.category] || [] : []}
+                  photos={orderMediaSnapshotReady ? orderWithPendingDeletesHidden?.[orderPhotosModal.category] || [] : []}
                   pending={localPendingMap[orderPhotosModal.category] || []}
+                  onRetryPending={(pendingPhoto) =>
+                    handleRetryPendingPhoto(orderPhotosModal.category, pendingPhoto)
+                  }
                   getDisplayUrl={orderMedia.getDisplayUrl}
                   getThumbnailUrl={orderMedia.getThumbnailUrl}
                   getIssue={orderMedia.getIssue}

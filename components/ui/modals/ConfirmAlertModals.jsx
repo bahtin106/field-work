@@ -46,11 +46,11 @@ export function ConfirmModal({
             try {
               onClose?.();
             } finally {
-              setTimeout(() => {
+              requestAnimationFrame(() => {
                 try {
                   onConfirm?.();
                 } catch {}
-              }, 360);
+              });
             }
           },
         },

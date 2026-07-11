@@ -487,7 +487,6 @@ export const ThemeProvider = ({ children }) => {
     () => Appearance.getColorScheme?.() || 'light',
   );
   const [mode, setMode] = useState('system');
-  const [_hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     if (colorSchemeFromHook === 'light' || colorSchemeFromHook === 'dark') {
@@ -554,9 +553,7 @@ export const ThemeProvider = ({ children }) => {
         if (alive && (saved === 'light' || saved === 'dark' || saved === 'system')) {
           setMode(saved);
         }
-      } finally {
-        if (alive) setHydrated(true);
-      }
+      } catch {}
     })();
     return () => {
       alive = false;
@@ -590,6 +587,10 @@ export const ThemeProvider = ({ children }) => {
   const toggle = useCallback(() => {
     setMode((m) => (m === 'light' ? 'dark' : 'light'));
   }, []);
+  const contextValue = useMemo(
+    () => ({ theme, mode, setMode, toggle }),
+    [mode, theme, toggle],
+  );
 
   // Global scroll UX defaults: helps when drag starts on TextInput
   useEffect(() => {
@@ -649,7 +650,7 @@ export const ThemeProvider = ({ children }) => {
   }, [theme]);
 
   return (
-    <ThemeContext.Provider value={{ theme, mode, setMode, toggle }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   );

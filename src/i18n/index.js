@@ -3,6 +3,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React from 'react';
 import ru from './ru';
 
+function applyReleaseLegalCopy(dict, locale) {
+  if (!dict || typeof dict !== 'object') return dict;
+  const isEnglish = locale === 'en';
+  dict.privacy_policy_body = isEnglish
+    ? 'The current privacy policy is published at https://monitorapp.ru/privacy. For privacy requests, contact support@monitorapp.ru. Account and associated data deletion instructions: https://monitorapp.ru/data-deletion.'
+    : 'Актуальная политика обработки персональных данных опубликована на https://monitorapp.ru/privacy. По вопросам обработки данных: support@monitorapp.ru. Порядок удаления аккаунта и связанных данных: https://monitorapp.ru/data-deletion.';
+  dict.settings_sections_legal_title = isEnglish ? 'Documents and data' : 'Документы и данные';
+  dict['settings_sections_legal_items_privacy-policy'] = isEnglish
+    ? 'Privacy policy'
+    : 'Политика обработки персональных данных';
+  dict.settings_sections_legal_items_terms = isEnglish ? 'Terms of service' : 'Публичная оферта';
+  dict['settings_sections_legal_items_delete-account'] = isEnglish
+    ? 'Delete account and data'
+    : 'Удалить аккаунт и данные';
+  return dict;
+}
+
+applyReleaseLegalCopy(ru, 'ru');
+
 // --- simple global store ---
 let _dict = ru; // default dictionary
 let _locale = 'ru';
@@ -50,7 +69,6 @@ export async function initI18n() {
     }
   } catch {}
   // на первый рендер уведомим подписчиков
-  notify();
 }
 
 // Меняем язык: строкой ('en') или напрямую объектом словаря
@@ -59,8 +77,14 @@ export async function setLocale(next) {
     let dict = null;
     if (typeof next === 'string') {
       const key = next.toLowerCase();
+      if (key === _locale) {
+        try {
+          await AsyncStorage.setItem(STORAGE_KEY, _locale);
+        } catch {}
+        return true;
+      }
       const loader = loaders[key];
-      dict = loader ? await loader() : null;
+      dict = loader ? applyReleaseLegalCopy(await loader(), key) : null;
       if (!dict) throw new Error('LOCALE_NOT_FOUND');
       _locale = key;
     } else if (next && typeof next === 'object') {

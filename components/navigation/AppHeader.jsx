@@ -122,6 +122,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   const { theme } = useTheme();
   const { t } = useTranslation();
   const formContext = useFormAutoScrollContext();
+  const submitActionIdRef = useRef(Symbol('header-submit-action'));
   const nav = useNavigation();
   const routeParams = route?.params || EMPTY_ROUTE_PARAMS;
   const pathname = usePathname?.() || '';
@@ -266,6 +267,14 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     routeParams,
     rightDisabled,
   ]);
+
+  useEffect(() => {
+    const isSubmitAction = options?.formSubmit === true || routeParams.formSubmit === true;
+    if (!isSubmitAction || !hasRightAction) return undefined;
+    const actionId = submitActionIdRef.current;
+    formContext?.registerSubmitAction?.(actionId, rightPress, { disabled: rightDisabled });
+    return () => formContext?.unregisterSubmitAction?.(actionId);
+  }, [formContext, hasRightAction, options?.formSubmit, rightDisabled, rightPress, routeParams.formSubmit]);
 
   // ---- Анимации для кнопки "назад": масштаб + затемнённый кружок ----
   const scale = useRef(new Animated.Value(1)).current;

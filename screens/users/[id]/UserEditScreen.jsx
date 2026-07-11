@@ -868,16 +868,11 @@ export default function EditUser() {
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
   const settingsCompanyId = employeeData?.companyId || companyId || null;
-  const { useDepartments, refetch: refetchCompanySettings } = useCompanySettings(settingsCompanyId, {
+  const { useDepartments } = useCompanySettings(settingsCompanyId, {
     // The department field is controlled by this setting, so a persisted stale
     // value must not hide it when an administrator opens employee editing.
     refetchOnMount: 'always',
   });
-  useFocusEffect(
-    useCallback(() => {
-      if (settingsCompanyId) refetchCompanySettings().catch(() => {});
-    }, [refetchCompanySettings, settingsCompanyId]),
-  );
   const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
     enabled: !!settingsCompanyId,
   });

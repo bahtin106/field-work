@@ -67,6 +67,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   const [permission, requestPermission, getPermission] = useCameraPermissions();
   const cameraRef = useRef(null);
   const permissionPromptedForThisOpenRef = useRef(false);
+  const confirmInFlightRef = useRef(false);
 
   // Session photos: [{ id, uri }]
   const [photos, setPhotos] = useState([]);
@@ -91,6 +92,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   // ── Reset on close ────────────────────────────────────────
   useEffect(() => {
     if (!visible) {
+      confirmInFlightRef.current = false;
       setPhotos([]);
       setTorch(false);
       setCameraFacing('back');
@@ -168,7 +170,8 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
 
   // ── Confirm (upload all) ───────────────────────────────────
   const handleConfirm = useCallback(() => {
-    if (!photos.length) return;
+    if (!photos.length || confirmInFlightRef.current) return;
+    confirmInFlightRef.current = true;
     hapticLight();
     const uris = photos.map((p) => p.uri);
     onSave?.(uris);

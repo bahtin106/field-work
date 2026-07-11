@@ -18,6 +18,7 @@ import { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { DateTimeModal, SelectModal } from '../../components/ui/modals';
 import { ANDROID_CHANNEL_ID, getAndroidChannelName, APP_DEFAULTS } from '../../config/notifications';
+import { LEGAL_LINKS } from '../../config/externalUrls';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { supabase } from '../../lib/supabase';
 import {
@@ -132,6 +133,14 @@ const SETTINGS_SECTIONS = Object.freeze([
       { key: 'geo', type: 'select', comingSoon: true },
       { key: 'analytics', type: 'select', comingSoon: true },
       { key: 'private-search', type: 'select', comingSoon: true },
+    ],
+  },
+  {
+    key: 'legal',
+    items: [
+      { key: 'privacy-policy', type: 'select' },
+      { key: 'terms', type: 'select' },
+      { key: 'delete-account', type: 'select' },
     ],
   },
 ]);
@@ -899,6 +908,17 @@ export default function AppSettings() {
     }
   }, [prefs.quiet_end, prefs.quiet_start, setQuietHours, t, toast]);
 
+  const openExternalPage = useCallback(
+    (url) => async () => {
+      try {
+        await Linking.openURL(url);
+      } catch {
+        toast.error(t('toast_error'));
+      }
+    },
+    [t, toast],
+  );
+
   const sectionBase = useMemo(() => {
     const resolvePressHandler = (sectionKey, itemKey) => {
       if (sectionKey === 'appearance' && itemKey === 'theme') return () => setThemeOpen(true);
@@ -907,6 +927,9 @@ export default function AppSettings() {
       if (sectionKey === 'quiet' && itemKey === 'quiet_start') return openTimePicker('start');
       if (sectionKey === 'quiet' && itemKey === 'quiet_end') return openTimePicker('end');
       if (sectionKey === 'quiet' && itemKey === 'quiet_reset') return onResetQuietTimes;
+      if (sectionKey === 'legal' && itemKey === 'privacy-policy') return openExternalPage(LEGAL_LINKS.privacy);
+      if (sectionKey === 'legal' && itemKey === 'terms') return openExternalPage(LEGAL_LINKS.offer);
+      if (sectionKey === 'legal' && itemKey === 'delete-account') return openExternalPage(LEGAL_LINKS.dataDeletion);
       return undefined;
     };
 
@@ -929,7 +952,7 @@ export default function AppSettings() {
         return mapped;
       }),
     }));
-  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openTimePicker, router, t]);
+  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openExternalPage, openTimePicker, router, t]);
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
   const visibleSectionBase = useMemo(() => {

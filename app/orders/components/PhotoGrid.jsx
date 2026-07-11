@@ -67,12 +67,27 @@ const UploadOverlay = memo(function UploadOverlay({ borderRadius, iconSize, icon
   );
 });
 
+const RetryOverlay = memo(function RetryOverlay({ borderRadius, iconSize, iconColor }) {
+  return (
+    <View
+      style={[
+        StyleSheet.absoluteFillObject,
+        { backgroundColor: 'rgba(0,0,0,0.62)', borderRadius, justifyContent: 'center', alignItems: 'center' },
+      ]}
+    >
+      <Feather name="refresh-cw" size={iconSize} color={iconColor} />
+    </View>
+  );
+});
+
 const PhotoItem = memo(function PhotoItem({
   uri,
   displayUri,
   fallbackUri,
   issueMessage,
   isPending,
+  isFailed,
+  pendingPhoto,
   actualIndex,
   isSelectionMode,
   isSelected,
@@ -83,10 +98,15 @@ const PhotoItem = memo(function PhotoItem({
   onRemove,
   onLongPress,
   onToggleSelect,
+  onRetryPending,
 }) {
   const handlePress = useCallback(() => {
+    if (isPending && isFailed) {
+      onRetryPending?.(pendingPhoto);
+      return;
+    }
     if (!isPending && onPress) onPress(actualIndex);
-  }, [actualIndex, isPending, onPress]);
+  }, [actualIndex, isFailed, isPending, onPress, onRetryPending, pendingPhoto]);
 
   const handleRemove = useCallback((event) => {
     event?.stopPropagation?.();
@@ -108,8 +128,9 @@ const PhotoItem = memo(function PhotoItem({
       <Pressable
         onPress={handlePress}
         onLongPress={handleLongPress}
-        disabled={isPending}
-        accessibilityRole="image"
+        disabled={isPending && !isFailed}
+        accessibilityRole={isFailed ? 'button' : 'image'}
+        accessibilityLabel={isFailed ? t('btn_retry') : undefined}
         style={({ pressed }) => [pressed && s.pressed]}
       >
         <View style={s.imageContainer}>
@@ -136,7 +157,13 @@ const PhotoItem = memo(function PhotoItem({
               transition={theme.timings?.panelToggleMs ?? 200}
             />
           )}
-          {isPending ? (
+          {isPending && isFailed ? (
+            <RetryOverlay
+              borderRadius={theme.radii.sm}
+              iconSize={theme.icons?.md || 22}
+              iconColor={theme.colors.onPrimary}
+            />
+          ) : isPending ? (
             <UploadOverlay
               borderRadius={theme.radii.sm}
               iconSize={theme.icons?.md || 22}
@@ -191,6 +218,7 @@ const PhotoItem = memo(function PhotoItem({
 function PhotoGrid({
   photos = [],
   pending = [],
+  onRetryPending,
   getDisplayUrl,
   getThumbnailUrl,
   getIssue,
@@ -209,18 +237,27 @@ function PhotoGrid({
 
   const data = useMemo(() => {
     const mapped = [];
+    const completedUrls = new Set();
     for (const p of pending || []) {
+      const uploadedUrl = String(p?.uploadedUrl || '').trim();
+      if (uploadedUrl) completedUrls.add(uploadedUrl);
+      const completedIndex = uploadedUrl
+        ? (photos || []).findIndex((url) => String(url || '') === uploadedUrl)
+        : -1;
       mapped.push({
         key: p.id || `pending_${p.uri}`,
-        uri: p.uri,
+        uri: uploadedUrl || p.uri,
         displayUri: p.uri,
-        isPending: true,
-        actualIndex: -1,
+        isPending: p.pending !== false && !uploadedUrl,
+        isFailed: p.failed === true,
+        pendingPhoto: p,
+        actualIndex: completedIndex,
       });
     }
     const occurrenceBySource = new Map();
     for (let i = 0; i < (photos || []).length; i += 1) {
       const url = photos[i];
+      if (completedUrls.has(String(url || ''))) continue;
       const thumbUri = getThumbnailUrl ? getThumbnailUrl(url) : '';
       const displayUri = getDisplayUrl ? getDisplayUrl(url) : url;
       const visibleUri = thumbUri || displayUri;
@@ -234,6 +271,8 @@ function PhotoGrid({
         fallbackUri: displayUri && displayUri !== thumbUri ? displayUri : '',
         issueMessage: getIssue ? getIssue(url) : '',
         isPending: false,
+        isFailed: false,
+        pendingPhoto: null,
         actualIndex: i,
       });
     }
@@ -278,6 +317,8 @@ function PhotoGrid({
         fallbackUri={item.fallbackUri}
         issueMessage={item.issueMessage}
         isPending={item.isPending}
+        isFailed={item.isFailed}
+        pendingPhoto={item.pendingPhoto}
         actualIndex={item.actualIndex}
         isSelectionMode={selectionMode}
         isSelected={!item.isPending && selectedUrlsSet.has(String(item.uri))}
@@ -288,9 +329,10 @@ function PhotoGrid({
         onRemove={onRemove}
         onLongPress={handleEnterSelectionMode}
         onToggleSelect={handleToggleSelect}
+        onRetryPending={onRetryPending}
       />
     ),
-    [handleEnterSelectionMode, handleOpenViewer, handleToggleSelect, onRemove, s, selectedUrlsSet, selectionMode, t, theme],
+    [handleEnterSelectionMode, handleOpenViewer, handleToggleSelect, onRemove, onRetryPending, s, selectedUrlsSet, selectionMode, t, theme],
   );
 
   const keyExtractor = useCallback((item) => item.key, []);

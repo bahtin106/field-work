@@ -138,92 +138,132 @@ export function useClientDeleteBlockers(id: any, options: any = {}) {
   });
 }
 
+type ClientsRealtimeSubscription = {
+  refs: number;
+  channel: any;
+};
+
+const clientsRealtimeSubscriptions = new WeakMap<
+  object,
+  Map<string, ClientsRealtimeSubscription>
+>();
+
+function releaseClientsRealtimeSubscription(queryClient: any, companyKey: string) {
+  const subscriptions = clientsRealtimeSubscriptions.get(queryClient);
+  const entry = subscriptions?.get(companyKey);
+  if (!entry) return;
+
+  entry.refs -= 1;
+  if (entry.refs > 0) return;
+
+  subscriptions?.delete(companyKey);
+  if (subscriptions?.size === 0) clientsRealtimeSubscriptions.delete(queryClient);
+  try {
+    supabase.removeChannel(entry.channel);
+  } catch {}
+}
+
+function acquireClientsRealtimeSubscription(queryClient: any, companyId: any) {
+  const companyKey = String(companyId || '').trim();
+  if (!companyKey) return () => {};
+
+  let subscriptions = clientsRealtimeSubscriptions.get(queryClient);
+  if (!subscriptions) {
+    subscriptions = new Map();
+    clientsRealtimeSubscriptions.set(queryClient, subscriptions);
+  }
+
+  const existing = subscriptions.get(companyKey);
+  if (existing) {
+    existing.refs += 1;
+    return () => releaseClientsRealtimeSubscription(queryClient, companyKey);
+  }
+
+  const refreshClientLists = () => {
+    void queryClient.invalidateQueries({ queryKey: ['clients'] });
+  };
+
+  const channel = supabase
+    .channel(`clients:realtime:${companyKey}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'clients',
+        filter: `company_id=eq.${companyKey}`,
+      },
+      (payload: any) => {
+        const rowId = payload?.new?.id || payload?.old?.id;
+        if (rowId) {
+          queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(rowId) });
+          queryClient.invalidateQueries({ queryKey: queryKeys.clients.orderCount(rowId) });
+          queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers', String(rowId)] });
+          queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(rowId) });
+        }
+        queryClient.invalidateQueries({ queryKey: ['clients'] });
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'client_objects',
+        filter: `company_id=eq.${companyKey}`,
+      },
+      (payload: any) => {
+        const clientId = payload?.new?.client_id || payload?.old?.client_id;
+        if (clientId) {
+          queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
+          queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
+          queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers', String(clientId)] });
+        }
+        queryClient.invalidateQueries({ queryKey: ['clients'] });
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'client_tag_links',
+        filter: `company_id=eq.${companyKey}`,
+      },
+      (payload: any) => {
+        const clientId = String(payload?.new?.client_id || payload?.old?.client_id || '');
+        if (clientId) {
+          void invalidateNow(queryClient, queryKeys.clients.detail(clientId));
+        }
+        void invalidateManyNow(queryClient, [['clients'], ['tags']]);
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'company_tags',
+        filter: `company_id=eq.${companyKey}`,
+      },
+      () => {
+        void invalidateManyNow(queryClient, [['clients'], ['objects'], ['tags']]);
+      },
+    )
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') refreshClientLists();
+    });
+
+  subscriptions.set(companyKey, { refs: 1, channel });
+  return () => releaseClientsRealtimeSubscription(queryClient, companyKey);
+}
+
 export function useClientsRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!enabled || !companyId) return;
-
-    const refreshClientLists = () => {
-      void queryClient.invalidateQueries({ queryKey: ['clients'] });
-    };
-
-    const channel = supabase
-      .channel(`clients:realtime:${companyId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'clients',
-          filter: `company_id=eq.${companyId}`,
-        },
-        (payload: any) => {
-          const rowId = payload?.new?.id || payload?.old?.id;
-          if (rowId) {
-            queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(rowId) });
-            queryClient.invalidateQueries({ queryKey: queryKeys.clients.orderCount(rowId) });
-            queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers', String(rowId)] });
-            queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(rowId) });
-          }
-          queryClient.invalidateQueries({ queryKey: ['clients'] });
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'client_objects',
-          filter: `company_id=eq.${companyId}`,
-        },
-        (payload: any) => {
-          const clientId = payload?.new?.client_id || payload?.old?.client_id;
-          if (clientId) {
-            queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
-            queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
-            queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers', String(clientId)] });
-          }
-          queryClient.invalidateQueries({ queryKey: ['clients'] });
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'client_tag_links',
-          filter: `company_id=eq.${companyId}`,
-        },
-        (payload: any) => {
-          const clientId = String(payload?.new?.client_id || payload?.old?.client_id || '');
-          if (clientId) {
-            void invalidateNow(queryClient, queryKeys.clients.detail(clientId));
-          }
-          void invalidateManyNow(queryClient, [['clients'], ['tags']]);
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'company_tags',
-          filter: `company_id=eq.${companyId}`,
-        },
-        () => {
-          void invalidateManyNow(queryClient, [['clients'], ['objects'], ['tags']]);
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') refreshClientLists();
-      });
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
-    };
+    if (!enabled || !companyId) return undefined;
+    return acquireClientsRealtimeSubscription(queryClient, companyId);
   }, [companyId, enabled, queryClient]);
 }
 

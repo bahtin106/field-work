@@ -12,7 +12,11 @@ import {
   View,
 } from 'react-native';
 import { t as T } from '../../src/i18n';
-import { useAutoScrollOnInvalid, useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
+import {
+  useAutoScrollOnInvalid,
+  useFormAutoScrollContext,
+  useValidationAttemptSinceMount,
+} from '../../src/shared/forms/FormAutoScrollContext';
 import { getFieldValidationState, getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme';
 import { CHEVRON_GAP, listItemStyles } from './listItemStyles';
@@ -76,6 +80,9 @@ const TextField = forwardRef(function TextField(
 ) {
   const { theme } = useTheme();
   const formContext = useFormAutoScrollContext();
+  const validationAttemptedSinceMount = useValidationAttemptSinceMount(
+    formContext?.validationAttempt,
+  );
   const containerRef = useRef(null);
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
@@ -118,7 +125,7 @@ const TextField = forwardRef(function TextField(
     error,
     required,
     touched,
-    forceValidation: forceValidation || (formContext?.validationAttempt ?? 0) > 0,
+    forceValidation: forceValidation || validationAttemptedSinceMount,
   });
   const resolvedLabel = getRequiredFieldLabel(label, validationState.isRequired);
   const isErr = validationState.isInvalid;
@@ -129,8 +136,19 @@ const TextField = forwardRef(function TextField(
   });
   const s = styles(theme, isErr, focused, autoGrowEnabled, minContentHeight, effectiveMultiline);
   const inputRef = useRef(null);
+  const inputNavigationIdRef = useRef(Symbol('text-field-input'));
   const [contentHeight, setContentHeight] = useState(minContentHeight);
   const lastMeasuredValueRef = useRef(null);
+  const registerInput = formContext?.registerInput;
+  const unregisterInput = formContext?.unregisterInput;
+  const focusNextInputOrSubmit = formContext?.focusNextInputOrSubmit;
+
+  useEffect(() => {
+    if (effectiveMultiline || pressable) return undefined;
+    const inputId = inputNavigationIdRef.current;
+    registerInput?.(inputId, inputRef, { disabled });
+    return () => unregisterInput?.(inputId);
+  }, [disabled, effectiveMultiline, pressable, registerInput, unregisterInput]);
 
   useEffect(() => {
     if (!effectiveMultiline || !autoGrowEnabled) {
@@ -227,9 +245,10 @@ const TextField = forwardRef(function TextField(
         onSubmitEditing(e);
         return;
       }
+      if (focusNextInputOrSubmit?.(inputNavigationIdRef.current)) return;
       Keyboard.dismiss();
     },
-    [effectiveMultiline, onSubmitEditing],
+    [effectiveMultiline, focusNextInputOrSubmit, onSubmitEditing],
   );
 
   return (
@@ -309,7 +328,7 @@ const TextField = forwardRef(function TextField(
             autoCapitalize={autoCapitalize}
             autoFocus={autoFocus}
             showSoftInputOnFocus={showSoftInputOnFocus}
-            blurOnSubmit={!effectiveMultiline && !onSubmitEditing}
+            blurOnSubmit={false}
             returnKeyType={effectiveReturnKeyType}
             onSubmitEditing={handleSubmitEditing}
             style={[
@@ -484,6 +503,9 @@ export function SelectField({
 }) {
   const { theme } = useTheme();
   const formContext = useFormAutoScrollContext();
+  const validationAttemptedSinceMount = useValidationAttemptSinceMount(
+    formContext?.validationAttempt,
+  );
   const rowRef = React.useRef(null);
   const base = listItemStyles(theme);
   const validationState = getFieldValidationState({
@@ -491,7 +513,7 @@ export function SelectField({
     value,
     error,
     required,
-    forceValidation: forceValidation || (formContext?.validationAttempt ?? 0) > 0,
+    forceValidation: forceValidation || validationAttemptedSinceMount,
     touched: false,
   });
   const resolvedLabel = isTextLikeNode(label)
@@ -769,13 +791,16 @@ export const DateOfBirthField = ({
 }) => {
   const { theme } = useTheme();
   const formContext = useFormAutoScrollContext();
+  const validationAttemptedSinceMount = useValidationAttemptSinceMount(
+    formContext?.validationAttempt,
+  );
   const containerRef = React.useRef(null);
   const validationState = getFieldValidationState({
     label,
     value,
     error,
     required,
-    forceValidation: forceValidation || (formContext?.validationAttempt ?? 0) > 0,
+    forceValidation: forceValidation || validationAttemptedSinceMount,
     touched: false,
   });
   const isErr = validationState.isInvalid;

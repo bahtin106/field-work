@@ -20,6 +20,17 @@ function normalizePath(pathname: string | null | undefined) {
   return raw.replace(/\/+$/, '') || '/';
 }
 
+function getMatchingQueryStates(queryClient: any, queryKey: readonly unknown[] | unknown[]) {
+  try {
+    return queryClient
+      .getQueryCache()
+      .findAll({ queryKey })
+      .map((query: any) => query.state);
+  } catch {
+    return [];
+  }
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
@@ -292,23 +303,42 @@ export function RouteFreshnessBoundary() {
 
     const now = Date.now();
     const lastRunAt = lastRunRef.current.get(plan.intervalKey) || 0;
-    if (now - lastRunAt < plan.minIntervalMs) return;
+    const hasInvalidatedQuery = (plan.queryKeys || []).some(
+      (queryKey) =>
+        getMatchingQueryStates(queryClient, queryKey).some(
+          (state: any) => state?.isInvalidated === true,
+        ),
+    );
+    if (now - lastRunAt < plan.minIntervalMs && !hasInvalidatedQuery) return;
     lastRunRef.current.set(plan.intervalKey, now);
 
-    if (reason === 'route-focus' && lastRunAt === 0) {
-      return;
-    }
+    const isInitialRouteFocus = reason === 'route-focus' && lastRunAt === 0;
+    const queryKeysToRefresh = isInitialRouteFocus
+      ? (plan.queryKeys || []).filter((queryKey) => {
+          const states = getMatchingQueryStates(queryClient, queryKey);
+          if (states.length === 0) return true;
+          return states.some((state: any) => {
+            const updatedAt = Number(state?.dataUpdatedAt || 0);
+            return state?.isInvalidated === true || updatedAt === 0 || now - updatedAt >= plan.minIntervalMs;
+          });
+        })
+      : plan.queryKeys || [];
+    if (isInitialRouteFocus && queryKeysToRefresh.length === 0) return;
 
-    const invalidateTasks = (plan.queryKeys || []).map((queryKey) =>
+    const invalidateTasks = queryKeysToRefresh.map((queryKey) =>
       queryClient.invalidateQueries({ queryKey, refetchType: 'active' }),
     );
 
     Promise.allSettled([
       ...invalidateTasks,
-      requestScreenRefresh(plan.scopes || [], {
-        reason,
-        path: pathname || '',
-      }),
+      ...(isInitialRouteFocus
+        ? []
+        : [
+            requestScreenRefresh(plan.scopes || [], {
+              reason,
+              path: pathname || '',
+            }),
+          ]),
     ]).catch(() => {});
   }, [pathname, plan, queryClient]);
 

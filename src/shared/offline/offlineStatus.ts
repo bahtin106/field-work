@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { onlineManager, type QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
+import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../query/queryKeys';
 
 const OUTBOX_KEY = 'offline.outbox.v1';
@@ -22,6 +23,13 @@ export type OfflineOutboxItem = {
   status: 'pending' | 'syncing' | 'conflict' | 'failed';
   error?: string | null;
   latest?: Record<string, any> | null;
+  ownerUserId?: string | null;
+  ownerCompanyId?: string | null;
+};
+
+export type OfflineOutboxOwner = {
+  userId: string;
+  companyId: string | null;
 };
 
 type Listener = () => void;
@@ -30,6 +38,10 @@ let lastNetState: NetInfoState | null = null;
 let pendingOfflineState: NetInfoState | null = null;
 let offlineConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
 let isSyncing = false;
+let syncInFlight: Promise<ReturnType<typeof summarizeOutbox>> | null = null;
+let syncRerunRequested = false;
+let syncRetryTimer: ReturnType<typeof setTimeout> | null = null;
+const transientSyncFailures = new Map<string, number>();
 let cachedOfflineSnapshot: {
   isNetworkKnown: boolean;
   isOnline: boolean;
@@ -63,8 +75,18 @@ function isOnlineNetState(state: NetInfoState | null) {
 }
 
 function applyNetState(state: NetInfoState | null) {
+  const previous = getOfflineSnapshot();
   lastNetState = state;
   onlineManager.setOnline(isOnlineNetState(state));
+  cachedOfflineSnapshot = null;
+  const next = getOfflineSnapshot();
+  if (
+    previous.isNetworkKnown === next.isNetworkKnown &&
+    previous.isOnline === next.isOnline &&
+    previous.isPoorConnection === next.isPoorConnection
+  ) {
+    return;
+  }
   emit();
 }
 
@@ -149,7 +171,65 @@ function makeOutboxId(entity: string, operation: string, entityId: string) {
   return `${entity}:${operation}:${entityId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function readOutbox(): Promise<OfflineOutboxItem[]> {
+export async function getActiveOfflineOwner(): Promise<OfflineOutboxOwner | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const user = data?.session?.user;
+    const userId = String(user?.id || '').trim();
+    if (!userId) return null;
+    const companyId = String(user?.user_metadata?.company_id || '').trim() || null;
+    return { userId, companyId };
+  } catch {
+    return null;
+  }
+}
+
+export function isOfflineItemOwnedBy(
+  item: { ownerUserId?: string | null; ownerCompanyId?: string | null } | null | undefined,
+  owner: OfflineOutboxOwner | null,
+) {
+  if (!owner?.userId) return false;
+  const itemUserId = String(item?.ownerUserId || '').trim();
+  if (!itemUserId || itemUserId !== owner.userId) return false;
+  const itemCompanyId = String(item?.ownerCompanyId || '').trim();
+  if (itemCompanyId && owner.companyId && itemCompanyId !== owner.companyId) return false;
+  return true;
+}
+
+function getOutboxDetailQueryKey(item: OfflineOutboxItem) {
+  if (item.entity === 'request') return queryKeys.requests.detail(item.entityId);
+  if (item.entity === 'client') return queryKeys.clients.detail(item.entityId);
+  if (item.entity === 'object') return queryKeys.objects.detail(item.entityId);
+  if (item.entity === 'employee') return queryKeys.employees.detail(item.entityId);
+  return null;
+}
+
+function isLegacyOutboxItemClaimable(
+  item: OfflineOutboxItem,
+  owner: OfflineOutboxOwner,
+  queryClient: QueryClient,
+) {
+  if (String(item?.ownerUserId || '').trim()) return false;
+  const itemCompanyId = String(item?.base?.company_id || '').trim();
+  if (itemCompanyId && owner.companyId && itemCompanyId !== owner.companyId) return false;
+  const activeProfile = queryClient.getQueryData(queryKeys.profile.me()) as any;
+  if (String(activeProfile?.id || '').trim() !== owner.userId) return false;
+  const detailKey = getOutboxDetailQueryKey(item);
+  if (!detailKey) return false;
+  const cachedDetail = queryClient.getQueryData(detailKey) as any;
+  return (
+    cachedDetail?.__offlinePending === true &&
+    String(cachedDetail?.__offlineOutboxId || '').trim() === String(item.id || '').trim()
+  );
+}
+
+function isOutboxItemOwnedBy(item: OfflineOutboxItem, owner: OfflineOutboxOwner | null) {
+  return isOfflineItemOwnedBy(item, owner);
+}
+
+let outboxMutationQueue: Promise<void> = Promise.resolve();
+
+async function readOutboxStorage(): Promise<OfflineOutboxItem[]> {
   try {
     const raw = await AsyncStorage.getItem(OUTBOX_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
@@ -159,13 +239,58 @@ async function readOutbox(): Promise<OfflineOutboxItem[]> {
   }
 }
 
-async function writeOutbox(items: OfflineOutboxItem[]) {
+async function writeOutboxStorage(items: OfflineOutboxItem[]) {
   await AsyncStorage.setItem(OUTBOX_KEY, JSON.stringify(items));
   emit();
 }
 
+async function readOutbox(): Promise<OfflineOutboxItem[]> {
+  await outboxMutationQueue;
+  return readOutboxStorage();
+}
+
+function mutateOutbox<T>(
+  mutator: (items: OfflineOutboxItem[]) => {
+    items: OfflineOutboxItem[];
+    result: T;
+  },
+): Promise<T> {
+  const operation = outboxMutationQueue.then(async () => {
+    const current = await readOutboxStorage();
+    const outcome = mutator([...current]);
+    await writeOutboxStorage(outcome.items);
+    return outcome.result;
+  });
+  outboxMutationQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+}
+
+async function claimLegacyOutboxForOwner(owner: OfflineOutboxOwner, queryClient: QueryClient) {
+  const snapshot = await readOutbox();
+  if (!snapshot.some((item) => isLegacyOutboxItemClaimable(item, owner, queryClient))) return;
+  await mutateOutbox((items) => ({
+    items: items.map((item) =>
+      isLegacyOutboxItemClaimable(item, owner, queryClient)
+        ? {
+            ...item,
+            ownerUserId: owner.userId,
+            ownerCompanyId: owner.companyId,
+          }
+        : item,
+    ),
+    result: undefined,
+  }));
+}
+
 export async function getOfflineOutboxSummary() {
-  const items = await readOutbox();
+  const [items, owner] = await Promise.all([readOutbox(), getActiveOfflineOwner()]);
+  return summarizeOutbox(items.filter((item) => isOutboxItemOwnedBy(item, owner)));
+}
+
+function summarizeOutbox(items: OfflineOutboxItem[]) {
   return {
     pending: items.filter((item) => item.status === 'pending' || item.status === 'syncing').length,
     conflicts: items.filter((item) => item.status === 'conflict').length,
@@ -186,50 +311,56 @@ export async function enqueueRequestUpdate({
 }) {
   const entityId = String(id || '').trim();
   if (!entityId) throw new Error('Request id is required');
+  const owner = await getActiveOfflineOwner();
+  if (!owner) throw new Error('Authenticated session is required for offline changes');
 
-  const items = await readOutbox();
-  const existingIndex = items.findIndex(
-    (item) =>
-      item.entity === 'request' &&
-      item.operation === 'update' &&
-      item.entityId === entityId &&
-      (item.status === 'pending' || item.status === 'failed' || item.status === 'conflict'),
-  );
+  return mutateOutbox((items) => {
+    const existingIndex = items.findIndex(
+      (item) =>
+        item.entity === 'request' &&
+        item.operation === 'update' &&
+        item.entityId === entityId &&
+        isOutboxItemOwnedBy(item, owner) &&
+        (item.status === 'pending' || item.status === 'failed' || item.status === 'conflict'),
+    );
 
-  const stamp = nowIso();
-  if (existingIndex >= 0) {
-    const existing = items[existingIndex];
-    items[existingIndex] = {
-      ...existing,
-      patch: { ...(existing.patch || {}), ...(patch || {}) },
-      base: existing.base || base || null,
-      expectedUpdatedAt: existing.expectedUpdatedAt || expectedUpdatedAt || null,
+    const stamp = nowIso();
+    if (existingIndex >= 0) {
+      const existing = items[existingIndex];
+      items[existingIndex] = {
+        ...existing,
+        patch: { ...(existing.patch || {}), ...(patch || {}) },
+        base: existing.base || base || null,
+        expectedUpdatedAt: existing.expectedUpdatedAt || expectedUpdatedAt || null,
+        updatedAt: stamp,
+        status: 'pending',
+        attempts: 0,
+        error: null,
+      };
+      transientSyncFailures.delete(existing.id);
+      return { items, result: items[existingIndex] };
+    }
+
+    const item: OfflineOutboxItem = {
+      id: makeOutboxId('request', 'update', entityId),
+      entity: 'request',
+      operation: 'update',
+      entityId,
+      patch: patch || {},
+      base: base || null,
+      expectedUpdatedAt: expectedUpdatedAt || null,
+      createdAt: stamp,
       updatedAt: stamp,
+      attempts: 0,
       status: 'pending',
       error: null,
+      latest: null,
+      ownerUserId: owner.userId,
+      ownerCompanyId: owner.companyId,
     };
-    await writeOutbox(items);
-    return items[existingIndex];
-  }
-
-  const item: OfflineOutboxItem = {
-    id: makeOutboxId('request', 'update', entityId),
-    entity: 'request',
-    operation: 'update',
-    entityId,
-    patch: patch || {},
-    base: base || null,
-    expectedUpdatedAt: expectedUpdatedAt || null,
-    createdAt: stamp,
-    updatedAt: stamp,
-    attempts: 0,
-    status: 'pending',
-    error: null,
-    latest: null,
-  };
-  items.push(item);
-  await writeOutbox(items);
-  return item;
+    items.push(item);
+    return { items, result: item };
+  });
 }
 
 export async function enqueueClientUpdate({
@@ -281,49 +412,55 @@ async function enqueueEntityUpdate({
 }) {
   const entityId = String(id || '').trim();
   if (!entityId) throw new Error('Entity id is required');
+  const owner = await getActiveOfflineOwner();
+  if (!owner) throw new Error('Authenticated session is required for offline changes');
 
-  const items = await readOutbox();
-  const existingIndex = items.findIndex(
-    (item) =>
-      item.entity === entity &&
-      item.operation === 'update' &&
-      item.entityId === entityId &&
-      (item.status === 'pending' || item.status === 'failed' || item.status === 'conflict'),
-  );
+  return mutateOutbox((items) => {
+    const existingIndex = items.findIndex(
+      (item) =>
+        item.entity === entity &&
+        item.operation === 'update' &&
+        item.entityId === entityId &&
+        isOutboxItemOwnedBy(item, owner) &&
+        (item.status === 'pending' || item.status === 'failed' || item.status === 'conflict'),
+    );
 
-  const stamp = nowIso();
-  if (existingIndex >= 0) {
-    const existing = items[existingIndex];
-    items[existingIndex] = {
-      ...existing,
-      patch: { ...(existing.patch || {}), ...(patch || {}) },
-      base: existing.base || base || null,
+    const stamp = nowIso();
+    if (existingIndex >= 0) {
+      const existing = items[existingIndex];
+      items[existingIndex] = {
+        ...existing,
+        patch: { ...(existing.patch || {}), ...(patch || {}) },
+        base: existing.base || base || null,
+        updatedAt: stamp,
+        status: 'pending',
+        attempts: 0,
+        error: null,
+      };
+      transientSyncFailures.delete(existing.id);
+      return { items, result: items[existingIndex] };
+    }
+
+    const item: OfflineOutboxItem = {
+      id: makeOutboxId(entity, 'update', entityId),
+      entity,
+      operation: 'update',
+      entityId,
+      patch: patch || {},
+      base: base || null,
+      expectedUpdatedAt: base?.updated_at || null,
+      createdAt: stamp,
       updatedAt: stamp,
+      attempts: 0,
       status: 'pending',
       error: null,
+      latest: null,
+      ownerUserId: owner.userId,
+      ownerCompanyId: owner.companyId,
     };
-    await writeOutbox(items);
-    return items[existingIndex];
-  }
-
-  const item: OfflineOutboxItem = {
-    id: makeOutboxId(entity, 'update', entityId),
-    entity,
-    operation: 'update',
-    entityId,
-    patch: patch || {},
-    base: base || null,
-    expectedUpdatedAt: base?.updated_at || null,
-    createdAt: stamp,
-    updatedAt: stamp,
-    attempts: 0,
-    status: 'pending',
-    error: null,
-    latest: null,
-  };
-  items.push(item);
-  await writeOutbox(items);
-  return item;
+    items.push(item);
+    return { items, result: item };
+  });
 }
 
 function normalizeComparableValue(value: any): any {
@@ -369,6 +506,7 @@ function applyOptimisticRequest(queryClient: QueryClient, item: OfflineOutboxIte
       ...(current as Record<string, any>),
       ...(item.patch || {}),
       __offlinePending: true,
+      __offlineOutboxId: item.id,
     });
   }
 }
@@ -493,85 +631,172 @@ async function updateItemOnline(item: OfflineOutboxItem, latest: any) {
   return null;
 }
 
-export async function syncOfflineOutbox(queryClient: QueryClient) {
+function scheduleOutboxRetry(queryClient: QueryClient, attempts: number) {
+  if (syncRetryTimer || attempts >= MAX_ATTEMPTS) return;
+  const delay = Math.min(2_000 * 2 ** Math.max(0, attempts - 1), 30_000);
+  syncRetryTimer = setTimeout(() => {
+    syncRetryTimer = null;
+    if (!getOfflineSnapshot().isOnline) return;
+    syncOfflineOutbox(queryClient).catch(() => {});
+  }, delay);
+}
+
+async function runOfflineOutboxSync(queryClient: QueryClient) {
   const snapshot = getOfflineSnapshot();
-  if (!snapshot.isOnline || isSyncing) return await getOfflineOutboxSummary();
+  if (!snapshot.isOnline) return await getOfflineOutboxSummary();
+  const owner = await getActiveOfflineOwner();
+  if (!owner) return summarizeOutbox([]);
+  await claimLegacyOutboxForOwner(owner, queryClient);
+
+  let initialItems = (await readOutbox()).filter((item) => isOutboxItemOwnedBy(item, owner));
+  const hasInterruptedItems = initialItems.some((item) => item.status === 'syncing');
+  if (hasInterruptedItems) {
+    initialItems = await mutateOutbox((items) => {
+      const next = items.map((item) =>
+        item.status === 'syncing' && isOutboxItemOwnedBy(item, owner)
+          ? { ...item, status: 'pending' as const, updatedAt: nowIso() }
+          : item,
+      );
+      return {
+        items: next,
+        result: next.filter((item) => isOutboxItemOwnedBy(item, owner)),
+      };
+    });
+  }
+  const hasSyncableItems = initialItems.some(
+    (item) =>
+      (item.status === 'pending' || item.status === 'failed') &&
+      !(item.status === 'failed' && item.attempts >= MAX_ATTEMPTS),
+  );
+  if (!hasSyncableItems) return summarizeOutbox(initialItems);
 
   isSyncing = true;
   emit();
   try {
-    let items = await readOutbox();
+    let items = initialItems;
     let changed = false;
 
     for (const item of [...items]) {
-      if (item.status !== 'pending' && item.status !== 'failed' && item.status !== 'conflict') continue;
+      // A conflict needs a new explicit edit (enqueue resets it to pending).
+      // Retrying an unchanged conflicting patch on every launch only burns
+      // network/CPU and makes the sync indicator flash without making progress.
+      if (item.status !== 'pending' && item.status !== 'failed') continue;
       if (item.attempts >= MAX_ATTEMPTS && item.status === 'failed') continue;
 
-      const currentIndex = items.findIndex((entry) => entry.id === item.id);
-      if (currentIndex < 0) continue;
-
-      items[currentIndex] = {
-        ...items[currentIndex],
-        status: 'syncing',
-        attempts: Number(items[currentIndex].attempts || 0) + 1,
-        updatedAt: nowIso(),
-      };
-      await writeOutbox(items);
+      const processingItem = await mutateOutbox((currentItems) => {
+        const currentIndex = currentItems.findIndex((entry) => entry.id === item.id);
+        if (currentIndex < 0) return { items: currentItems, result: null };
+        const current = currentItems[currentIndex];
+        if (!isOutboxItemOwnedBy(current, owner)) {
+          return { items: currentItems, result: null };
+        }
+        if (current.status !== 'pending' && current.status !== 'failed') {
+          return { items: currentItems, result: null };
+        }
+        currentItems[currentIndex] = {
+          ...current,
+          status: 'syncing',
+          attempts: Number(current.attempts || 0) + 1,
+          updatedAt: nowIso(),
+        };
+        return { items: currentItems, result: currentItems[currentIndex] };
+      });
+      if (!processingItem) continue;
 
       try {
-        if (item.operation === 'update') {
-          const latest = await fetchLatestForItem(item);
-          if (hasFieldConflict(item, latest)) {
-            items = await readOutbox();
-            const idx = items.findIndex((entry) => entry.id === item.id);
+        const activeOwner = await getActiveOfflineOwner();
+        if (!isOutboxItemOwnedBy(processingItem, activeOwner)) {
+          await mutateOutbox((currentItems) => {
+            const idx = currentItems.findIndex((entry) => entry.id === processingItem.id);
             if (idx >= 0) {
-              items[idx] = {
-                ...items[idx],
-                status: 'conflict',
-                latest: latest || null,
-                error: 'Remote row changed in the same fields while this edit was offline',
+              currentItems[idx] = {
+                ...currentItems[idx],
+                status: 'pending',
                 updatedAt: nowIso(),
               };
-              await writeOutbox(items);
             }
+            return { items: currentItems, result: undefined };
+          });
+          break;
+        }
+        if (processingItem.operation === 'update') {
+          const latest = await fetchLatestForItem(processingItem);
+          if (hasFieldConflict(processingItem, latest)) {
+            await mutateOutbox((currentItems) => {
+              const idx = currentItems.findIndex((entry) => entry.id === processingItem.id);
+              if (idx >= 0) {
+                currentItems[idx] = {
+                  ...currentItems[idx],
+                  status: 'conflict',
+                  latest: latest || null,
+                  error: 'Remote row changed in the same fields while this edit was offline',
+                  updatedAt: nowIso(),
+                };
+              }
+              return { items: currentItems, result: undefined };
+            });
+            transientSyncFailures.delete(processingItem.id);
             continue;
           }
 
-          const saved = await updateItemOnline(item, latest);
-          setEntityQueryData(queryClient, item, saved);
-          if (item.entity === 'request') {
-            queryClient.invalidateQueries({ queryKey: ['requests'] });
-          } else if (item.entity === 'client') {
-            queryClient.invalidateQueries({ queryKey: ['clients'] });
-            queryClient.invalidateQueries({ queryKey: ['requests'] });
-          } else if (item.entity === 'object') {
-            queryClient.invalidateQueries({ queryKey: ['objects'] });
-            queryClient.invalidateQueries({ queryKey: ['clients'] });
-            queryClient.invalidateQueries({ queryKey: ['requests'] });
-          } else if (item.entity === 'employee') {
-            queryClient.invalidateQueries({ queryKey: ['employees'] });
-            queryClient.invalidateQueries({ queryKey: ['requests'] });
+          const saved = await updateItemOnline(processingItem, latest);
+          const ownerAfterSave = await getActiveOfflineOwner();
+          if (isOutboxItemOwnedBy(processingItem, ownerAfterSave)) {
+            setEntityQueryData(queryClient, processingItem, saved);
+            if (processingItem.entity === 'request') {
+              queryClient.invalidateQueries({ queryKey: ['requests'] });
+            } else if (processingItem.entity === 'client') {
+              queryClient.invalidateQueries({ queryKey: ['clients'] });
+              queryClient.invalidateQueries({ queryKey: ['requests'] });
+            } else if (processingItem.entity === 'object') {
+              queryClient.invalidateQueries({ queryKey: ['objects'] });
+              queryClient.invalidateQueries({ queryKey: ['clients'] });
+              queryClient.invalidateQueries({ queryKey: ['requests'] });
+            } else if (processingItem.entity === 'employee') {
+              queryClient.invalidateQueries({ queryKey: ['employees'] });
+              queryClient.invalidateQueries({ queryKey: ['requests'] });
+            }
+            changed = true;
           }
-          changed = true;
         }
 
-        items = await readOutbox();
-        items = items.filter((entry) => entry.id !== item.id);
-        await writeOutbox(items);
+        await mutateOutbox((currentItems) => ({
+          items: currentItems.filter((entry) => entry.id !== processingItem.id),
+          result: undefined,
+        }));
+        transientSyncFailures.delete(processingItem.id);
       } catch (error: any) {
-        if (isOfflineLikeError(error)) break;
-        items = await readOutbox();
-        const idx = items.findIndex((entry) => entry.id === item.id);
-        if (idx >= 0) {
-          const attempts = Number(items[idx].attempts || 0);
-          items[idx] = {
-            ...items[idx],
-            status: attempts >= MAX_ATTEMPTS ? 'failed' : 'pending',
+        const transientNetworkFailure = isOfflineLikeError(error);
+        const failure = await mutateOutbox((currentItems) => {
+          const idx = currentItems.findIndex((entry) => entry.id === processingItem.id);
+          if (idx < 0) return { items: currentItems, result: null };
+          const recordedAttempts = Number(currentItems[idx].attempts || 0);
+          const attempts = transientNetworkFailure
+            ? Math.max(0, recordedAttempts - 1)
+            : recordedAttempts;
+          const status = !transientNetworkFailure && attempts >= MAX_ATTEMPTS
+            ? 'failed' as const
+            : 'pending' as const;
+          currentItems[idx] = {
+            ...currentItems[idx],
+            status,
+            attempts,
             error: String(error?.message || error || 'Sync failed'),
             updatedAt: nowIso(),
           };
-          await writeOutbox(items);
+          return { items: currentItems, result: { attempts, status } };
+        });
+        if (failure?.status === 'pending') {
+          const retryOrdinal = transientNetworkFailure
+            ? (transientSyncFailures.get(processingItem.id) || 0) + 1
+            : failure.attempts;
+          if (transientNetworkFailure) {
+            transientSyncFailures.set(processingItem.id, retryOrdinal);
+          }
+          scheduleOutboxRetry(queryClient, retryOrdinal);
         }
+        if (!transientNetworkFailure) transientSyncFailures.delete(processingItem.id);
+        if (transientNetworkFailure) break;
       }
     }
 
@@ -585,8 +810,31 @@ export async function syncOfflineOutbox(queryClient: QueryClient) {
   }
 }
 
+export function syncOfflineOutbox(queryClient: QueryClient) {
+  if (!getOfflineSnapshot().isOnline) return getOfflineOutboxSummary();
+  if (syncInFlight) {
+    syncRerunRequested = true;
+    return syncInFlight;
+  }
+
+  syncRerunRequested = false;
+  const run = runOfflineOutboxSync(queryClient);
+  syncInFlight = run.finally(() => {
+    syncInFlight = null;
+    if (!syncRerunRequested) return;
+    syncRerunRequested = false;
+    if (getOfflineSnapshot().isOnline) {
+      syncOfflineOutbox(queryClient).catch(() => {});
+    }
+  });
+  return syncInFlight;
+}
+
 export async function restoreOfflineOptimisticState(queryClient: QueryClient) {
-  const items = await readOutbox();
+  const owner = await getActiveOfflineOwner();
+  if (!owner) return summarizeOutbox([]);
+  await claimLegacyOutboxForOwner(owner, queryClient);
+  const items = (await readOutbox()).filter((item) => isOutboxItemOwnedBy(item, owner));
   items.forEach((item) => {
     if (item.entity === 'request' && item.operation === 'update') {
       applyOptimisticRequest(queryClient, item);
@@ -608,8 +856,9 @@ export async function restoreOfflineOptimisticState(queryClient: QueryClient) {
         ...(item.patch || {}),
         id: item.entityId,
         __offlinePending: true,
+        __offlineOutboxId: item.id,
       });
     }
   });
-  return getOfflineOutboxSummary();
+  return summarizeOutbox(items);
 }

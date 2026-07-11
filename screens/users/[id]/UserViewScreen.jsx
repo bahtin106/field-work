@@ -92,7 +92,6 @@ export default function UserView() {
   const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
     enabled: !!userId,
   });
-  useEmployeesRealtimeSync({ enabled: !!userId });
 
   React.useEffect(() => {
     if (!userId || !userData?.__homeSeed) return;
@@ -122,6 +121,8 @@ export default function UserView() {
   const lastSeenAt = userData?.last_seen_at || null;
   const companyName = userData?.companyName || null;
   const companyId = userData?.companyId || null;
+  const realtimeCompanyId = companyId || authProfile?.company_id || null;
+  useEmployeesRealtimeSync({ enabled: !!userId && !!realtimeCompanyId, companyId: realtimeCompanyId });
   const hasCompanyValue = hasDisplayValue(companyName || companyId);
   const { useDepartments } = useCompanySettings(companyId || null);
   const employeeFieldSettings = React.useMemo(

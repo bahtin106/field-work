@@ -10,8 +10,6 @@ import {
 } from '../lib/feedOrderFieldVisibility';
 import { shouldShowOrderPhoneForRole } from '../lib/phoneVisibilityRules';
 import { readValueFromOrder } from '../lib/settings';
-import { useCompanySettings } from '../hooks/useCompanySettings';
-import { useAuthContext } from '../providers/SimpleAuthProvider';
 import {
   fetchExecutorNameById,
   readCachedExecutorName,
@@ -23,7 +21,7 @@ import {
   normalizeClientObjectLocationMode,
 } from '../src/features/objects/addressing';
 import { isOrderFinanceEnabledFromMap } from '../src/features/fieldSettings/orderFinance';
-import OrderStatusCapsule from './ui/OrderStatusCapsule';
+import { OrderStatusCapsuleView } from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
 import { getCardSurfaceStyle } from '../theme/surfaceStyles';
 
@@ -248,23 +246,21 @@ function DynamicOrderCard({
   context = 'all_orders', // 'all_orders' | 'my_orders' | 'calendar' | 'order_card'
   hideExecutor = false,
   onPress,
+  onPressIn,
   viewerRole, // 'admin' | 'dispatcher' | 'worker' (optional)
   departureTimeEnabled, // optional explicit flag from order field settings
   orderFieldsByKey = null, // Map<fieldKey, normalized entity field>
   companyCurrency = null, // optional currency from parent screen
   companySettingsOverride = null, // optional settings snapshot from parent list
+  orderStatuses = [], // shared status snapshot from parent list
+  orderStatusesEnabled = true,
 }) {
   const { t, locale } = useTranslation();
   const { theme } = useTheme();
-  const { profile } = useAuthContext();
   const hasCompanySettingsOverride =
     companySettingsOverride && typeof companySettingsOverride === 'object';
-  const { settings: fetchedCompanySettings } = useCompanySettings(null, {
-    enabled: !hasCompanySettingsOverride,
-    subscribe: !hasCompanySettingsOverride,
-  });
-  const companySettings = hasCompanySettingsOverride ? companySettingsOverride : fetchedCompanySettings;
-  const canShowOrderPhone = shouldShowOrderPhoneForRole(order, companySettings, profile?.role);
+  const companySettings = hasCompanySettingsOverride ? companySettingsOverride : null;
+  const canShowOrderPhone = shouldShowOrderPhoneForRole(order, companySettings, viewerRole);
   const lastPressAtRef = useRef(0);
 
   const getFieldByKey = useCallback(
@@ -303,7 +299,6 @@ function DynamicOrderCard({
     () =>
       String(
         viewerRole ||
-          profile?.role ||
           order?.viewerRole ||
           order?.current_user_role ||
           order?.role ||
@@ -311,7 +306,7 @@ function DynamicOrderCard({
       )
         .trim()
         .toLowerCase(),
-    [order?.current_user_role, order?.role, order?.viewerRole, profile?.role, viewerRole],
+    [order?.current_user_role, order?.role, order?.viewerRole, viewerRole],
   );
   const configuredFeedFields = useMemo(
     () => getFeedOrderFieldsForRole(companySettings, roleRaw),
@@ -710,6 +705,7 @@ function DynamicOrderCard({
       delayPressIn={0}
       delayPressOut={0}
       onPress={handlePress}
+      onPressIn={onPressIn}
       style={{
         ...getCardSurfaceStyle(theme, { shadow: context !== 'calendar' }),
         backgroundColor: theme.colors.card,
@@ -744,9 +740,10 @@ function DynamicOrderCard({
         >
           {title || '—'}
         </Text>
-        <OrderStatusCapsule
+        <OrderStatusCapsuleView
           status={statusTitle}
-          companyId={order?.company_id}
+          statuses={orderStatuses}
+          isEnabled={orderStatusesEnabled}
           style={{ maxWidth: '48%', flexShrink: 1 }}
           textStyle={{ flexShrink: 1 }}
         />
@@ -847,7 +844,10 @@ function areCardPropsEqual(prev, next) {
     prev.orderFieldsByKey === next.orderFieldsByKey &&
     prev.companyCurrency === next.companyCurrency &&
     prev.companySettingsOverride === next.companySettingsOverride &&
-    prev.onPress === next.onPress
+    prev.orderStatuses === next.orderStatuses &&
+    prev.orderStatusesEnabled === next.orderStatusesEnabled &&
+    prev.onPress === next.onPress &&
+    prev.onPressIn === next.onPressIn
   );
 }
 

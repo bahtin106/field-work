@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 type RefreshContext = {
   reason?: string;
   path?: string;
+  request?: any;
 };
 
 type RefreshHandler = (context?: RefreshContext) => void | Promise<void>;

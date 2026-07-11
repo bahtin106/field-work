@@ -3,6 +3,7 @@ export const LEGAL_LINKS = Object.freeze({
   privacy: 'https://monitorapp.ru/privacy',
   personalData: 'https://monitorapp.ru/personal-data-consent',
   cookies: 'https://monitorapp.ru/cookies',
+  dataDeletion: 'https://monitorapp.ru/data-deletion',
 });
 
 export const EXCHANGE_RATE_ENDPOINTS = Object.freeze({

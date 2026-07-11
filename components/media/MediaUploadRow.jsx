@@ -11,12 +11,13 @@ export default function MediaUploadRow({
   onPress,
   disabled = false,
   busy = false,
+  allowPressWhenBusy = false,
   rightActions = null,
   accessibilityLabel,
 }) {
   const { theme } = useTheme();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
-  const isDisabled = disabled || busy;
+  const isDisabled = disabled || (busy && !allowPressWhenBusy);
 
   return (
     <Pressable

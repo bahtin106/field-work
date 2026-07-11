@@ -4,7 +4,8 @@ import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
+import { BaseModal } from '../../../components/ui/modals';
+import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -21,6 +22,7 @@ export default function MediaUploadModal({
   category,
   photos = [],
   pending = [],
+  onRetryPending,
   getDisplayUrl,
   getThumbnailUrl,
   getIssue,
@@ -45,25 +47,15 @@ export default function MediaUploadModal({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedUris, setSelectedUris] = useState([]);
   const [confirmRemoveIndex, setConfirmRemoveIndex] = useState(null);
-  const [removeConfirmVisible, setRemoveConfirmVisible] = useState(false);
   const [removeManyConfirmVisible, setRemoveManyConfirmVisible] = useState(false);
   const [pendingRemoveManyUris, setPendingRemoveManyUris] = useState([]);
   const pickedSessionIdsRef = useRef(new Set());
-  const removeConfirmResetTimerRef = useRef(null);
-
-  useEffect(
-    () => () => {
-      if (removeConfirmResetTimerRef.current) clearTimeout(removeConfirmResetTimerRef.current);
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!visible) {
       setSelectionMode(false);
       setSelectedUris([]);
       setConfirmRemoveIndex(null);
-      setRemoveConfirmVisible(false);
       setRemoveManyConfirmVisible(false);
       setPendingRemoveManyUris([]);
       pickedSessionIdsRef.current = new Set();
@@ -88,7 +80,6 @@ export default function MediaUploadModal({
     setSelectionMode(false);
     setSelectedUris([]);
     setConfirmRemoveIndex(null);
-    setRemoveConfirmVisible(false);
     setRemoveManyConfirmVisible(false);
     setPendingRemoveManyUris([]);
   }, [category]);
@@ -179,20 +170,13 @@ export default function MediaUploadModal({
   const handleRemove = useCallback(
     (idx) => {
       if (!canRemovePhotos) return;
-      if (removeConfirmResetTimerRef.current) clearTimeout(removeConfirmResetTimerRef.current);
       setConfirmRemoveIndex(idx);
-      setRemoveConfirmVisible(false);
     },
     [canRemovePhotos],
   );
 
   const closeRemoveConfirm = useCallback(() => {
-    setRemoveConfirmVisible(false);
-    if (removeConfirmResetTimerRef.current) clearTimeout(removeConfirmResetTimerRef.current);
-    removeConfirmResetTimerRef.current = setTimeout(() => {
-      setConfirmRemoveIndex(null);
-      removeConfirmResetTimerRef.current = null;
-    }, 280);
+    setConfirmRemoveIndex(null);
   }, []);
 
   const confirmRemove = useCallback(() => {
@@ -200,16 +184,11 @@ export default function MediaUploadModal({
     hapticMedium();
     onRemove?.(category, confirmRemoveIndex);
     setConfirmRemoveIndex(null);
-    setRemoveConfirmVisible(false);
   }, [category, confirmRemoveIndex, onRemove]);
 
   const handleBaseDismiss = useCallback(() => {
-    if (confirmRemoveIndex != null && !removeConfirmVisible) {
-      setRemoveConfirmVisible(true);
-      return;
-    }
     onDismiss?.();
-  }, [confirmRemoveIndex, onDismiss, removeConfirmVisible]);
+  }, [onDismiss]);
 
   const handleOpenViewer = useCallback(
     (list, idx) => {
@@ -258,6 +237,40 @@ export default function MediaUploadModal({
   const selectedCount = selectedUris.length;
   const deleteDisabled = selectedCount === 0;
   const s = useMemo(() => buildStyles(theme, insets), [insets, theme]);
+  const confirmationMode = confirmRemoveIndex != null || removeManyConfirmVisible;
+  const confirmationTitle = removeManyConfirmVisible
+    ? t('order_photos_delete_many_title')
+    : t('order_photos_delete_single_title');
+  const confirmationMessage = removeManyConfirmVisible
+    ? t('order_photos_delete_many_message').replace(
+        '{count}',
+        String(pendingRemoveManyUris.length),
+      )
+    : t('order_photos_delete_single_message');
+  const closeConfirmation = removeManyConfirmVisible ? closeRemoveManyConfirm : closeRemoveConfirm;
+  const confirmDeletion = removeManyConfirmVisible ? confirmRemoveMany : confirmRemove;
+
+  const confirmationFooter = useMemo(
+    () => (
+      <ModalActionsRow
+        actions={[
+          {
+            key: 'cancel',
+            title: t('order_photos_delete_single_cancel'),
+            variant: 'secondary',
+            onPress: closeConfirmation,
+          },
+          {
+            key: 'confirm',
+            title: t('order_photos_delete_single_confirm'),
+            variant: 'destructive',
+            onPress: confirmDeletion,
+          },
+        ]}
+      />
+    ),
+    [closeConfirmation, confirmDeletion, t],
+  );
 
   const footer = useMemo(() => {
     if (selectionMode) {
@@ -378,6 +391,7 @@ export default function MediaUploadModal({
       <PhotoGrid
         photos={photos}
         pending={pending}
+        onRetryPending={onRetryPending}
         getDisplayUrl={getDisplayUrl}
         getThumbnailUrl={getThumbnailUrl}
         getIssue={getIssue}
@@ -391,6 +405,15 @@ export default function MediaUploadModal({
       />
     </>
   );
+  const modalContent = confirmationMode ? (
+    <View style={s.confirmationContent}>
+      <View style={s.confirmationIcon}>
+        <Feather name="trash-2" size={theme.icons?.lg ?? 28} color={theme.colors.danger} />
+      </View>
+      <Text style={s.confirmationMessage}>{confirmationMessage}</Text>
+    </View>
+  ) : photoContent;
+  const modalFooter = confirmationMode ? confirmationFooter : footer;
 
   return (
     <>
@@ -406,9 +429,9 @@ export default function MediaUploadModal({
               </View>
               <View style={s.embeddedHeader}>
                 <View style={s.embeddedClose} />
-                <Text style={s.embeddedTitle}>{t('order_photos_title')}</Text>
+                <Text style={s.embeddedTitle}>{confirmationMode ? confirmationTitle : t('order_photos_title')}</Text>
                 <Pressable
-                  onPress={onClose}
+                  onPress={confirmationMode ? closeConfirmation : onClose}
                   hitSlop={theme.spacing.md}
                   style={s.embeddedClose}
                   accessibilityRole="button"
@@ -417,19 +440,19 @@ export default function MediaUploadModal({
                   <Feather name="x" size={theme.icons?.md ?? 22} color={theme.colors.textSecondary} />
                 </Pressable>
               </View>
-              <View style={s.embeddedContent}>{photoContent}</View>
-              {footer ? <View style={s.embeddedFooter}>{footer}</View> : null}
+              <View style={s.embeddedContent}>{modalContent}</View>
+              {modalFooter ? <View style={s.embeddedFooter}>{modalFooter}</View> : null}
             </View>
           </View>
         )
       ) : (
         <BaseModal
-        visible={visible && !suspended && confirmRemoveIndex == null}
-        onClose={suspended || confirmRemoveIndex != null ? undefined : onClose}
+        visible={visible && !suspended}
+        onClose={suspended ? undefined : confirmationMode ? closeConfirmation : onClose}
         onDismiss={handleBaseDismiss}
-        title={t('order_photos_title')}
+        title={confirmationMode ? confirmationTitle : t('order_photos_title')}
         maxHeightRatio={0.85}
-        footer={footer}
+        footer={modalFooter}
         onFullscreenRequestClose={handleCloseCamera}
         fullscreenContent={
           cameraVisible && canAddFromCamera ? (
@@ -441,33 +464,9 @@ export default function MediaUploadModal({
           ) : null
         }
       >
-        {photoContent}
+        {modalContent}
       </BaseModal>
       )}
-
-      <ConfirmModal
-        visible={removeConfirmVisible}
-        onClose={closeRemoveConfirm}
-        title={t('order_photos_delete_single_title')}
-        message={t('order_photos_delete_single_message')}
-        confirmLabel={t('order_photos_delete_single_confirm')}
-        cancelLabel={t('order_photos_delete_single_cancel')}
-        confirmVariant="destructive"
-        onConfirm={confirmRemove}
-      />
-
-      <ConfirmModal
-        visible={removeManyConfirmVisible}
-        onClose={closeRemoveManyConfirm}
-        title={t('order_photos_delete_many_title')}
-        message={t(
-          'order_photos_delete_many_message',
-        ).replace('{count}', String(pendingRemoveManyUris.length))}
-        confirmLabel={t('order_photos_delete_single_confirm')}
-        cancelLabel={t('order_photos_delete_single_cancel')}
-        confirmVariant="destructive"
-        onConfirm={confirmRemoveMany}
-      />
     </>
   );
 }
@@ -549,6 +548,29 @@ function buildStyles(theme, insets) {
       fontSize: ty.sizes.sm,
       color: cl.warning || cl.primary,
       marginBottom: sp.sm,
+    },
+    confirmationContent: {
+      minHeight: sp.xxxl * 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: sp.lg,
+      paddingHorizontal: sp.lg,
+      paddingVertical: sp.xl,
+    },
+    confirmationIcon: {
+      width: sp.xxxl,
+      height: sp.xxxl,
+      borderRadius: rd.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: cl.surfaceSecondary || cl.background,
+    },
+    confirmationMessage: {
+      maxWidth: 420,
+      textAlign: 'center',
+      fontSize: ty.sizes.md,
+      lineHeight: Math.round(ty.sizes.md * 1.45),
+      color: cl.textSecondary,
     },
     footerWrap: {
       gap: sp.sm,
