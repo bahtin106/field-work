@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useTheme } from '../../theme';
+import { withAlpha } from '../../theme/colors';
 import { useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollContext';
 import {
   dismissKeyboardBeforeAction,
@@ -24,6 +25,9 @@ export default function Button({
   disabled,
   loading,
   style,
+  containerStyle,
+  textStyle,
+  accessibilityLabel,
   formSubmit = false,
   dismissKeyboardOnPress = false,
 }) {
@@ -33,7 +37,9 @@ export default function Button({
   const mountedRef = useRef(true);
   const pressLockedRef = useRef(false);
 
-  // iOS-like press animation: quick compress + subtle dim, spring back
+  const buttonTokens = theme?.components?.button || {};
+
+  // Shared press feedback is driven by the same tokens for every button variant.
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
   const busy = !!loading || autoLoading;
@@ -50,14 +56,14 @@ export default function Button({
   const onPressIn = () => {
     Animated.parallel([
       Animated.timing(scale, {
-        toValue: 0.97,
-        duration: 90,
+        toValue: buttonTokens.pressedScale ?? 0.97,
+        duration: buttonTokens.pressInDuration ?? 90,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
       Animated.timing(opacity, {
-        toValue: 0.9,
-        duration: 90,
+        toValue: buttonTokens.pressedOpacity ?? 0.9,
+        duration: buttonTokens.pressInDuration ?? 90,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
@@ -74,7 +80,7 @@ export default function Button({
       }),
       Animated.timing(opacity, {
         toValue: 1,
-        duration: 140,
+        duration: buttonTokens.pressOutDuration ?? 140,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
@@ -95,9 +101,6 @@ export default function Button({
     };
   }, [opacity, scale, isDisabled]);
 
-  // ---- tokens from theme.components.button ----
-  const buttonTokens = theme?.components?.button || {};
-
   const palettes = buttonTokens.palette || {
     primary: {
       bg: theme.colors.primary,
@@ -105,11 +108,16 @@ export default function Button({
       border: theme.colors.primary,
     },
     secondary: {
-      bg: theme.colors.surface,
+      bg: theme.colors.button?.secondaryBg ?? theme.colors.surface,
       fg: theme.colors.text,
       border: theme.colors.border,
     },
-    ghost: { bg: 'transparent', fg: theme.colors.text, border: 'transparent' },
+    outline: {
+      bg: theme.colors.surface,
+      fg: theme.colors.button?.primaryBg ?? theme.colors.primary,
+      border: theme.colors.button?.primaryBg ?? theme.colors.primary,
+    },
+    ghost: { bg: theme.colors.surface, fg: theme.colors.text, border: theme.colors.border },
     destructive: {
       bg: theme.colors.danger,
       fg: theme.colors.primaryTextOn,
@@ -118,6 +126,11 @@ export default function Button({
   };
 
   const sizesMap = buttonTokens.sizes || {
+    sm: {
+      h: 40,
+      f: theme.typography.sizes.sm,
+      pad: theme.spacing.md,
+    },
     md: {
       h: 48,
       f: theme.typography.sizes.md,
@@ -130,11 +143,12 @@ export default function Button({
     },
   };
 
-  const palette = palettes[variant] || palettes.primary;
+  const normalizedVariant = variant === 'danger' ? 'destructive' : variant;
+  const palette = palettes[normalizedVariant] || palettes.primary;
   const sizes = sizesMap[size] || sizesMap.md;
   const spinnerColor = palette.fg;
 
-  const s = styles(theme, palette, sizes, isDisabled);
+  const s = styles(theme, buttonTokens, palette, sizes, isDisabled);
   const handlePress = () => {
     if (isDisabled || pressLockedRef.current) return;
     if (formSubmit) prepareFormSubmit(formContext);
@@ -158,13 +172,14 @@ export default function Button({
 
   return (
     <TouchableOpacity
+      style={containerStyle}
       onPress={handlePress}
       activeOpacity={1} // сами управляем opacity анимацией
       delayPressIn={0}
-      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
+      hitSlop={buttonTokens.hitSlop ?? 8}
+      pressRetentionOffset={buttonTokens.pressRetentionOffset ?? 20}
       accessibilityRole="button"
-      accessibilityLabel={title}
+      accessibilityLabel={accessibilityLabel || title}
       accessibilityState={{ disabled: isDisabled, busy }}
       disabled={isDisabled}
       onPressIn={onPressIn}
@@ -173,7 +188,7 @@ export default function Button({
       <Animated.View style={[{ transform: [{ scale }], opacity }, s.btn, style]}>
         {busy ? (
           <>
-            <Text numberOfLines={1} style={[s.title, s.hiddenTitle]}>
+            <Text numberOfLines={1} style={[s.title, textStyle, s.hiddenTitle]}>
               {title}
             </Text>
             <ActivityIndicator
@@ -183,7 +198,7 @@ export default function Button({
             />
           </>
         ) : (
-          <Text numberOfLines={1} style={s.title}>
+          <Text numberOfLines={1} style={[s.title, textStyle]}>
             {title}
           </Text>
         )}
@@ -192,7 +207,7 @@ export default function Button({
   );
 }
 
-const styles = (t, p, sz, disabled) =>
+const styles = (t, tokens, p, sz, disabled) =>
   StyleSheet.create({
     btn: {
       height: sz.h,
@@ -202,12 +217,14 @@ const styles = (t, p, sz, disabled) =>
       backgroundColor: disabled
         ? p.bg === 'transparent'
           ? (t.colors.surfaceAlt ?? t.colors.surface)
-          : p.bg + '66'
+          : withAlpha(p.bg, tokens.disabledOpacity ?? 0.5)
         : p.bg,
-      borderRadius: t.radii.lg,
-      borderWidth: p.border === 'transparent' ? 0 : 1,
-      borderColor: disabled ? t.colors.border + '66' : p.border,
-      opacity: disabled ? 0.6 : 1,
+      borderRadius: tokens.radius ?? t.radii.lg,
+      borderWidth: p.border === 'transparent' ? 0 : (tokens.borderWidth ?? 1),
+      borderColor: disabled
+        ? withAlpha(p.border === 'transparent' ? t.colors.border : p.border, tokens.disabledOpacity ?? 0.5)
+        : p.border,
+      opacity: disabled ? tokens.disabledOpacity ?? 0.5 : 1,
       ...(p.bg === t.colors.surface
         ? Platform.OS === 'ios'
           ? t.shadows.card.ios
@@ -215,7 +232,7 @@ const styles = (t, p, sz, disabled) =>
         : null),
     },
     title: {
-      color: disabled ? p.fg + 'CC' : p.fg,
+      color: disabled ? withAlpha(p.fg, 0.8) : p.fg,
       fontSize: sz.f,
       fontWeight: t.typography.weight.semibold,
     },

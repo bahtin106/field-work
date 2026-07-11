@@ -3,6 +3,7 @@
 // Stays mounted; visibility is controlled by Animated slide. Matches "отдельная страница" UX.
 
 import { Feather } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -10,6 +11,7 @@ import {
   BackHandler,
   Dimensions,
   Easing,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -81,6 +83,9 @@ export default function FiltersPanel({
   includeNoDepartment = false,
 }) {
   const { theme } = useTheme();
+  const navigation = useNavigation();
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useTranslation();
   const localeTag = getLocale?.() || 'ru';
 
@@ -137,8 +142,6 @@ export default function FiltersPanel({
   const sh = theme.shadows;
 
   // Animation and UI constants with fallbacks
-  const _ANIMATION_DURATION_IN = theme?.timings?.modalSlideIn ?? 220;
-  const _ANIMATION_DURATION_OUT = theme?.timings?.modalSlideOut ?? 200;
   const CATEGORY_TTL = theme?.timings?.filterCategoryTTL ?? 5000; // 5 seconds
   const ICON_SIZE_CHECK = theme?.components?.icon?.sizeXs ?? 14;
   const ICON_SIZE_CHEVRON = theme?.components?.icon?.sizeMd ?? 22;
@@ -277,32 +280,109 @@ export default function FiltersPanel({
     values.sumMax,
   ]);
 
-  // Animation (slide from right like a page). Kept mounted.
+  // The complete panel stays mounted off-screen. This ensures the page moves
+  // in as one composed surface instead of rendering sections during motion.
   const tx = useRef(new Animated.Value(visible ? 0 : SCREEN_W)).current;
-  const [mounted, setMounted] = useState(visible);
+  const panelMotion = theme.components?.filtersPanel || {};
+  const openSpring = panelMotion.openSpring || {};
+  const swipeEdgeWidth = panelMotion.swipeEdgeWidth ?? 32;
+  const swipeCloseDistance =
+    Math.round(SCREEN_W * (panelMotion.swipeCloseRatio ?? 0.25));
+  const swipeCloseVelocity = panelMotion.swipeCloseVelocity ?? 0.55;
+
+  const restorePanelPosition = useMemo(
+    () => () => {
+      Animated.spring(tx, {
+        toValue: 0,
+        damping: openSpring.damping ?? 28,
+        stiffness: openSpring.stiffness ?? 260,
+        mass: openSpring.mass ?? 0.85,
+        useNativeDriver: true,
+        overshootClamping: true,
+      }).start();
+    },
+    [openSpring.damping, openSpring.mass, openSpring.stiffness, tx],
+  );
+
+  const swipeBackResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (event, gesture) => {
+          if (!visible) return false;
+          const startX = Number(event?.nativeEvent?.pageX || 0) - Number(gesture?.dx || 0);
+          return (
+            startX <= swipeEdgeWidth &&
+            gesture.dx > 6 &&
+            Math.abs(gesture.dx) > Math.abs(gesture.dy)
+          );
+        },
+        onPanResponderMove: (_event, gesture) => {
+          tx.setValue(Math.max(0, Math.min(SCREEN_W, gesture.dx)));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          const shouldClose =
+            gesture.dx >= swipeCloseDistance || gesture.vx >= swipeCloseVelocity;
+          if (shouldClose) {
+            onClose?.();
+            return;
+          }
+          restorePanelPosition();
+        },
+        onPanResponderTerminate: restorePanelPosition,
+        onShouldBlockNativeResponder: () => true,
+      }),
+    [onClose, restorePanelPosition, swipeCloseDistance, swipeCloseVelocity, swipeEdgeWidth, tx, visible],
+  );
 
   useEffect(() => {
     if (visible) {
-      setMounted(true);
       Animated.spring(tx, {
         toValue: 0,
-        damping: 28,
-        stiffness: 260,
-        mass: 0.85,
+        damping: openSpring.damping ?? 28,
+        stiffness: openSpring.stiffness ?? 260,
+        mass: openSpring.mass ?? 0.85,
         useNativeDriver: true,
         overshootClamping: true,
       }).start();
     } else {
       Animated.timing(tx, {
         toValue: SCREEN_W,
-        duration: 280,
+        duration: panelMotion.closeDuration ?? 280,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) setMounted(false);
-      });
+      }).start();
     }
-  }, [visible, tx]);
+  }, [openSpring.damping, openSpring.mass, openSpring.stiffness, panelMotion.closeDuration, tx, visible]);
+
+  // The panel owns the back gesture while it is visible. Expo Router can nest
+  // native stacks, so lock every navigator in the parent chain and also veto
+  // the removal action itself. The latter is the final guard against a native
+  // gesture that had already begun before options were updated.
+  useEffect(() => {
+    if (!visible || typeof navigation?.setOptions !== 'function') return undefined;
+
+    const navigators = [];
+    let current = navigation;
+    while (current && !navigators.includes(current)) {
+      navigators.push(current);
+      current = typeof current.getParent === 'function' ? current.getParent() : null;
+    }
+
+    const removeListeners = navigators.map((navigator) => {
+      navigator.setOptions?.({ gestureEnabled: false, fullScreenGestureEnabled: false });
+      return navigator.addListener?.('beforeRemove', (event) => {
+        event.preventDefault();
+        onCloseRef.current?.();
+      });
+    });
+
+    return () => {
+      removeListeners.forEach((removeListener) => removeListener?.());
+      navigators.forEach((navigator) => {
+        navigator.setOptions?.({ gestureEnabled: undefined, fullScreenGestureEnabled: undefined });
+      });
+    };
+  }, [navigation, visible]);
 
   // Intercept hardware back button and swipe-back when panel is visible
   useEffect(() => {
@@ -730,11 +810,6 @@ export default function FiltersPanel({
         ...StyleSheet.absoluteFillObject,
         zIndex: OVERLAY_Z_INDEX,
         elevation: OVERLAY_Z_INDEX,
-      },
-      backdrop: {
-        ...StyleSheet.absoluteFillObject,
-        // overlay color comes from theme (already an rgba string in tokens)
-        backgroundColor: c.overlay,
       },
       page: {
         position: 'absolute',
@@ -1831,18 +1906,17 @@ export default function FiltersPanel({
     }
   };
 
-  if (!mounted && !visible) return null;
-
   return (
     <View
       style={styles.overlay}
       pointerEvents={visible ? 'auto' : 'none'}
-      accessibilityViewIsModal={true}
-      importantForAccessibility="yes"
+      accessibilityViewIsModal={visible}
+      importantForAccessibility={visible ? 'yes' : 'no-hide-descendants'}
     >
-      <View style={[styles.backdrop, { opacity: visible ? 1 : 0 }]} />
-
-      <Animated.View style={[styles.page, { transform: [{ translateX: tx }] }]}>
+      <Animated.View
+        {...swipeBackResponder.panHandlers}
+        style={[styles.page, { transform: [{ translateX: tx }] }]}
+      >
         <View style={styles.header}>
           {/* Back arrow on left: discard changes and close panel */}
           <Pressable

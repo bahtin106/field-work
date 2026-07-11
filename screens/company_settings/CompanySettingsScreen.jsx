@@ -1340,40 +1340,19 @@ export default function CompanySettings() {
         title={t('modal_company_title')}
         maxHeightRatio={0.5}
         footer={
-          <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-            <Pressable
-              onPress={() => setCompanyNameOpen(false)}
-              style={({ pressed }) => [
-                {
-                  paddingVertical: theme.spacing.sm,
-                  paddingHorizontal: theme.spacing.md,
-                  borderRadius: theme.radii.md,
-                  alignItems: 'center',
-                  borderWidth: theme.components.card.borderWidth,
-                  borderColor: theme.colors.border,
-                  backgroundColor: 'transparent',
-                  flex: 1,
-                },
-                pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-              ]}
-            >
-              <Text
-                style={{
-                  color: theme.colors.text,
-                  fontSize: theme.typography.sizes.md,
-                  fontWeight: theme.typography.weight.medium,
-                }}
-              >
-                {t('btn_cancel')}
-              </Text>
-            </Pressable>
-            <UIButton
-              variant="primary"
-              size="md"
-              onPress={saveCompanyNameDraft}
-              title={savingCompany ? t('btn_saving') : t('btn_save')}
-              formSubmit
-            />
+          <View style={{ flexDirection: 'row', gap: theme.components.button.groupGap }}>
+            <View style={{ flex: 1 }}>
+              <UIButton title={t('btn_cancel')} variant="secondary" onPress={() => setCompanyNameOpen(false)} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                variant="primary"
+                size="md"
+                onPress={saveCompanyNameDraft}
+                title={savingCompany ? t('btn_saving') : t('btn_save')}
+                formSubmit
+              />
+            </View>
           </View>
         }
       >
@@ -1738,76 +1717,43 @@ export default function CompanySettings() {
         }}
         title={t('modal_currency_title')}
         footer={
-          <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-            <Pressable
-              onPress={() => {
-                setCurrencyConfirmOpen(false);
-                setPendingCurrency(null);
-                setFetchRateError(null);
-                setRecalcMethod(MODAL_RECALC_METHODS[0]?.id || 'no_recalc');
-              }}
-              style={({ pressed }) => [
-                {
-                  paddingVertical: theme.spacing.sm,
-                  paddingHorizontal: theme.spacing.md,
-                  borderRadius: theme.radii.md,
-                  alignItems: 'center',
-                  borderWidth: theme.components.card.borderWidth,
-                  borderColor: theme.colors.border,
-                  backgroundColor: 'transparent',
-                  flex: 1,
-                },
-                pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-              ]}
-            >
-              <Text
-                style={{
-                  color: theme.colors.text,
-                  fontSize: theme.typography.sizes.md,
-                  fontWeight: theme.typography.weight.medium,
+          <View style={{ flexDirection: 'row', gap: theme.components.button.groupGap }}>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                title={t('btn_cancel')}
+                variant="secondary"
+                onPress={() => {
+                  setCurrencyConfirmOpen(false);
+                  setPendingCurrency(null);
+                  setFetchRateError(null);
+                  setRecalcMethod(MODAL_RECALC_METHODS[0]?.id || 'no_recalc');
                 }}
-              >
-                {t('btn_cancel')}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={async () => {
-                const needsRecalc =
-                  recalcMethod === MODAL_RECALC_METHODS.find((m) => m.id === 'recalc')?.id ||
-                  recalcMethod === 'recalc';
-                if (needsRecalc) {
-                  if (!currencyRate || Number.isNaN(Number(currencyRate))) {
-                    toast.show(
-                      t('modal_currency_rate_required'),
-                      'info',
-                    );
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                title={t('btn_ok')}
+                loading={confirmLoading}
+                disabled={confirmLoading}
+                onPress={async () => {
+                  const needsRecalc =
+                    recalcMethod === MODAL_RECALC_METHODS.find((m) => m.id === 'recalc')?.id ||
+                    recalcMethod === 'recalc';
+                  if (needsRecalc && (!currencyRate || Number.isNaN(Number(currencyRate)))) {
+                    toast.show(t('modal_currency_rate_required'), 'info');
                     return;
                   }
-                }
-                try {
-                  setConfirmLoading(true);
-                  await performCurrencyChange(needsRecalc);
-                } catch {
-                  toast.show(err?.message || t('toast_error'), 'error');
-                } finally {
-                  setConfirmLoading(false);
-                }
-              }}
-              disabled={confirmLoading}
-              style={({ pressed }) => [
-                {
-                  paddingVertical: theme.spacing.sm,
-                  paddingHorizontal: theme.spacing.md,
-                  borderRadius: theme.radii.md,
-                  alignItems: 'center',
-                  backgroundColor: theme.colors.primary,
-                  flex: 1,
-                },
-                pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
-              ]}
-            >
-              <Text style={{ color: theme.colors.onPrimary }}>{t('btn_ok')}</Text>
-            </Pressable>
+                  try {
+                    setConfirmLoading(true);
+                    await performCurrencyChange(needsRecalc);
+                  } catch {
+                    toast.show(err?.message || t('toast_error'), 'error');
+                  } finally {
+                    setConfirmLoading(false);
+                  }
+                }}
+              />
+            </View>
           </View>
         }
       >
@@ -2002,43 +1948,25 @@ export default function CompanySettings() {
         title={t('modal_phoneWindow_title')}
         maxHeightRatio={0.6}
         footer={
-          <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-            <Pressable
-              onPress={() => {
-                setWindowModalOpen(false);
-                openModalAfterNativeClose(() => setPhoneModeOpen(true));
-              }}
-              style={({ pressed }) => [
-                {
-                  paddingVertical: theme.spacing.sm,
-                  paddingHorizontal: theme.spacing.md,
-                  borderRadius: theme.radii.md,
-                  alignItems: 'center',
-                  borderWidth: theme.components.card.borderWidth,
-                  borderColor: theme.colors.border,
-                  backgroundColor: 'transparent',
-                  flex: 1,
-                },
-                pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-              ]}
-            >
-              <Text
-                style={{
-                  color: theme.colors.text,
-                  fontSize: theme.typography.sizes.md,
-                  fontWeight: theme.typography.weight.medium,
+          <View style={{ flexDirection: 'row', gap: theme.components.button.groupGap }}>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                title={t('btn_cancel')}
+                variant="secondary"
+                onPress={() => {
+                  setWindowModalOpen(false);
+                  openModalAfterNativeClose(() => setPhoneModeOpen(true));
                 }}
-              >
-                {t('btn_cancel')}
-              </Text>
-            </Pressable>
-            <UIButton
-              variant="primary"
-              size="md"
-              title={t('btn_apply')}
-              formSubmit
-              disabled={!String(windowBefore).trim() || !String(windowAfter).trim()}
-              onPress={() => {
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                variant="primary"
+                size="md"
+                title={t('btn_apply')}
+                formSubmit
+                disabled={!String(windowBefore).trim() || !String(windowAfter).trim()}
+                onPress={() => {
                 const beforeM = toMinutes(windowBefore, beforeUnit);
                 const afterM = toMinutes(windowAfter, afterUnit);
                 toast
@@ -2061,8 +1989,9 @@ export default function CompanySettings() {
                     setPhoneMode('window');
                     setWindowModalOpen(false);
                   });
-              }}
-            />
+                }}
+              />
+            </View>
           </View>
         }
       >

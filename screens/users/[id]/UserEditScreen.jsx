@@ -867,7 +867,16 @@ export default function EditUser() {
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
   const settingsCompanyId = employeeData?.companyId || companyId || null;
-  const { useDepartments } = useCompanySettings(settingsCompanyId);
+  const { useDepartments, refetch: refetchCompanySettings } = useCompanySettings(settingsCompanyId, {
+    // The department field is controlled by this setting, so a persisted stale
+    // value must not hide it when an administrator opens employee editing.
+    refetchOnMount: 'always',
+  });
+  useFocusEffect(
+    useCallback(() => {
+      if (settingsCompanyId) refetchCompanySettings().catch(() => {});
+    }, [refetchCompanySettings, settingsCompanyId]),
+  );
   const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
     enabled: !!settingsCompanyId,
   });
@@ -3155,7 +3164,7 @@ export default function EditUser() {
             {meIsAdmin && meId !== userId && (
               <UIButton
                 title={t('btn_reset_password')}
-                variant="outline"
+                variant="primary"
                 onPress={onAskResetPassword}
                 style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
                 disabled={resettingPwd}
@@ -3165,7 +3174,7 @@ export default function EditUser() {
             {meIsAdmin && meId !== userId && !isBlocked && (
               <UIButton
                 title={t('users_edit_block_button')}
-                variant="secondary"
+                variant="outline"
                 onPress={onAskSuspend}
                 style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
               />

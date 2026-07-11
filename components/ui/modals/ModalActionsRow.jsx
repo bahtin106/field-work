@@ -35,7 +35,7 @@ function createStyles(theme) {
   return StyleSheet.create({
     row: {
       flexDirection: 'row',
-      gap: theme.spacing.md,
+      gap: theme.components?.button?.groupGap ?? theme.spacing.md,
     },
     singleRow: {
       flexDirection: 'row',

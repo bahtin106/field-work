@@ -729,21 +729,20 @@ export default function AdminCompanyDetailsScreen() {
         title={t('admin_company_add_days_modal_title')}
         footer={
           <View style={styles(theme).modalFooter}>
-            <Pressable
+            <UIButton
+              title={t('btn_cancel')}
+              variant="secondary"
               onPress={() => setAddDaysVisible(false)}
-              style={styles(theme).modalGhostBtn}
-            >
-              <Text style={styles(theme).modalGhostBtnText}>{t('btn_cancel')}</Text>
-            </Pressable>
-            <Pressable
+              containerStyle={styles(theme).modalButtonSlot}
+            />
+            <UIButton
+              title={t('btn_apply')}
               onPress={() => {
                 const canProceed = handleAddDaysRequest();
                 if (canProceed) setAddDaysVisible(false);
               }}
-              style={styles(theme).modalPrimaryBtn}
-            >
-              <Text style={styles(theme).modalPrimaryBtnText}>{t('btn_apply')}</Text>
-            </Pressable>
+              containerStyle={styles(theme).modalButtonSlot}
+            />
           </View>
         }
       >
@@ -801,21 +800,20 @@ export default function AdminCompanyDetailsScreen() {
         title={t('admin_company_paid_seats_modal_title')}
         footer={
           <View style={styles(theme).modalFooter}>
-            <Pressable
+            <UIButton
+              title={t('btn_cancel')}
+              variant="secondary"
               onPress={() => setPaidSeatsVisible(false)}
-              style={styles(theme).modalGhostBtn}
-            >
-              <Text style={styles(theme).modalGhostBtnText}>{t('btn_cancel')}</Text>
-            </Pressable>
-            <Pressable
+              containerStyle={styles(theme).modalButtonSlot}
+            />
+            <UIButton
+              title={t('btn_save')}
               onPress={() => {
                 const canProceed = handleSavePaidSeatsRequest();
                 if (canProceed) setPaidSeatsVisible(false);
               }}
-              style={styles(theme).modalPrimaryBtn}
-            >
-              <Text style={styles(theme).modalPrimaryBtnText}>{t('btn_save')}</Text>
-            </Pressable>
+              containerStyle={styles(theme).modalButtonSlot}
+            />
           </View>
         }
       >
@@ -920,35 +918,10 @@ const styles = (theme) =>
     },
     modalFooter: {
       flexDirection: 'row',
-      gap: theme.spacing.sm,
+      gap: theme.components.button.groupGap,
     },
-    modalGhostBtn: {
+    modalButtonSlot: {
       flex: 1,
-      borderWidth: theme.components.card.borderWidth,
-      borderColor: theme.colors.border,
-      borderRadius: theme.radii.md,
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: theme.components.row.minHeight,
-      backgroundColor: theme.colors.surface,
-    },
-    modalGhostBtnText: {
-      color: theme.colors.text,
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.medium,
-    },
-    modalPrimaryBtn: {
-      flex: 1,
-      borderRadius: theme.radii.md,
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: theme.components.row.minHeight,
-      backgroundColor: theme.colors.primary,
-    },
-    modalPrimaryBtnText: {
-      color: theme.colors.onPrimary,
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.semibold,
     },
     quickActions: {
       flexDirection: 'row',

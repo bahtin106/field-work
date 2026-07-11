@@ -348,11 +348,21 @@ function UsersIndexContent() {
 
   useFocusEffect(
     useCallback(
-      () => () => {
-        queryClient.cancelQueries({ queryKey: ['employees', 'list'] });
-        queryClient.cancelQueries({ queryKey: queryKeys.employees.departments(companyId, true) });
+      () => {
+        // Presence is time-sensitive. The employees list may still be fresh in
+        // the cache, so refresh it explicitly whenever this screen becomes visible.
+        if (companyId) {
+          refreshUsers().catch(() => {});
+        }
+
+        return () => {
+          queryClient.cancelQueries({ queryKey: ['employees', 'list'] });
+          queryClient.cancelQueries({
+            queryKey: queryKeys.employees.departments(companyId, true),
+          });
+        };
       },
-      [companyId, queryClient],
+      [companyId, queryClient, refreshUsers],
     ),
   );
 

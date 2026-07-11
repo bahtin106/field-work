@@ -180,6 +180,66 @@ function buildTheme(mode, systemScheme = null) {
   };
 
   const components = {
+    button: {
+      palette: {
+        primary: base.components?.button?.palette?.primary ?? {
+          bg: colors.button.primaryBg,
+          fg: colors.button.primaryText,
+          border: colors.button.primaryBg,
+        },
+        secondary: base.components?.button?.palette?.secondary ?? {
+          bg: colors.button.secondaryBg,
+          fg: colors.button.secondaryText,
+          border: colors.border,
+        },
+        outline: base.components?.button?.palette?.outline ?? {
+          bg: colors.surface,
+          fg: colors.button.primaryBg,
+          border: colors.button.primaryBg,
+        },
+        ghost: base.components?.button?.palette?.ghost ?? {
+          bg: colors.surface,
+          fg: colors.text,
+          border: colors.border,
+        },
+        destructive: base.components?.button?.palette?.destructive ?? {
+          bg: colors.button.dangerBg,
+          fg: colors.button.dangerText,
+          border: colors.button.dangerBg,
+        },
+      },
+      sizes: {
+        sm: base.components?.button?.sizes?.sm ?? {
+          h: 40,
+          f: typography.sizes.sm,
+          pad: spacing.md,
+        },
+        md: base.components?.button?.sizes?.md ?? {
+          h: 48,
+          f: typography.sizes.md,
+          pad: spacing.md,
+        },
+        lg: base.components?.button?.sizes?.lg ?? {
+          h: 56,
+          f: typography.sizes.lg,
+          pad: spacing.lg,
+        },
+      },
+      radius: resolveThemeScaleValue(radii, base.components?.button?.radius, radii.lg),
+      borderWidth: base.components?.button?.borderWidth ?? 1,
+      disabledOpacity: base.components?.button?.disabledOpacity ?? 0.5,
+      pressedScale: base.components?.button?.pressedScale ?? 0.97,
+      pressedOpacity: base.components?.button?.pressedOpacity ?? 0.9,
+      pressInDuration: base.components?.button?.pressInDuration ?? 90,
+      pressOutDuration: base.components?.button?.pressOutDuration ?? 140,
+      hitSlop: base.components?.button?.hitSlop ?? 8,
+      pressRetentionOffset: base.components?.button?.pressRetentionOffset ?? 20,
+      groupGap: resolveThemeScaleValue(
+        spacing,
+        base.components?.button?.groupGap,
+        spacing.md,
+      ),
+    },
     card: {
       borderWidth: base.components?.card?.borderWidth ?? 1,
       padX: base.components?.card?.padX ?? 'sm',
@@ -285,7 +345,37 @@ function buildTheme(mode, systemScheme = null) {
       border: base.components?.avatar?.border ?? 1,
     },
 
-    iconButton: { size: base.components?.iconButton?.size ?? 32 },
+    iconButton: {
+      size: base.components?.iconButton?.size ?? 32,
+      sizes: base.components?.iconButton?.sizes ?? { sm: 28, md: 32, lg: 40 },
+      radius: base.components?.iconButton?.radius ?? { sm: 'sm', md: 'md', lg: 'lg' },
+      palette: base.components?.iconButton?.palette,
+      disabledOpacity: base.components?.iconButton?.disabledOpacity ?? 0.5,
+      pressedScale: base.components?.iconButton?.pressedScale ?? 0.94,
+      pressInDuration: base.components?.iconButton?.pressInDuration ?? 80,
+      hitSlop: base.components?.iconButton?.hitSlop ?? 8,
+      contentPaddingX: base.components?.iconButton?.contentPaddingX ?? 6,
+    },
+    segmented: {
+      inactiveBg: base.components?.segmented?.inactiveBg ?? colors.button.secondaryBg,
+      inactiveFg: base.components?.segmented?.inactiveFg ?? colors.button.secondaryText,
+      activeBg: base.components?.segmented?.activeBg ?? colors.button.primaryBg,
+      activeFg: base.components?.segmented?.activeFg ?? colors.button.primaryText,
+    },
+    interactive: {
+      hitSlop:
+        base.components?.interactive?.hitSlop ?? { top: 8, bottom: 8, left: 8, right: 8 },
+      pressRetentionOffset:
+        base.components?.interactive?.pressRetentionOffset ??
+        { top: 16, bottom: 16, left: 16, right: 16 },
+      rippleRadius: base.components?.interactive?.rippleRadius ?? 24,
+      rippleBorderless: base.components?.interactive?.rippleBorderless ?? false,
+      pressedScale: base.components?.interactive?.pressedScale ?? 0.98,
+      pressedTint: base.components?.interactive?.pressedTint ?? 0.12,
+      pressInDuration: base.components?.interactive?.pressInDuration ?? 80,
+      pressOutDuration: base.components?.interactive?.pressOutDuration ?? 140,
+      disabledOpacity: base.components?.interactive?.disabledOpacity ?? 0.5,
+    },
     input: {
       height: base.components?.input?.height ?? base.components?.listItem?.height ?? 48,
       trailingSlotWidth: base.components?.input?.trailingSlotWidth ?? undefined,
@@ -314,6 +404,19 @@ function buildTheme(mode, systemScheme = null) {
         base.components?.keyboardAware?.extraKeyboardSpace ??
         (base.components?.input?.height ?? base.components?.listItem?.height ?? 48) +
           (base.spacing?.lg ?? 16),
+    },
+    filtersPanel: {
+      openSpring: {
+        damping: base.components?.filtersPanel?.openSpring?.damping ?? 28,
+        stiffness: base.components?.filtersPanel?.openSpring?.stiffness ?? 260,
+        mass: base.components?.filtersPanel?.openSpring?.mass ?? 0.85,
+      },
+      closeDuration: base.components?.filtersPanel?.closeDuration ?? 280,
+      swipeEdgeWidth: base.components?.filtersPanel?.swipeEdgeWidth ?? 32,
+      swipeCloseRatio: base.components?.filtersPanel?.swipeCloseRatio ?? 0.25,
+      swipeCloseVelocity: base.components?.filtersPanel?.swipeCloseVelocity ?? 0.55,
+      minColumnRatio: base.components?.filtersPanel?.minColumnRatio ?? 0.2,
+      maxColumnRatio: base.components?.filtersPanel?.maxColumnRatio ?? 0.5,
     },
     activityIndicator: { size: base.components?.activityIndicator?.size ?? 'large' },
     // Р“Р»РѕР±Р°Р»СЊРЅС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё С…РµРґРµСЂР° Рё Р±РµРіСѓС‰РµР№ СЃС‚СЂРѕРєРё

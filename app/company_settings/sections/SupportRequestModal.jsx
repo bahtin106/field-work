@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Button from '../../../components/ui/Button';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
@@ -227,25 +227,24 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
         feedback={feedback}
         footer={
           <View style={styles(theme).footerRow}>
-            <Pressable
-              onPress={handleCloseRequest}
-              disabled={submitting}
-              style={({ pressed }) => [
-                styles(theme).ghostButton,
-                pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-                submitting ? { opacity: theme.components.listItem.disabledOpacity } : null,
-              ]}
-            >
-              <Text style={styles(theme).ghostButtonText}>{t('btn_cancel')}</Text>
-            </Pressable>
-            <Button
-              variant="primary"
-              size="md"
-              title={submitting ? t('btn_sending') : t('btn_send')}
-              formSubmit
-              disabled={submitting || !String(message || '').trim()}
-              onPress={send}
-            />
+            <View style={styles(theme).footerButtonSlot}>
+              <Button
+                title={t('btn_cancel')}
+                variant="secondary"
+                onPress={handleCloseRequest}
+                disabled={submitting}
+              />
+            </View>
+            <View style={styles(theme).footerButtonSlot}>
+              <Button
+                variant="primary"
+                size="md"
+                title={submitting ? t('btn_sending') : t('btn_send')}
+                formSubmit
+                disabled={submitting || !String(message || '').trim()}
+                onPress={send}
+              />
+            </View>
           </View>
         }
       >
@@ -442,21 +441,9 @@ const styles = (theme, photoTileSize = 88) =>
     },
     footerRow: {
       flexDirection: 'row',
-      gap: theme.spacing.md,
+      gap: theme.components.button.groupGap,
     },
-    ghostButton: {
+    footerButtonSlot: {
       flex: 1,
-      minHeight: theme.components.row.minHeight,
-      borderRadius: theme.radii.md,
-      borderWidth: theme.components.card.borderWidth,
-      borderColor: theme.colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.surface,
-    },
-    ghostButtonText: {
-      color: theme.colors.text,
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.medium,
     },
   });

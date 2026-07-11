@@ -473,6 +473,15 @@ const EMPLOYEE_FIELDS = [
     defaultEnabled: false,
     sortOrder: 70,
   }),
+  createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'department_id', {
+    labelKey: 'label_department',
+    sectionKey: FIELD_SETTINGS_SECTIONS.COMPANY,
+    inputKind: 'select',
+    supportsRequired: false,
+    defaultEnabled: true,
+    defaultRequired: false,
+    sortOrder: 80,
+  }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'role', {
     labelKey: 'label_role',
     sectionKey: FIELD_SETTINGS_SECTIONS.COMPANY,
@@ -482,7 +491,7 @@ const EMPLOYEE_FIELDS = [
     defaultRequired: true,
     lockedEnabled: true,
     lockedRequired: true,
-    sortOrder: 80,
+    sortOrder: 90,
   }),
 ];
 

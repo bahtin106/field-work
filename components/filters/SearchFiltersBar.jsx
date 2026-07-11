@@ -1,27 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Feather, MaterialIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 
+import FilterBarButton from './FilterBarButton';
 import TextField from '../ui/TextField';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
-
-function withAlpha(color, a) {
-  if (typeof color === 'string') {
-    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
-    if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
-        .toString(16)
-        .padStart(2, '0');
-      return color + alpha;
-    }
-    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-    if (rgb) {
-      return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
-    }
-  }
-  return color;
-}
 
 function createStyles(theme) {
   const c = theme.colors;
@@ -63,20 +47,6 @@ function createStyles(theme) {
       justifyContent: 'center',
       paddingLeft: sz.sm,
       paddingRight: 0,
-    },
-    filterButton: {
-      width: controlH,
-      height: controlH,
-      borderRadius: controlH / 2,
-      borderWidth: 1,
-      borderColor: c.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: c.surface,
-    },
-    filterButtonActive: {
-      borderColor: c.primary,
-      backgroundColor: withAlpha(c.primary, 0.12),
     },
     summaryRow: {
       position: 'relative',
@@ -167,7 +137,6 @@ export default function SearchFiltersBar({
   const { t } = useTranslation();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const clearIconSize = theme?.components?.icon?.sizeSm ?? 18;
-  const sortIconSize = theme?.components?.icon?.sizeSm ?? 18;
   const isFiltersActive = filtersActive ?? Boolean(filterSummary);
   const summaryLines = Math.max(
     1,
@@ -203,40 +172,19 @@ export default function SearchFiltersBar({
           />
         </View>
         {onOpenSort ? (
-          <Pressable
-            onPress={() => {
-              try {
-                Keyboard.dismiss();
-              } catch {}
-              onOpenSort?.();
-            }}
-            style={styles.filterButton}
-            android_ripple={{ borderless: false, color: theme.colors.border }}
-            accessibilityRole="button"
+          <FilterBarButton
+            type="sort"
+            onPress={onOpenSort}
             accessibilityLabel={t('common_sort')}
-          >
-            <MaterialIcons name="swap-vert" size={sortIconSize + 2} color={theme.colors.text} />
-          </Pressable>
+          />
         ) : null}
         {onOpenFilters ? (
-          <Pressable
-            onPress={() => {
-              try {
-                Keyboard.dismiss();
-              } catch {}
-              onOpenFilters?.();
-            }}
-            style={[styles.filterButton, isFiltersActive ? styles.filterButtonActive : null]}
-            android_ripple={{ borderless: false, color: theme.colors.border }}
-            accessibilityRole="button"
+          <FilterBarButton
+            type="filter"
+            active={isFiltersActive}
+            onPress={onOpenFilters}
             accessibilityLabel={t('common_filter')}
-          >
-            <Feather
-              name="sliders"
-              size={18}
-              color={isFiltersActive ? theme.colors.primary : theme.colors.text}
-            />
-          </Pressable>
+          />
         ) : null}
       </View>
 

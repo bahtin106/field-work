@@ -25,6 +25,7 @@ import SortSelectModal from '../../components/filters/SortSelectModal';
 import StatusSelectModal from '../../components/filters/StatusSelectModal';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
+import Button from '../../components/ui/Button';
 import EmptyListState from '../../components/ui/EmptyListState';
 import {
   ThemedRefreshControl,
@@ -60,6 +61,10 @@ import {
   normalizeOrderSortKey,
   sortOrders,
 } from '../../src/features/orders/orderSort';
+import {
+  fetchAccessibleFeedCount,
+  useOrderFacetCounts,
+} from '../../src/features/orders/facetCounts';
 import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import {
@@ -96,9 +101,8 @@ const ALL_ORDERS_NAV_LOCK_MS = 1200;
 const ALL_ORDERS_DETAIL_PREFETCH_LIMIT = 6;
 const ALL_ORDERS_VIEWABILITY_PREFETCH_TTL_MS = 2500;
 const ALL_ORDERS_FEED_PREVIEW_SIZE = 20;
-const ALL_ORDERS_FEED_PREFETCH_DELAY_MS = 2200;
+const ALL_ORDERS_FEED_PREFETCH_DELAY_MS = 350;
 const ALL_ORDERS_FEED_PULSE_DURATION_MS = 1200;
-const ALL_ORDERS_FEED_INDICATOR_FRESH_MS = 30 * 1000;
 const ALL_ORDERS_FEED_SEEN_STORAGE_PREFIX = 'myorders.feedSeen.v2';
 const ALL_ORDERS_FEED_LAST_FP_STORAGE_PREFIX = 'myorders.feedLastFp.v2';
 const ALL_ORDERS_PRESSED_OPACITY = 0.9;
@@ -911,6 +915,10 @@ function AllOrdersContent() {
   const [feedFingerprint, setFeedFingerprint] = useState(() => scopedFeedState.fp || '');
   const [feedSeenFingerprint, setFeedSeenFingerprint] = useState(() => scopedFeedState.seenFp || '');
   const [feedHasAny, setFeedHasAny] = useState(() => Boolean(scopedFeedState.hasAny));
+  const [feedTotalCount, setFeedTotalCount] = useState(() => {
+    const cachedCount = Number(scopedFeedState.totalCount);
+    return Number.isFinite(cachedCount) ? cachedCount : null;
+  });
   const feedPulse = useRef(new Animated.Value(0)).current;
   const feedMetaRequestSeqRef = useRef(0);
   const activeFeedScopeRef = useRef(feedScopeKey);
@@ -927,6 +935,8 @@ function AllOrdersContent() {
     setFeedFingerprint(scopedFeedState.fp || '');
     setFeedSeenFingerprint(scopedFeedState.seenFp || '');
     setFeedHasAny(Boolean(scopedFeedState.hasAny));
+    const cachedCount = Number(scopedFeedState.totalCount);
+    setFeedTotalCount(Number.isFinite(cachedCount) ? cachedCount : null);
   }, [feedScopeKey, scopedFeedState]);
 
   useEffect(() => {
@@ -934,9 +944,11 @@ function AllOrdersContent() {
       scopedFeedState.fp = '';
       scopedFeedState.seenFp = '';
       scopedFeedState.hasAny = false;
+      scopedFeedState.totalCount = 0;
       setFeedFingerprint('');
       setFeedSeenFingerprint('');
       setFeedHasAny(false);
+      setFeedTotalCount(0);
       return undefined;
     }
     if (!isFocused) return undefined;
@@ -1002,12 +1014,14 @@ function AllOrdersContent() {
   }, [feedPulse, feedState, isFeedFeatureEnabled]);
 
   const updateFeedMeta = useCallback(
-    (arr) => {
+    (arr, totalCount = null) => {
       if (!isFeedFeatureEnabled) {
         scopedFeedState.fp = '';
         scopedFeedState.hasAny = false;
+        scopedFeedState.totalCount = 0;
         setFeedFingerprint('');
         setFeedHasAny(false);
+        setFeedTotalCount(0);
         return;
       }
       const fp = Array.isArray(arr)
@@ -1021,6 +1035,11 @@ function AllOrdersContent() {
 
       scopedFeedState.fp = fp;
       scopedFeedState.hasAny = hasAny;
+      const normalizedTotalCount = Number(totalCount);
+      if (Number.isFinite(normalizedTotalCount)) {
+        scopedFeedState.totalCount = normalizedTotalCount;
+        setFeedTotalCount(normalizedTotalCount);
+      }
       setFeedFingerprint(fp);
       setFeedHasAny(hasAny);
 
@@ -1040,12 +1059,8 @@ function AllOrdersContent() {
 
     const prefetchFeed = async () => {
       const cachedRows = scopedFeedIndicatorCache.rows;
-      const cachedFetchedAt = Number(scopedFeedIndicatorCache.fetchedAt || 0);
       if (Array.isArray(cachedRows)) {
-        updateFeedMeta(cachedRows);
-        if (cachedFetchedAt > 0 && Date.now() - cachedFetchedAt < ALL_ORDERS_FEED_INDICATOR_FRESH_MS) {
-          return;
-        }
+        updateFeedMeta(cachedRows, cachedRows.length);
       }
 
       let uid = String(user?.id || profile?.id || '').trim();
@@ -1058,17 +1073,23 @@ function AllOrdersContent() {
       const requestSeq = feedMetaRequestSeqRef.current + 1;
       feedMetaRequestSeqRef.current = requestSeq;
       try {
-        const data = await listRequests({
-          scope: 'all',
-          status: 'feed',
-          userId: uid,
-          page: 1,
-          pageSize: ALL_ORDERS_FEED_PREVIEW_SIZE,
-        });
+        const [data, exactCount] = await Promise.all([
+          listRequests({
+            scope: 'all',
+            status: 'feed',
+            userId: uid,
+            page: 1,
+            pageSize: ALL_ORDERS_FEED_PREVIEW_SIZE,
+          }),
+          fetchAccessibleFeedCount().catch(() => null),
+        ]);
         if (feedMetaRequestSeqRef.current !== requestSeq) return;
         scopedFeedIndicatorCache.rows = data;
         scopedFeedIndicatorCache.fetchedAt = Date.now();
-        updateFeedMeta(data);
+        updateFeedMeta(
+          data,
+          exactCount == null ? data.length : Math.max(Number(exactCount) || 0, data.length),
+        );
       } catch {}
     };
 
@@ -1638,6 +1659,16 @@ function AllOrdersContent() {
     return sortOrders(filteredOrders, normalizedSortKey);
   }, [filteredOrders, normalizedSortKey]);
 
+  const allOrdersFeedFacetOverride = useMemo(
+    () => (Number.isFinite(feedTotalCount) ? { feed: feedTotalCount } : null),
+    [feedTotalCount],
+  );
+  const ordersFacetCounts = useOrderFacetCounts(orders, panelStatusOptions, {
+    isStatusNarrowed: effectiveStatusFilter !== 'all',
+    scopeKey: String(companyId || profile?.company_id || 'no-company'),
+    statusOverrides: allOrdersFeedFacetOverride,
+  });
+
   const loadMore = useCallback(async () => {
     if (isFetchingNextPage || !hasNextPage || listLoading) return;
     await fetchNextPage();
@@ -1987,13 +2018,12 @@ function AllOrdersContent() {
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyTitle}>{t('refresh_failed')}</Text>
           <Text style={styles.emptyText}>{t('orders_load_failed_subtitle')}</Text>
-          <Pressable
+          <Button
+            title={t('btn_retry')}
+            size="sm"
             onPress={retryLoad}
-            style={({ pressed }) => [styles.retryButton, pressed && { opacity: ALL_ORDERS_PRESSED_OPACITY }]}
-            accessibilityRole="button"
-          >
-            <Text style={styles.retryText}>{t('btn_retry')}</Text>
-          </Pressable>
+            containerStyle={styles.retryButtonContainer}
+          />
         </View>
       );
     }
@@ -2006,8 +2036,7 @@ function AllOrdersContent() {
     styles.emptyText,
     styles.emptyTitle,
     styles.emptyWrap,
-    styles.retryButton,
-    styles.retryText,
+    styles.retryButtonContainer,
     t,
     theme.colors.primary,
   ]);
@@ -2107,6 +2136,7 @@ function AllOrdersContent() {
         statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
         workTypeOptions={useWorkTypes ? workTypes : []}
         clientOptions={clientOptions}
+        facetCounts={ordersFacetCounts}
         executorOptions={executorOptions}
         showExecutors
         values={orderFilters}
@@ -2228,7 +2258,10 @@ function createStyles(theme) {
       minHeight: 30,
       paddingVertical: 5,
       paddingHorizontal: 7,
-      backgroundColor: 'transparent',
+      backgroundColor:
+        theme.components?.segmented?.inactiveBg ??
+        theme.colors.button?.secondaryBg ??
+        theme.colors.surface,
       borderRadius: theme.radii?.md ?? 10,
       alignItems: 'center',
       justifyContent: 'center',
@@ -2236,7 +2269,7 @@ function createStyles(theme) {
       overflow: 'hidden',
     },
     chipActive: {
-      backgroundColor: theme.colors.primary,
+      backgroundColor: theme.components?.segmented?.activeBg ?? theme.colors.primary,
     },
     chipContent: {
       flexDirection: 'row',
@@ -2246,12 +2279,15 @@ function createStyles(theme) {
     chipText: {
       flexShrink: 1,
       fontSize: Math.max(theme.typography.sizes.xs ?? 12, (theme.typography.sizes.sm ?? 14) - 1),
-      color: theme.colors.text,
+      color: theme.components?.segmented?.inactiveFg ?? theme.colors.text,
       textAlign: 'center',
       includeFontPadding: false,
     },
     chipTextActive: {
-      color: theme.colors.onPrimary || theme.colors.primaryTextOn,
+      color:
+        theme.components?.segmented?.activeFg ??
+        theme.colors.onPrimary ??
+        theme.colors.primaryTextOn,
       fontWeight: theme.typography.weight.semibold || '600',
     },
     statusMoreChip: {
@@ -2305,19 +2341,8 @@ function createStyles(theme) {
       lineHeight: Math.round(theme.typography.sizes.sm * 1.45),
       color: mutedColor,
     },
-    retryButton: {
+    retryButtonContainer: {
       marginTop: theme.spacing.sm,
-      minHeight: 40,
-      paddingHorizontal: theme.spacing.lg,
-      borderRadius: theme.radii?.pill ?? 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.primary,
-    },
-    retryText: {
-      color: theme.colors.onPrimary || theme.colors.primaryTextOn,
-      fontSize: theme.typography.sizes.sm,
-      fontWeight: theme.typography.weight.semibold,
     },
     paginationFooter: {
       paddingVertical: 20,

@@ -28,6 +28,7 @@ import {
   setUseDepartments,
   updateDepartment,
 } from '../../../lib/departments';
+import { applyCompanySettingsCachePatch } from '../../../lib/companySettingsQuery';
 import { getMyCompanyId } from '../../../lib/workTypes';
 import { getLocale } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -247,13 +248,11 @@ export default function DepartmentsSettings() {
     value: useDepartments,
     setValue: setUseDepartmentsFlag,
     rollback: (previous) => {
-      queryClient.setQueryData(
-        ['companySettings'],
-        (prev) =>
-          prev && typeof prev === 'object'
-            ? { ...prev, use_departments: !!previous }
-            : { use_departments: !!previous },
-      );
+      if (companyId) {
+        applyCompanySettingsCachePatch(queryClient, companyId, {
+          use_departments: !!previous,
+        });
+      }
     },
     onError: (error) => {
       toast.error(getErrorMessage(error, 'departments_settings_toast_save_failed'));
@@ -269,13 +268,9 @@ export default function DepartmentsSettings() {
       if (!companyId) return;
       const enabledDepartmentsKey = queryKeys.employees.departments(companyId, true);
       const allDepartmentsKey = queryKeys.employees.departments(companyId, false);
-      queryClient.setQueryData(
-        ['companySettings'],
-        (prev) =>
-          prev && typeof prev === 'object'
-            ? { ...prev, use_departments: !!target }
-            : { use_departments: !!target },
-      );
+      applyCompanySettingsCachePatch(queryClient, companyId, {
+        use_departments: !!target,
+      });
       if (!target) {
         queryClient.setQueryData(enabledDepartmentsKey, []);
         queryClient.setQueryData(allDepartmentsKey, []);

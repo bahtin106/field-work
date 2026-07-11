@@ -24,6 +24,7 @@ export function useCompanySettings(companyIdOverride = null, options = {}) {
     enabled = true,
     subscribe = true,
     liveRefetchIntervalMs = COMPANY_SETTINGS_LIVE_REFETCH_MS,
+    refetchOnMount = false,
   } = options || {};
   const queryClient = useQueryClient();
   const { profile } = useAuthContext();
@@ -44,7 +45,7 @@ export function useCompanySettings(companyIdOverride = null, options = {}) {
     enabled: queryEnabled,
     staleTime: COMPANY_SETTINGS_STALE_MS,
     gcTime: COMPANY_SETTINGS_GC_MS,
-    refetchOnMount: false,
+    refetchOnMount,
     refetchOnReconnect: true,
     refetchOnWindowFocus: false,
     refetchInterval: liveRefetchInterval,

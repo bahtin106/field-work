@@ -19,12 +19,14 @@ import {
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
+import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import StatusSelectModal from '../../components/filters/StatusSelectModal';
 import { useAuth } from '../../components/hooks/useAuth';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
+import Button from '../../components/ui/Button';
 import EmptyListState from '../../components/ui/EmptyListState';
 import {
   ThemedRefreshControl,
@@ -60,6 +62,10 @@ import {
   normalizeOrderSortKey,
   sortOrders,
 } from '../../src/features/orders/orderSort';
+import {
+  fetchAccessibleFeedCount,
+  useOrderFacetCounts,
+} from '../../src/features/orders/facetCounts';
 import {
   ensureRequestPrefetch,
   markRequestDetailSeed,
@@ -111,10 +117,9 @@ const MY_ORDERS_NAV_LOCK_MS = 1200;
 const MY_ORDERS_REFRESH_WAIT_TIMEOUT_MS = 12000;
 const MY_ORDERS_BACKGROUND_REFRESH_DELAY_MS = 1200;
 const MY_ORDERS_FEED_PREVIEW_SIZE = 20;
-const MY_ORDERS_FEED_PREFETCH_DELAY_MS = 2200;
+const MY_ORDERS_FEED_PREFETCH_DELAY_MS = 350;
 const MY_ORDERS_FEED_PULSE_DURATION_MS = 1200;
 const MY_ORDERS_FEED_INDICATOR_CACHE_KEY = 'feed.indicator.v1';
-const MY_ORDERS_FEED_INDICATOR_FRESH_MS = 30 * 1000;
 const MY_ORDERS_EXECUTOR_PREFETCH_LIMIT = 80;
 const MY_ORDERS_DETAIL_PREFETCH_LIMIT = 5;
 const MY_ORDERS_DETAIL_PREFETCH_TTL_MS = 4000;
@@ -232,7 +237,6 @@ function rankStatusFilterOptions(options = [], usage = {}) {
     .map(({ option }) => option);
 }
 
-const OrdersFiltersPanel = lazy(() => import('../../components/filters/OrdersFiltersPanel'));
 const SortSelectModal = lazy(() => import('../../components/filters/SortSelectModal'));
 
 function buildScopedStorageKey(prefix, scopeKey) {
@@ -315,23 +319,31 @@ function MyOrdersContent() {
           minHeight: 30,
           paddingVertical: 5,
           paddingHorizontal: 7,
-          backgroundColor: 'transparent',
+          backgroundColor:
+            theme.components?.segmented?.inactiveBg ??
+            theme.colors.button?.secondaryBg ??
+            theme.colors.surface,
           borderRadius: theme.radii?.md ?? 10,
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 1,
           overflow: 'hidden',
         },
-        chipActive: { backgroundColor: theme.colors.primary },
+        chipActive: {
+          backgroundColor: theme.components?.segmented?.activeBg ?? theme.colors.primary,
+        },
         chipText: {
           flexShrink: 1,
           fontSize: Math.max(theme.typography.sizes.xs ?? 12, (theme.typography.sizes.sm ?? 14) - 1),
-          color: theme.colors.text,
+          color: theme.components?.segmented?.inactiveFg ?? theme.colors.text,
           textAlign: 'center',
           includeFontPadding: false,
         },
         chipTextActive: {
-          color: theme.colors.onPrimary || theme.colors.primaryTextOn,
+          color:
+            theme.components?.segmented?.activeFg ??
+            theme.colors.onPrimary ??
+            theme.colors.primaryTextOn,
           fontWeight: '600',
         },
         chipContent: {
@@ -388,19 +400,8 @@ function MyOrdersContent() {
           lineHeight: Math.round(theme.typography.sizes.sm * 1.45),
           color: mutedColor,
         },
-        retryButton: {
+        retryButtonContainer: {
           marginTop: theme.spacing.sm,
-          minHeight: 40,
-          paddingHorizontal: theme.spacing.lg,
-          borderRadius: theme.radii?.pill ?? 20,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: theme.colors.primary,
-        },
-        retryText: {
-          color: theme.colors.onPrimary || theme.colors.primaryTextOn,
-          fontSize: theme.typography.sizes.sm,
-          fontWeight: theme.typography.weight.semibold,
         },
       }),
     [theme, mutedColor],
@@ -1359,6 +1360,10 @@ function MyOrdersContent() {
   const [feedFingerprint, setFeedFingerprint] = useState(() => scopedFeedState.fp || '');
   const [feedSeenFingerprint, setFeedSeenFingerprint] = useState(() => scopedFeedState.seenFp || '');
   const [feedHasAny, setFeedHasAny] = useState(() => Boolean(scopedFeedState.hasAny));
+  const [feedTotalCount, setFeedTotalCount] = useState(() => {
+    const cachedCount = Number(scopedFeedState.totalCount);
+    return Number.isFinite(cachedCount) ? cachedCount : null;
+  });
   const feedPulse = useRef(new Animated.Value(0)).current;
   const detailNavLockRef = useRef({ id: '', ts: 0 });
   const listPrefetchRef = useRef({ key: '', ts: 0 });
@@ -1483,12 +1488,14 @@ function MyOrdersContent() {
     };
   }, [feedPulse, feedState, isFeedFeatureEnabled]);
 
-  const updateFeedMeta = useCallback((arr) => {
+  const updateFeedMeta = useCallback((arr, totalCount = null) => {
     if (!isFeedFeatureEnabled) {
       scopedFeedState.fp = '';
       scopedFeedState.hasAny = false;
+      scopedFeedState.totalCount = 0;
       setFeedFingerprint('');
       setFeedHasAny(false);
+      setFeedTotalCount(0);
       return;
     }
     const fp = Array.isArray(arr)
@@ -1502,6 +1509,11 @@ function MyOrdersContent() {
 
     scopedFeedState.fp = fp;
     scopedFeedState.hasAny = hasAny;
+    const normalizedTotalCount = Number(totalCount);
+    if (Number.isFinite(normalizedTotalCount)) {
+      scopedFeedState.totalCount = normalizedTotalCount;
+      setFeedTotalCount(normalizedTotalCount);
+    }
 
     setFeedFingerprint(fp);
     setFeedHasAny(hasAny);
@@ -1520,14 +1532,8 @@ function MyOrdersContent() {
     if (loading && orders.length === 0) return;
     const prefetchFeed = async () => {
       const cached = listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY];
-      const cachedFetchedAt = Number(
-        listCacheFetchedAtRef.current[MY_ORDERS_FEED_INDICATOR_CACHE_KEY] || 0,
-      );
       if (Array.isArray(cached)) {
-        updateFeedMeta(cached);
-        if (cachedFetchedAt > 0 && Date.now() - cachedFetchedAt < MY_ORDERS_FEED_INDICATOR_FRESH_MS) {
-          return;
-        }
+        updateFeedMeta(cached, cached.length);
       }
 
       let uid = String(auth.user?.id || auth.profile?.id || '').trim();
@@ -1540,16 +1546,23 @@ function MyOrdersContent() {
       const requestSeq = feedMetaRequestSeqRef.current + 1;
       feedMetaRequestSeqRef.current = requestSeq;
       try {
-        const data = await listRequests({
-          scope: 'all',
-          status: 'feed',
-          userId: uid,
-          page: 1,
-          pageSize: MY_ORDERS_FEED_PREVIEW_SIZE,
-        });
+        const [data, countResult] = await Promise.all([
+          listRequests({
+            scope: 'all',
+            status: 'feed',
+            userId: uid,
+            page: 1,
+            pageSize: MY_ORDERS_FEED_PREVIEW_SIZE,
+          }),
+          fetchAccessibleFeedCount().catch(() => null),
+        ]);
         if (feedMetaRequestSeqRef.current !== requestSeq) return;
         setListCacheEntry(MY_ORDERS_FEED_INDICATOR_CACHE_KEY, data, { fetchedAt: Date.now() });
-        updateFeedMeta(data);
+        const exactCount = countResult == null ? null : Number(countResult);
+        updateFeedMeta(
+          data,
+          Number.isFinite(exactCount) ? Math.max(exactCount, data.length) : data.length,
+        );
       } catch {}
     };
 
@@ -1992,16 +2005,35 @@ function MyOrdersContent() {
     const statusKey = normalizeMyOrdersStatusFilter(effectiveFilter || 'all');
     const exactCacheKey = makeCacheKey(statusKey, defaultListFingerprint, relationFingerprint);
     const exactRows = listCacheMy[exactCacheKey];
+    const feedRows = Array.isArray(listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY])
+      ? listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY]
+      : [];
+
+    const mergeUniqueRows = (...collections) => {
+      const rowsById = new Map();
+      collections.forEach((rows) => {
+        (Array.isArray(rows) ? rows : []).forEach((row) => {
+          const id = String(row?.id || '').trim();
+          if (id) rowsById.set(id, row);
+        });
+      });
+      return [...rowsById.values()];
+    };
+
+    // The standard "all" query excludes feed rows by design. Facets, however,
+    // must show every available status, including the separately cached feed.
+    if (statusKey === 'all' && Array.isArray(exactRows)) {
+      return mergeUniqueRows(exactRows, feedRows);
+    }
     if (Array.isArray(exactRows)) return exactRows;
 
     if (statusKey === 'all' && recentOrdersCacheKeyRef.current === exactCacheKey) {
       const recentRows = queryClient.getQueryData(recentOrdersQueryKey);
-      if (Array.isArray(recentRows)) return recentRows;
+      if (Array.isArray(recentRows)) return mergeUniqueRows(recentRows, feedRows);
     }
 
     if (statusKey === 'feed') {
-      const feedRows = listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY];
-      if (Array.isArray(feedRows)) return feedRows;
+      if (feedRows.length) return feedRows;
     }
 
     const allCacheKey = makeCacheKey('all', defaultListFingerprint, relationFingerprint);
@@ -2012,7 +2044,7 @@ function MyOrdersContent() {
         : null;
 
     if (Array.isArray(allRows)) {
-      if (statusKey === 'all') return allRows;
+      if (statusKey === 'all') return mergeUniqueRows(allRows, feedRows);
       const normalizedStatusKey = normalizeOrderStatusFilterKey(statusKey);
       return allRows.filter((order) => {
         const rawStatus = String(order?.status || '').trim();
@@ -2034,31 +2066,15 @@ function MyOrdersContent() {
     statusAliasToFilterKey,
   ]);
 
-  const ordersFacetCounts = useMemo(() => {
-    const source = Array.isArray(ordersFacetSource) ? ordersFacetSource : [];
-    const counts = {
-      total: source.length,
-      statuses: {},
-      workTypes: {},
-      clients: {},
-    };
-    source.forEach((order) => {
-      const rawStatus = String(order?.status || '').trim();
-      const statusKey = statusAliasToFilterKey.get(rawStatus) || null;
-      if (statusKey) {
-        counts.statuses[statusKey] = (counts.statuses[statusKey] || 0) + 1;
-      }
-      const workTypeId = String(order?.work_type_id || '').trim();
-      if (workTypeId) {
-        counts.workTypes[workTypeId] = (counts.workTypes[workTypeId] || 0) + 1;
-      }
-      const clientId = String(order?.client_id || '').trim();
-      if (clientId) {
-        counts.clients[clientId] = (counts.clients[clientId] || 0) + 1;
-      }
-    });
-    return counts;
-  }, [ordersFacetSource, statusAliasToFilterKey]);
+  const feedFacetOverride = useMemo(
+    () => (Number.isFinite(feedTotalCount) ? { feed: feedTotalCount } : null),
+    [feedTotalCount],
+  );
+  const ordersFacetCounts = useOrderFacetCounts(ordersFacetSource, panelStatusOptions, {
+    isStatusNarrowed: normalizeMyOrdersStatusFilter(effectiveFilter || 'all') !== 'all',
+    scopeKey: cacheScopeKey,
+    statusOverrides: feedFacetOverride,
+  });
 
   useEffect(() => {
     if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
@@ -2412,13 +2428,12 @@ function MyOrdersContent() {
           <View style={styles.emptyWrap}>
             <Text style={styles.emptyTitle}>{t('refresh_failed')}</Text>
             <Text style={styles.emptyText}>{loadError}</Text>
-            <Pressable
+            <Button
+              title={t('btn_retry')}
+              size="sm"
               onPress={retryLoad}
-              style={({ pressed }) => [styles.retryButton, pressed && { opacity: 0.88 }]}
-              accessibilityRole="button"
-            >
-              <Text style={styles.retryText}>{t('btn_retry')}</Text>
-            </Pressable>
+              containerStyle={styles.retryButtonContainer}
+            />
           </View>
         );
       }
@@ -2432,8 +2447,7 @@ function MyOrdersContent() {
       styles.emptyText,
       styles.emptyTitle,
       styles.emptyWrap,
-      styles.retryButton,
-      styles.retryText,
+      styles.retryButtonContainer,
       t,
       theme.colors.primary,
     ],
@@ -2531,9 +2545,7 @@ function MyOrdersContent() {
           refreshControl={<ThemedRefreshControl refreshing={bgRefreshing} onRefresh={onRefresh} />}
         />
       </View>
-      {filters.visible ? (
-        <Suspense fallback={null}>
-          <OrdersFiltersPanel
+      <OrdersFiltersPanel
             visible={filters.visible}
             onClose={filters.close}
             statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
@@ -2563,9 +2575,7 @@ function MyOrdersContent() {
               await filters.apply(normalizedNextValues);
               selectStatusFilter(nextStatus, { syncFilter: false });
             }}
-          />
-        </Suspense>
-      ) : null}
+      />
       {hasStatusNavigation ? (
         <StatusSelectModal
           visible={statusSelectVisible}

@@ -5418,41 +5418,29 @@ function OrderDetailsContent() {
             ) : null}
 
             {canAcceptOrder && (
-              <Pressable
-                style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
+              <Button
+                title={t('order_details_accept_order')}
                 onPress={onAcceptOrder}
-              >
-                <Text style={styles.finishButtonText}>{t('order_details_accept_order')}</Text>
-              </Pressable>
+                style={styles.footerActionButton}
+              />
             )}
 
             {doneStatusAvailable && order.status !== 'done' && !isFree && canCompleteOrder && (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.finishButton,
-                  !canFinishOrder() && styles.finishButtonDisabled,
-                  pressed && canFinishOrder() && { opacity: 0.9 },
-                ]}
+              <Button
+                title={t('order_details_finish_order')}
                 onPress={onFinishPress}
-              >
-                <Text style={styles.finishButtonText}>{t('order_details_finish_order')}</Text>
-              </Pressable>
+                disabled={!canFinishOrder()}
+                style={styles.footerActionButton}
+              />
             )}
 
             {has('canDeleteOrders') && canEdit() && (
-              <Pressable
+              <Button
+                title={t('order_details_delete')}
+                variant="destructive"
                 onPress={() => setDeleteModalVisible(true)}
-                style={({ pressed }) => [
-                  styles.appButton,
-                  styles.btnDestructive,
-                  { marginTop: 12 },
-                  pressed && { opacity: 0.9 },
-                ]}
-              >
-                <Text style={[styles.appButtonText, styles.btnDestructiveText]}>
-                  {t('order_details_delete')}
-                </Text>
-              </Pressable>
+                style={styles.footerActionButton}
+              />
             )}
         </ScrollView>
       </View>
@@ -6114,33 +6102,8 @@ function createStyles(theme) {
       color: theme.colors.textSecondary,
       fontStyle: 'italic',
     },
-    finishButton: {
-      marginTop: sp.lg + 2 || 18,
-      backgroundColor: theme.colors.primary,
-      paddingVertical: sp.md || 14,
-      borderRadius: rad.md || 14,
-      alignItems: 'center',
-    },
-    finishButtonText: {
-      color: theme.colors.onPrimary,
-      fontSize: typo.sizes?.md || 16,
-      fontWeight: typo.weight?.bold || '700',
-    },
-    finishButtonDisabled: {
-      backgroundColor: theme.colors.primaryDisabled || theme.colors.primary,
-      opacity: 0.6,
-    },
-    appButton: {
-      paddingVertical: sp.md || 12,
-      paddingHorizontal: sp.lg || 16,
-      borderRadius: rad.lg || 12,
-      alignItems: 'center',
-    },
-    appButtonText: { fontSize: typo.sizes?.md || 16 },
-    btnDestructive: { backgroundColor: theme.colors.danger },
-    btnDestructiveText: {
-      color: theme.colors.onPrimary,
-      fontWeight: typo.weight?.bold || '700',
+    footerActionButton: {
+      marginTop: theme.components.button.groupGap,
     },
     modalContainer: {
       backgroundColor: theme.colors.surface,

@@ -3,16 +3,17 @@ import { Animated, StyleSheet } from 'react-native';
 import { useTheme } from './ThemeProvider';
 
 export function useCapsuleFeedback(opts = {}) {
-  const {
-    scaleIn = 0.98,
-    tintTo = 0.12,
-    inDuration = 80,
-    outDuration = 140,
-    spring = { speed: 20, bounciness: 8 },
-    disabled = false,
-  } = opts;
-
   const { theme } = useTheme();
+  const interactive = theme.components?.interactive || {};
+  const scaleIn = opts.scaleIn ?? interactive.pressedScale ?? 0.98;
+  const tintTo = opts.tintTo ?? interactive.pressedTint ?? 0.12;
+  const inDuration = opts.inDuration ?? interactive.pressInDuration ?? 80;
+  const outDuration = opts.outDuration ?? interactive.pressOutDuration ?? 140;
+  const spring = React.useMemo(
+    () => opts.spring ?? { speed: 20, bounciness: 8 },
+    [opts.spring],
+  );
+  const disabled = opts.disabled ?? false;
   const scale = React.useRef(new Animated.Value(1)).current;
   const tint = React.useRef(new Animated.Value(0)).current;
 
@@ -32,8 +33,11 @@ export function useCapsuleFeedback(opts = {}) {
   }, [outDuration, scale, spring, tint]);
 
   const containerStyle = React.useMemo(
-    () => [{ transform: [{ scale }] }, disabled && { opacity: 0.5 }],
-    [disabled, scale],
+    () => [
+      { transform: [{ scale }] },
+      disabled && { opacity: interactive.disabledOpacity ?? 0.5 },
+    ],
+    [disabled, interactive.disabledOpacity, scale],
   );
 
   const overlayStyle = React.useMemo(

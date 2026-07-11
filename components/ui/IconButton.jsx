@@ -27,7 +27,7 @@ export default function IconButton({
   variant = 'secondary',
   disabled,
   children,
-  hitSlop = { top: 8, bottom: 8, left: 8, right: 8 },
+  hitSlop,
   accessibilityLabel,
 }) {
   const { theme } = useTheme();
@@ -89,8 +89,8 @@ export default function IconButton({
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
     Animated.timing(scale, {
-      toValue: 0.94,
-      duration: 80,
+      toValue: iconTokens.pressedScale ?? 0.94,
+      duration: iconTokens.pressInDuration ?? 80,
       easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     }).start();
@@ -197,7 +197,7 @@ export default function IconButton({
   return (
     <Pressable
       onPress={handlePress}
-      hitSlop={hitSlop}
+      hitSlop={hitSlop ?? iconTokens.hitSlop ?? 8}
       delayPressIn={0}
       disabled={disabled}
       onPressIn={onPressIn}
@@ -238,7 +238,7 @@ const styles = (t, p, size, radiusPx, disabled) =>
       overflow: 'hidden',
       minWidth: size,
       height: size,
-      paddingHorizontal: 6,
+      paddingHorizontal: t.components?.iconButton?.contentPaddingX ?? 6,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: disabled
@@ -249,6 +249,7 @@ const styles = (t, p, size, radiusPx, disabled) =>
       borderRadius: radiusPx,
       borderWidth: p.border === 'transparent' ? 0 : 1,
       borderColor: p.border,
+      opacity: disabled ? t.components?.iconButton?.disabledOpacity ?? 0.5 : 1,
       ...(p.bg === t.colors.surface || p.bg === (t.colors.button?.secondaryBg ?? '')
         ? Platform.OS === 'ios'
           ? t.shadows.card.ios

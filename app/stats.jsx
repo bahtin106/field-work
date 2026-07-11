@@ -17,6 +17,7 @@ import { Calendar } from 'react-native-calendars';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AppHeader from '../components/navigation/AppHeader';
+import Button from '../components/ui/Button';
 import {
   ThemedRefreshControl,
   useManagedRefresh,
@@ -443,36 +444,8 @@ function StatsScreenContent() {
         modalActions: {
           flexDirection: 'row',
           padding: ui.screenPadding,
-          gap: ui.cardGap,
+          gap: theme.components.button.groupGap,
         },
-        actionButton: {
-          flex: 1,
-          paddingVertical: ui.sectionGap,
-          borderRadius: ui.controlRadius,
-          alignItems: 'center',
-        },
-        primaryAction: {
-          backgroundColor: TOK.PRIMARY,
-        },
-        secondaryAction: {
-          backgroundColor: TOK.SURFACE,
-          borderWidth: 1,
-          borderColor: TOK.OUTLINE,
-        },
-        actionText: {
-          fontSize: ui.bodySize,
-          fontWeight: '600',
-        },
-        primaryActionText: {
-          color: TOK.ON_PRIMARY,
-        },
-        secondaryActionText: {
-          color: TOK.TEXT,
-        },
-        disabledAction: {
-          opacity: 0.5,
-        },
-
         // Empty State
         emptyState: {
           alignItems: 'center',
@@ -1100,23 +1073,16 @@ function StatsScreenContent() {
           </View>
 
           <View style={styles.modalActions}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.secondaryAction]}
-              onPress={closeCustomPeriod}
-            >
-              <Text style={[styles.actionText, styles.secondaryActionText]}>{t('btn_cancel')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                styles.primaryAction,
-                !(rangeStart && rangeEnd) && styles.disabledAction,
-              ]}
-              onPress={applyCustomPeriod}
-              disabled={!(rangeStart && rangeEnd)}
-            >
-              <Text style={[styles.actionText, styles.primaryActionText]}>{t('btn_apply')}</Text>
-            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Button title={t('btn_cancel')} variant="secondary" onPress={closeCustomPeriod} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button
+                title={t('btn_apply')}
+                onPress={applyCustomPeriod}
+                disabled={!(rangeStart && rangeEnd)}
+              />
+            </View>
           </View>
         </SafeAreaView>
       </AnimatedFullscreenModal>

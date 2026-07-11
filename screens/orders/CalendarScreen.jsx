@@ -41,6 +41,7 @@ import { CalendarMonthHeader } from '../../components/calendar/CalendarMonthHead
 import { CalendarWeekRow } from '../../components/calendar/CalendarWeekRow';
 import YearView from '../../components/calendar/YearView';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
+import FilterBarButton from '../../components/filters/FilterBarButton';
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import { useAuth } from '../../components/hooks/useAuth';
 import Screen from '../../components/layout/Screen';
@@ -1184,32 +1185,24 @@ function CalendarScreenContent() {
           borderRadius: theme.radii.pill,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: 'transparent',
+          backgroundColor:
+            theme.components?.segmented?.inactiveBg ??
+            theme.colors.button?.secondaryBg ??
+            theme.colors.surface,
         },
         scopePillActive: {
-          backgroundColor: theme.colors.primary,
+          backgroundColor: theme.components?.segmented?.activeBg ?? theme.colors.primary,
         },
         scopeText: {
           fontSize: theme.typography.sizes.xs,
-          color: theme.colors.textSecondary || theme.colors.text,
+          color:
+            theme.components?.segmented?.inactiveFg ??
+            theme.colors.textSecondary ??
+            theme.colors.text,
         },
         scopeTextActive: {
-          color: theme.colors.onPrimary,
+          color: theme.components?.segmented?.activeFg ?? theme.colors.onPrimary,
           fontWeight: theme.typography.weight.semibold,
-        },
-        filterButton: {
-          width: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
-          height: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
-          borderRadius: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE / 2,
-          borderWidth: CALENDAR_UI.BORDER_WIDTH,
-          borderColor: theme.colors.border,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: theme.colors.surface,
-        },
-        filterButtonActive: {
-          borderColor: theme.colors.primary,
-          backgroundColor: withAlpha(theme.colors.primary, CALENDAR_UI.ACTIVE_BG_ALPHA),
         },
         resetFilterButton: {
           width: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
@@ -2386,15 +2379,14 @@ function CalendarScreenContent() {
             );
           })}
         </View>
-        <Pressable
+        <FilterBarButton
+          type="filter"
+          active={hasEmployeeFilter}
+          size={CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE}
+          iconSize={clearIconSize}
           onPress={() => setExecutorModalVisible(true)}
-          android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-          style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
-          accessibilityRole="button"
           accessibilityLabel={t('common_filter')}
-        >
-          <Feather name="sliders" size={filterIconSize} color={theme.colors.text} />
-        </Pressable>
+        />
         {hasEmployeeFilter ? (
           <Pressable
             onPress={onResetCalendarFilters}
@@ -2414,8 +2406,6 @@ function CalendarScreenContent() {
     onResetCalendarFilters,
     onScopeChange,
     scopeOptions,
-    styles.filterButton,
-    styles.filterButtonActive,
     styles.ordersHeaderActions,
     styles.resetFilterButton,
     styles.scopePill,
@@ -2427,7 +2417,6 @@ function CalendarScreenContent() {
     theme.colors.border,
     theme.colors.overlayNavBar,
     theme.colors.ripple,
-    theme.colors.text,
     theme.colors.textSecondary,
     theme.icons.sm,
   ]);

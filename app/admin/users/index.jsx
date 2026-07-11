@@ -4,6 +4,7 @@ import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
+import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import { ADMIN_PAGE_SIZE } from '../../../constants/admin';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
@@ -64,9 +65,12 @@ export default function AdminUsersScreen() {
           <Card style={styles(theme).card}>
             <Text style={styles(theme).title}>{t('admin_error_title')}</Text>
             <Text style={styles(theme).muted}>{String(error?.message || t('admin_unknown_error'))}</Text>
-            <Pressable onPress={() => refetch()} style={styles(theme).retryBtn}>
-              <Text style={styles(theme).retryText}>{t('btn_retry')}</Text>
-            </Pressable>
+            <Button
+              title={t('btn_retry')}
+              size="sm"
+              onPress={() => refetch()}
+              containerStyle={styles(theme).retryButtonContainer}
+            />
           </Card>
         ) : null}
 
@@ -130,17 +134,9 @@ const styles = (theme) =>
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
     },
-    retryBtn: {
+    retryButtonContainer: {
       marginTop: theme.spacing.sm,
       alignSelf: 'flex-start',
-      paddingHorizontal: theme.spacing.sm,
-      paddingVertical: theme.spacing.xs,
-      borderRadius: theme.radii.sm,
-      backgroundColor: theme.colors.primary,
-    },
-    retryText: {
-      color: theme.colors.onPrimary,
-      fontWeight: theme.typography.weight.medium,
     },
     row: {
       minHeight: theme.components.row.minHeight + theme.spacing.lg,
