@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
-import { ActivityIndicator, InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../lib/personName';
 import { fetchCompanyOrderStatuses, getOrderStatusesQueryKey } from '../lib/orderStatuses';
@@ -19,10 +19,10 @@ import {
   primeProfileMediaResolution,
 } from '../src/features/profileMedia/api';
 import { listRequests } from '../src/features/requests/api';
-import { prefetchExecutorNames, seedExecutorNames } from '../src/features/requests/executorNameCache';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 import { markFirstContent, markScreenMount, measureNetwork } from '../src/shared/perf/devMetrics';
+import { scheduleUiIdleTask } from '../src/shared/perf/uiIdleTask';
 import { queryKeys } from '../src/shared/query/queryKeys';
 import { queryClient as appQueryClient } from '../src/shared/query/queryClient';
 import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
@@ -61,11 +61,13 @@ const HOME_ROUTES = {
   calendar: '/orders/calendar',
 };
 
-let homeCriticalWarmupStarted = false;
 let homeAdminWarmupStarted = false;
 let homeCalendarWarmupStarted = false;
 let homePrimaryWarmupStarted = false;
-let homeSecondaryWarmupStarted = false;
+let homeCreateOrderWarmupStarted = false;
+let homeAppSettingsWarmupStarted = false;
+let homeCompanySettingsWarmupStarted = false;
+let homeBillingWarmupStarted = false;
 const homeMyOrdersPrefetchStartedByScope = new Set();
 
 function warmLazyRoute(cacheKey, load) {
@@ -78,18 +80,27 @@ function warmHomePrimaryRoutes() {
   warmLazyRoute('routes.orders/my-orders', () => import('../screens/orders/MyOrdersScreen'));
 }
 
-function warmHomeSecondaryRoutes() {
-  if (homeSecondaryWarmupStarted) return;
-  homeSecondaryWarmupStarted = true;
-  warmLazyRoute('routes.orders/calendar', () => import('../screens/orders/CalendarScreen'));
+function warmHomeCreateOrderRoute() {
+  if (homeCreateOrderWarmupStarted) return;
+  homeCreateOrderWarmupStarted = true;
   warmLazyRoute('routes.orders/create-order', () => import('../screens/orders/CreateOrderScreen'));
 }
 
-function warmHomeCriticalRoutes() {
-  if (homeCriticalWarmupStarted) return;
-  homeCriticalWarmupStarted = true;
+function warmHomeAppSettingsRoute() {
+  if (homeAppSettingsWarmupStarted) return;
+  homeAppSettingsWarmupStarted = true;
   warmLazyRoute('routes.app_settings/AppSettings', () => import('../screens/app_settings/AppSettingsScreen'));
+}
+
+function warmHomeCompanySettingsRoute() {
+  if (homeCompanySettingsWarmupStarted) return;
+  homeCompanySettingsWarmupStarted = true;
   warmLazyRoute('company_settings_title', () => import('../screens/company_settings/CompanySettingsScreen'));
+}
+
+function warmHomeBillingRoute() {
+  if (homeBillingWarmupStarted) return;
+  homeBillingWarmupStarted = true;
   warmLazyRoute('routes.billing/index', () => import('../screens/billing/BillingScreen'));
 }
 
@@ -103,6 +114,15 @@ function warmHomeAdminRoute() {
   if (homeAdminWarmupStarted) return;
   homeAdminWarmupStarted = true;
   import('../app/admin/index').catch(() => {});
+}
+
+function warmHomeRoute(route) {
+  if (route === HOME_ROUTES.appSettings) warmHomeAppSettingsRoute();
+  else if (route === HOME_ROUTES.companySettings) warmHomeCompanySettingsRoute();
+  else if (route === HOME_ROUTES.billing) warmHomeBillingRoute();
+  else if (route === HOME_ROUTES.createOrder) warmHomeCreateOrderRoute();
+  else if (route === HOME_ROUTES.calendar) warmHomeCalendarRoute();
+  else if (route === HOME_ROUTES.admin) warmHomeAdminRoute();
 }
 
 function isUuid(s) {
@@ -268,6 +288,7 @@ function HomeWarningCard({
   body,
   cta,
   onPress,
+  onPressIn,
 }) {
   return (
     <Card style={styles.subscriptionWarningCard}>
@@ -286,6 +307,7 @@ function HomeWarningCard({
       </View>
       <Pressable
         onPress={onPress}
+        onPressIn={onPressIn}
         unstable_pressDelay={0}
         android_ripple={{ color: theme.colors.ripple, borderless: false }}
         style={({ pressed }) => [styles.subscriptionWarningLinkRow, pressed && styles.rowPressed]}
@@ -698,45 +720,22 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   useEffect(() => {
     if (!uid || !currentProfile?.id) return undefined;
-    const timers = [];
-    const tasks = [];
-    const scheduleWarmup = (delayMs, fn) => {
-      const timer = setTimeout(() => {
-        const task = InteractionManager.runAfterInteractions(fn);
-        tasks.push(task);
-      }, delayMs);
-      timers.push(timer);
-    };
-
-    scheduleWarmup(1800, () => {
-      warmHomePrimaryRoutes();
-    });
-    scheduleWarmup(5200, () => {
-      warmHomeSecondaryRoutes();
-      warmHomeCalendarRoute();
-    });
-    scheduleWarmup(9000, () => {
-      warmHomeCriticalRoutes();
-      if (isSuperAdmin) warmHomeAdminRoute();
-      if (typeof router?.prefetch !== 'function') return;
-      const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings, HOME_ROUTES.calendar];
-      if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
-      routesToPrefetch.forEach((route) => {
-        try {
-          router.prefetch(route);
-        } catch {}
-      });
-    });
+    const cancelTasks = [
+      scheduleUiIdleTask(warmHomePrimaryRoutes, { delayMs: 400 }),
+      scheduleUiIdleTask(warmHomeCalendarRoute, { delayMs: 3200 }),
+      scheduleUiIdleTask(warmHomeCreateOrderRoute, { delayMs: 6000 }),
+      scheduleUiIdleTask(warmHomeAppSettingsRoute, { delayMs: 9000 }),
+      scheduleUiIdleTask(warmHomeCompanySettingsRoute, { delayMs: 12000 }),
+      scheduleUiIdleTask(warmHomeBillingRoute, { delayMs: 15000 }),
+    ];
+    if (isSuperAdmin) {
+      cancelTasks.push(scheduleUiIdleTask(warmHomeAdminRoute, { delayMs: 18000 }));
+    }
 
     return () => {
-      timers.forEach((timer) => clearTimeout(timer));
-      tasks.forEach((task) => {
-        try {
-          task.cancel?.();
-        } catch {}
-      });
+      cancelTasks.forEach((cancel) => cancel());
     };
-  }, [currentProfile?.id, isSuperAdmin, router, uid]);
+  }, [currentProfile?.id, isSuperAdmin, uid]);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -977,45 +976,34 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     if (homeMyOrdersPrefetchStartedByScope.has(scopeKey)) return undefined;
     homeMyOrdersPrefetchStartedByScope.add(scopeKey);
 
-    let task = null;
-    const timer = setTimeout(() => {
+    const cancelPrefetch = scheduleUiIdleTask(() => {
       if (!getOfflineSnapshot().isOnline) {
         homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
         return;
       }
-      task = InteractionManager.runAfterInteractions(() => {
-        measureNetwork('home.myOrders.prefetch', () =>
-          listRequests({
-            scope: 'my',
-            page: 1,
-            pageSize: HOME_MY_ORDERS_PREFETCH_PAGE_SIZE,
-            userId: uid,
-          }),
-        )
-          .then((rows) => {
-            const page = Array.isArray(rows) ? rows : [];
-            qc.setQueryData(buildHomeMyOrdersRecentQueryKey(scopeKey), page);
-            qc.setQueryData(queryKeys.requests.my({}), {
-              pages: [page],
-              pageParams: [1],
-            });
-            seedExecutorNames(page);
-            const executorIds = Array.from(
-              new Set(page.map((row) => String(row?.assigned_to || '').trim()).filter(Boolean)),
-            ).slice(0, 80);
-            prefetchExecutorNames(executorIds).catch(() => {});
-          })
-          .catch(() => {
-            homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
+      measureNetwork('home.myOrders.prefetch', () =>
+        listRequests({
+          scope: 'my',
+          page: 1,
+          pageSize: HOME_MY_ORDERS_PREFETCH_PAGE_SIZE,
+          userId: uid,
+        }),
+      )
+        .then((rows) => {
+          const page = Array.isArray(rows) ? rows : [];
+          qc.setQueryData(buildHomeMyOrdersRecentQueryKey(scopeKey), page);
+          qc.setQueryData(queryKeys.requests.my({}), {
+            pages: [page],
+            pageParams: [1],
           });
-      });
-    }, 650);
+        })
+        .catch(() => {
+          homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
+        });
+    }, { delayMs: 900, idleTimeoutMs: 1800 });
 
     return () => {
-      clearTimeout(timer);
-      try {
-        task?.cancel?.();
-      } catch {}
+      cancelPrefetch();
     };
   }, [companyId, homeCriticalReady, qc, uid]);
 
@@ -1135,6 +1123,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           body={t('home_subscription_expired_body')}
           cta={t('home_subscription_expired_cta')}
           onPress={openBilling}
+          onPressIn={() => warmHomeRoute(HOME_ROUTES.billing)}
         />
       ) : null}
 
@@ -1160,6 +1149,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             <Pressable
               key={item.key}
               onPress={item.onPress}
+              onPressIn={() => warmHomeRoute(item.route)}
               unstable_pressDelay={0}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
@@ -1237,7 +1227,11 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       ) : null}
       {canCreateOrders && (
         <View style={styles.actionWrapper}>
-          <Button title={t('home_btn_create_order')} onPress={openCreateOrder} />
+          <Button
+            title={t('home_btn_create_order')}
+            onPress={openCreateOrder}
+            onPressIn={warmHomeCreateOrderRoute}
+          />
         </View>
       )}
 

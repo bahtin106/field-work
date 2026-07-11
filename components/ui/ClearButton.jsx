@@ -1,5 +1,5 @@
 // components/ui/ClearButton.jsx
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import React from 'react';
 import { Animated, Pressable, StyleSheet } from 'react-native';
 import { useTranslation } from '../../src/i18n/useTranslation';

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 
 import FilterBarButton from './FilterBarButton';
 import TextField from '../ui/TextField';

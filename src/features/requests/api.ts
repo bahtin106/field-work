@@ -3,7 +3,12 @@ import { getOrderIdsByWorkTypes, getStatusDbAliases, mapStatusToDb } from '../..
 import { formatPersonName } from '../../../lib/personName';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { applyOrderSortToQuery, ORDER_DEFAULT_SORT_KEY } from '../orders/orderSort';
-import { enrichOrdersWithExecutorNames } from './executorNameCache';
+import {
+  enrichOrdersWithExecutorNames,
+  prefetchExecutorNames,
+  readOrderExecutorName,
+  seedExecutorNames,
+} from './executorNameCache';
 import {
   buildOrderAddressNavigatorQuery,
   buildOrderAddressShort,
@@ -18,6 +23,20 @@ import { getMyCompanyId } from '../profile/api';
 const DEFAULT_PAGE_SIZE = 20;
 const SECURE_ORDER_SELECT_COLUMNS = '*';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function warmExecutorNames(rows: any[] = []) {
+  seedExecutorNames(rows);
+  const missingIds = Array.from(
+    new Set(
+      rows
+        .filter((row) => !readOrderExecutorName(row))
+        .map((row) => String(row?.assigned_to || '').trim())
+        .filter(Boolean),
+    ),
+  );
+  if (missingIds.length) prefetchExecutorNames(missingIds).catch(() => {});
+  return rows;
+}
 
 function isAuthSessionMissing(error: any) {
   const name = String(error?.name || '').toLowerCase();
@@ -316,7 +335,7 @@ export async function listRequests(params: any = {}) {
 
     const { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
     if (error) throw error;
-    return enrichOrdersWithExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
+    return warmExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
   });
 }
 
@@ -413,7 +432,7 @@ export async function listCalendarRequests({
     const { data, error } = await query;
     if (error) throw error;
 
-    const rows = await enrichOrdersWithExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
+    const rows = warmExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
     if (normalizedScope === 'my' && userId) return rows.filter((row) => row.assigned_to === userId);
 
     return rows;

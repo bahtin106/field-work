@@ -1,5 +1,5 @@
 // components/calendar/CalendarMonthHeader.jsx
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { format } from 'date-fns';
 import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';

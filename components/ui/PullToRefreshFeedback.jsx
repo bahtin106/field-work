@@ -1,4 +1,4 @@
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import NetInfo from '@react-native-community/netinfo';
 import React from 'react';
 import { Animated, Easing, Platform, RefreshControl, StyleSheet, View } from 'react-native';

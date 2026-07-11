@@ -28,7 +28,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, FlatList, Platform, StyleSheet } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { useTheme } from '../../../theme';
 import BaseModal from './BaseModal';
 import ModalActionsRow from './ModalActionsRow';

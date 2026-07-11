@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { useNavigation } from 'expo-router';
 import { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import Screen from '../../../components/layout/Screen';

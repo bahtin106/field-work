@@ -2,7 +2,7 @@ import React from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Linking } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import AdditionalPhoneInputRow from '../clients/AdditionalPhoneInputRow';
 import Button from '../ui/Button';
 import ClearButton from '../ui/ClearButton';

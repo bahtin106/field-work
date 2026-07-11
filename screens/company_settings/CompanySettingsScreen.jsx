@@ -26,7 +26,7 @@ import { EXCHANGE_RATE_ENDPOINTS } from '../../config/externalUrls';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
 import { normalizeCompanyName, validateCompanyName } from '../../lib/companyName';

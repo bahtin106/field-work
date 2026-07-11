@@ -1,7 +1,7 @@
 // components/ui/IconButton.jsx
 import React, { useEffect, useRef } from 'react';
 import { Pressable, Animated, StyleSheet, Platform, Easing } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';

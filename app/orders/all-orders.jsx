@@ -1,4 +1,4 @@
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
@@ -98,7 +98,7 @@ const ALL_ORDERS_SCREEN_KEY = 'AllRequests';
 const ALL_ORDERS_RENDER_WARN_THRESHOLD = 30;
 const ALL_ORDERS_FPS_PROBE_MS = 3500;
 const ALL_ORDERS_NAV_LOCK_MS = 1200;
-const ALL_ORDERS_DETAIL_PREFETCH_LIMIT = 6;
+const ALL_ORDERS_DETAIL_PREFETCH_LIMIT = 2;
 const ALL_ORDERS_VIEWABILITY_PREFETCH_TTL_MS = 2500;
 const ALL_ORDERS_FEED_PREVIEW_SIZE = 20;
 const ALL_ORDERS_FEED_PREFETCH_DELAY_MS = 350;
@@ -1663,7 +1663,7 @@ function AllOrdersContent() {
     () => (Number.isFinite(feedTotalCount) ? { feed: feedTotalCount } : null),
     [feedTotalCount],
   );
-  const ordersFacetCounts = useOrderFacetCounts(orders, panelStatusOptions, {
+  const ordersFacetCounts = useOrderFacetCounts(filteredOrders, panelStatusOptions, {
     isStatusNarrowed: effectiveStatusFilter !== 'all',
     scopeKey: String(companyId || profile?.company_id || 'no-company'),
     statusOverrides: allOrdersFeedFacetOverride,

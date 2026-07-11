@@ -21,7 +21,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { applyAndroidNavigationBar, applyAndroidSystemBars } from '../../../lib/systemBars';
 import { t as T } from '../../../src/i18n';
 import { useToast } from '../ToastProvider';

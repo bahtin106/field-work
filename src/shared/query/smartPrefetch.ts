@@ -1,4 +1,3 @@
-import { InteractionManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { QueryClient } from '@tanstack/react-query';
 import { fetchWorkTypes } from '../../../lib/workTypes';
@@ -9,8 +8,9 @@ import { queryKeys } from './queryKeys';
 import { getRequestById, listRequests, listRequestExecutors } from '../../features/requests/api';
 import { prefetchExecutorNames, seedExecutorNames } from '../../features/requests/executorNameCache';
 import { markRequestDetailLoaded } from '../../features/requests/queries';
+import { scheduleUiIdleTask } from '../perf/uiIdleTask';
 
-const SMART_PREFETCH_PAGE_SIZE = 80;
+const SMART_PREFETCH_PAGE_SIZE = 30;
 const SMART_PREFETCH_PROFILE_KEY = 'app.smartPrefetch.profile.v1';
 const SMART_PREFETCH_RECENT_CACHE_MAX_AGE_MS = 60 * 1000;
 
@@ -24,6 +24,7 @@ const PROFILE_CONFIG: Record<
     includeExecutors: boolean;
     allRequestsDelayMs: number;
     executorsDelayMs: number;
+    detailCount: number;
   }
 > = {
   lite: {
@@ -32,6 +33,7 @@ const PROFILE_CONFIG: Record<
     includeExecutors: false,
     allRequestsDelayMs: 0,
     executorsDelayMs: 0,
+    detailCount: 0,
   },
   balanced: {
     cooldownMs: 5 * 60 * 1000,
@@ -39,6 +41,7 @@ const PROFILE_CONFIG: Record<
     includeExecutors: true,
     allRequestsDelayMs: 180,
     executorsDelayMs: 180,
+    detailCount: 2,
   },
   aggressive: {
     cooldownMs: 2 * 60 * 1000,
@@ -46,6 +49,7 @@ const PROFILE_CONFIG: Record<
     includeExecutors: true,
     allRequestsDelayMs: 100,
     executorsDelayMs: 100,
+    detailCount: 4,
   },
 };
 
@@ -190,7 +194,7 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
 
     const myRows = await prefetchRequestList(queryClient, 'my', authScopeKey, runGeneration);
     await Promise.allSettled(
-      myRows.slice(0, 8).map((row: any) =>
+      myRows.slice(0, cfg.detailCount).map((row: any) =>
         row?.id
           ? queryClient.prefetchQuery({
               queryKey: queryKeys.requests.detail(row.id),
@@ -239,12 +243,7 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
 }
 
 export function scheduleSmartPrefetch(queryClient: QueryClient) {
-  const task = InteractionManager.runAfterInteractions(() => {
+  return scheduleUiIdleTask(() => {
     runSmartPrefetch(queryClient).catch(() => {});
-  });
-  return () => {
-    try {
-      task?.cancel?.();
-    } catch {}
-  };
+  }, { idleTimeoutMs: 2000 });
 }

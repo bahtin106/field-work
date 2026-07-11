@@ -18,6 +18,7 @@ const DEFAULT_QUERY_STALE_MS = 60 * 1000;
 const HOT_REQUEST_LIST_STALE_MS = 60 * 1000;
 const DEFAULT_QUERY_GC_MS = PERSIST_MAX_AGE_MS;
 const DEFAULT_MAX_RETRIES = 2;
+const PERSIST_THROTTLE_MS = 5000;
 
 function getErrorStatus(error: any): number | null {
   const status = Number(error?.status || error?.statusCode || error?.response?.status);
@@ -218,7 +219,12 @@ queryClient.setQueryDefaults(['userRole'], { retry: 1, gcTime: PERSIST_MAX_AGE_M
 queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: PERSIST_MAX_AGE_MS });
 queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: PERSIST_MAX_AGE_MS });
 
-export const persister = createAsyncStoragePersister({ storage: AsyncStorage });
+// Cache dehydration serializes on the JS thread. Batch bursts of updates so
+// offline durability cannot interrupt taps and navigation every second.
+export const persister = createAsyncStoragePersister({
+  storage: AsyncStorage,
+  throttleTime: PERSIST_THROTTLE_MS,
+});
 
 let listenersConfigured = false;
 let maintenanceTimer: ReturnType<typeof setInterval> | null = null;
@@ -360,6 +366,27 @@ export function configureQueryEnvironment() {
   startCacheMaintenance();
 }
 
+const serializedSizeCache = new WeakMap<object, number>();
+
+function isPersistableSize(data: unknown, maxBytes: number) {
+  if (data && typeof data === 'object') {
+    const cached = serializedSizeCache.get(data as object);
+    if (cached != null) return cached <= maxBytes;
+    try {
+      const size = JSON.stringify(data).length;
+      serializedSizeCache.set(data as object, size);
+      return size <= maxBytes;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    return JSON.stringify(data).length <= maxBytes;
+  } catch {
+    return false;
+  }
+}
+
 export const persistOptions = {
   persister,
   buster: 'offline-v2-auth-scoped-2026-06-03',
@@ -381,32 +408,17 @@ export const persistOptions = {
         return false;
       }
       if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar')) {
-        try {
-          const serialized = JSON.stringify(q.state.data);
-          return serialized.length <= HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
-        } catch {
-          return false;
-        }
+        return isPersistableSize(q.state.data, HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES);
       }
       if (key0 === 'orders' && (key1 === 'my' || key1 === 'all') && Array.isArray(q.queryKey) && q.queryKey[2] === 'recent') {
-        try {
-          const serialized = JSON.stringify(q.state.data);
-          return serialized.length <= HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
-        } catch {
-          return false;
-        }
+        return isPersistableSize(q.state.data, HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES);
       }
       if (
         (key0 === 'clients' && key1 === 'list') ||
         (key0 === 'objects' && (key1 === 'by-company' || key1 === 'by-client')) ||
         (key0 === 'employees' && key1 === 'list')
       ) {
-        try {
-          const serialized = JSON.stringify(q.state.data);
-          return serialized.length <= HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
-        } catch {
-          return false;
-        }
+        return isPersistableSize(q.state.data, HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES);
       }
       return isDurableOfflineQuery(q.queryKey);
     },

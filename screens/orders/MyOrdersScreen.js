@@ -1,6 +1,6 @@
 import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -121,9 +121,7 @@ const MY_ORDERS_FEED_PREFETCH_DELAY_MS = 350;
 const MY_ORDERS_FEED_PULSE_DURATION_MS = 1200;
 const MY_ORDERS_FEED_INDICATOR_CACHE_KEY = 'feed.indicator.v1';
 const MY_ORDERS_EXECUTOR_PREFETCH_LIMIT = 80;
-const MY_ORDERS_DETAIL_PREFETCH_LIMIT = 5;
-const MY_ORDERS_DETAIL_PREFETCH_TTL_MS = 4000;
-const MY_ORDERS_VIEWABILITY_PREFETCH_LIMIT = 6;
+const MY_ORDERS_VIEWABILITY_PREFETCH_LIMIT = 2;
 const MY_ORDERS_VIEWABILITY_PREFETCH_TTL_MS = 2500;
 const MY_ORDERS_STATUS_ALWAYS_VISIBLE = Object.freeze(['feed', 'all']);
 const MY_ORDERS_STATUS_BAR_PADDING = 3;
@@ -614,14 +612,6 @@ function MyOrdersContent() {
         sort: normalizedSortKey,
       }),
     [filters.values, normalizedSortKey],
-  );
-  const defaultListFingerprint = useMemo(
-    () =>
-      JSON.stringify({
-        filters: normalizeForFingerprint(ORDER_FILTER_DEFAULTS),
-        sort: normalizedSortKey,
-      }),
-    [normalizedSortKey],
   );
   const hasSelectedWorkTypeFilters =
     Array.isArray(filters.values?.workTypes) && filters.values.workTypes.length > 0;
@@ -1366,7 +1356,6 @@ function MyOrdersContent() {
   });
   const feedPulse = useRef(new Animated.Value(0)).current;
   const detailNavLockRef = useRef({ id: '', ts: 0 });
-  const listPrefetchRef = useRef({ key: '', ts: 0 });
   const fetchNextOrdersPageRef = useRef(null);
   const viewabilityPrefetchRef = useRef({ key: '', ts: 0 });
   const feedMetaRequestSeqRef = useRef(0);
@@ -2001,107 +1990,16 @@ function MyOrdersContent() {
     return sortOrders(filteredOrders, normalizedSortKey);
   }, [filteredOrders, normalizedSortKey]);
 
-  const ordersFacetSource = useMemo(() => {
-    const statusKey = normalizeMyOrdersStatusFilter(effectiveFilter || 'all');
-    const exactCacheKey = makeCacheKey(statusKey, defaultListFingerprint, relationFingerprint);
-    const exactRows = listCacheMy[exactCacheKey];
-    const feedRows = Array.isArray(listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY])
-      ? listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY]
-      : [];
-
-    const mergeUniqueRows = (...collections) => {
-      const rowsById = new Map();
-      collections.forEach((rows) => {
-        (Array.isArray(rows) ? rows : []).forEach((row) => {
-          const id = String(row?.id || '').trim();
-          if (id) rowsById.set(id, row);
-        });
-      });
-      return [...rowsById.values()];
-    };
-
-    // The standard "all" query excludes feed rows by design. Facets, however,
-    // must show every available status, including the separately cached feed.
-    if (statusKey === 'all' && Array.isArray(exactRows)) {
-      return mergeUniqueRows(exactRows, feedRows);
-    }
-    if (Array.isArray(exactRows)) return exactRows;
-
-    if (statusKey === 'all' && recentOrdersCacheKeyRef.current === exactCacheKey) {
-      const recentRows = queryClient.getQueryData(recentOrdersQueryKey);
-      if (Array.isArray(recentRows)) return mergeUniqueRows(recentRows, feedRows);
-    }
-
-    if (statusKey === 'feed') {
-      if (feedRows.length) return feedRows;
-    }
-
-    const allCacheKey = makeCacheKey('all', defaultListFingerprint, relationFingerprint);
-    const allRows = Array.isArray(listCacheMy[allCacheKey])
-      ? listCacheMy[allCacheKey]
-      : recentOrdersCacheKeyRef.current === allCacheKey
-        ? queryClient.getQueryData(recentOrdersQueryKey)
-        : null;
-
-    if (Array.isArray(allRows)) {
-      if (statusKey === 'all') return mergeUniqueRows(allRows, feedRows);
-      const normalizedStatusKey = normalizeOrderStatusFilterKey(statusKey);
-      return allRows.filter((order) => {
-        const rawStatus = String(order?.status || '').trim();
-        const mappedStatus = statusAliasToFilterKey.get(rawStatus) || normalizeOrderStatusFilterKey(rawStatus);
-        return mappedStatus === normalizedStatusKey;
-      });
-    }
-
-    return Array.isArray(orders) ? orders : [];
-  }, [
-    defaultListFingerprint,
-    effectiveFilter,
-    listCacheMy,
-    makeCacheKey,
-    orders,
-    queryClient,
-    recentOrdersQueryKey,
-    relationFingerprint,
-    statusAliasToFilterKey,
-  ]);
-
   const feedFacetOverride = useMemo(
     () => (Number.isFinite(feedTotalCount) ? { feed: feedTotalCount } : null),
     [feedTotalCount],
   );
-  const ordersFacetCounts = useOrderFacetCounts(ordersFacetSource, panelStatusOptions, {
+  const ordersFacetCounts = useOrderFacetCounts(filteredOrders, panelStatusOptions, {
     isStatusNarrowed: normalizeMyOrdersStatusFilter(effectiveFilter || 'all') !== 'all',
     scopeKey: cacheScopeKey,
     statusOverrides: feedFacetOverride,
   });
 
-  useEffect(() => {
-    if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
-    const idsKey = filteredOrders
-      .slice(0, MY_ORDERS_DETAIL_PREFETCH_LIMIT)
-      .map((o) => String(o?.id || ''))
-      .join('|');
-    const now = Date.now();
-    if (
-      listPrefetchRef.current.key === idsKey &&
-      now - listPrefetchRef.current.ts < MY_ORDERS_DETAIL_PREFETCH_TTL_MS
-    ) return;
-    listPrefetchRef.current = { key: idsKey, ts: now };
-    const task = InteractionManager.runAfterInteractions(() => {
-      const registry = getPrefetchRegistry();
-      filteredOrders.slice(0, MY_ORDERS_DETAIL_PREFETCH_LIMIT).forEach((order) => {
-        registry
-          .run(`request-detail:${order?.id}`, () => ensureRequestPrefetch(queryClient, order?.id))
-          .catch(() => {});
-      });
-    });
-    return () => {
-      try {
-        task.cancel?.();
-      } catch {}
-    };
-  }, [filteredOrders, isFocused, queryClient]);
   // List item renderer helpers
   const returnParamsRef = useRef({
     seedFilter: effectiveFilter,

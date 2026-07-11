@@ -799,7 +799,7 @@ function RootLayoutInner() {
       if (!active || initialNotificationCheckedRef.current) return;
       initialNotificationCheckedRef.current = true;
       setInitialNotificationCheckPending(false);
-    }, 1200);
+    }, 300);
 
     (async () => {
       try {

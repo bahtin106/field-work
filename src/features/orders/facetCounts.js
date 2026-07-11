@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { getStatusDbAliases, normalizeOrderStatusFilterKey } from '../../../lib/orderFilters';
 import { supabase } from '../../../lib/supabase';
 
@@ -60,38 +60,26 @@ export function buildOrderFacetCounts(orders, statusOptions) {
 }
 
 /**
- * Keeps known status facets when the visible request collection is narrowed
- * by a status. Other facets still follow the current collection.
+ * Facets are based only on the applied request collection. Draft changes in
+ * the filter panel do not affect them; values refresh after applying filters.
  */
 export function useOrderFacetCounts(
   orders,
   statusOptions,
-  { isStatusNarrowed = false, scopeKey = 'default', statusOverrides = null } = {},
+  { statusOverrides = null } = {},
 ) {
   const current = useMemo(
     () => buildOrderFacetCounts(orders, statusOptions),
     [orders, statusOptions],
   );
-  const retainedRef = useRef({ scopeKey: '', statuses: {} });
-
   return useMemo(() => {
-    const normalizedScopeKey = String(scopeKey || 'default');
     const validStatusIds = new Set(
       (Array.isArray(statusOptions) ? statusOptions : [])
         .map((option) => String(option?.id ?? option?.value ?? '').trim())
         .filter((id) => id && id !== 'all'),
     );
 
-    if (retainedRef.current.scopeKey !== normalizedScopeKey) {
-      retainedRef.current = { scopeKey: normalizedScopeKey, statuses: {} };
-    }
-
-    const retainedStatuses = Object.fromEntries(
-      Object.entries(retainedRef.current.statuses).filter(([id]) => validStatusIds.has(id)),
-    );
-    const nextStatuses = isStatusNarrowed
-      ? { ...retainedStatuses, ...current.statuses }
-      : { ...current.statuses };
+    const nextStatuses = { ...current.statuses };
 
     if (statusOverrides && typeof statusOverrides === 'object') {
       Object.entries(statusOverrides).forEach(([id, value]) => {
@@ -104,11 +92,10 @@ export function useOrderFacetCounts(
       if (!Number.isFinite(Number(nextStatuses[id]))) nextStatuses[id] = 0;
     });
 
-    retainedRef.current = { scopeKey: normalizedScopeKey, statuses: nextStatuses };
     const total = Object.values(nextStatuses).reduce(
       (sum, value) => sum + (Number.isFinite(Number(value)) ? Number(value) : 0),
       0,
     );
     return { ...current, total, statuses: nextStatuses };
-  }, [current, isStatusNarrowed, scopeKey, statusOptions, statusOverrides]);
+  }, [current, statusOptions, statusOverrides]);
 }

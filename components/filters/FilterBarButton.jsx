@@ -1,4 +1,5 @@
-import { Feather, MaterialIcons } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useMemo } from 'react';
 import { Keyboard, Pressable, StyleSheet } from 'react-native';
 

@@ -8,6 +8,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useToast } from '../ui/ToastProvider';
+import { scheduleUiIdleTask } from '../../src/shared/perf/uiIdleTask';
 
 // -------- helpers --------
 
@@ -18,12 +19,13 @@ const PATHS = {
   calendar: '/orders/calendar',
 };
 
-function TabButton({ label, active, onPress, colors, metrics }) {
+function TabButton({ label, active, onPress, onPressIn, colors, metrics }) {
   const accLabel = typeof label === 'string' ? label : String(label || 'Tab');
   return (
     <Pressable
       style={({ pressed }) => [styles.btn, pressed && styles.btnPressed]}
       onPress={onPress}
+      onPressIn={onPressIn}
       android_ripple={{ color: colors.ripple, borderless: false }}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
@@ -100,6 +102,23 @@ function BottomNavInner() {
       tabNavInFlightRef.current = false;
     }
   }, []);
+  const prefetchTab = React.useCallback((target) => {
+    if (!target) return;
+    try {
+      router.prefetch(target);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (roleLoading || !role) return undefined;
+    const cancellations = [];
+    if (showAllTab) {
+      cancellations.push(
+        scheduleUiIdleTask(() => prefetchTab(PATHS.all), { delayMs: 3600 }),
+      );
+    }
+    return () => cancellations.forEach((cancel) => cancel());
+  }, [prefetchTab, role, roleLoading, showAllTab]);
 
   // При изменении appReady на false (логаут/новый логин) - скрываем бар
   useEffect(() => {
@@ -199,6 +218,7 @@ function BottomNavInner() {
           onPress={() => {
             if (activeKey !== 'home') navigateTab(PATHS.home);
           }}
+          onPressIn={() => prefetchTab(PATHS.home)}
           colors={colors}
           metrics={metrics}
         />
@@ -212,6 +232,7 @@ function BottomNavInner() {
               onPress={() => {
                 if (activeKey !== 'orders') navigateTab(PATHS.orders);
               }}
+              onPressIn={() => prefetchTab(PATHS.orders)}
               colors={colors}
               metrics={metrics}
             />
@@ -222,6 +243,7 @@ function BottomNavInner() {
               onPress={() => {
                 if (activeKey !== 'all') navigateTab(PATHS.all);
               }}
+              onPressIn={() => prefetchTab(PATHS.all)}
               colors={colors}
               metrics={metrics}
             />
@@ -234,6 +256,7 @@ function BottomNavInner() {
             onPress={() => {
               if (activeKey !== 'orders') navigateTab(PATHS.orders);
             }}
+            onPressIn={() => prefetchTab(PATHS.orders)}
             colors={colors}
             metrics={metrics}
           />
@@ -246,6 +269,7 @@ function BottomNavInner() {
           onPress={() => {
             if (activeKey !== 'calendar') navigateTab(PATHS.calendar);
           }}
+          onPressIn={() => prefetchTab(PATHS.calendar)}
           colors={colors}
           metrics={metrics}
         />

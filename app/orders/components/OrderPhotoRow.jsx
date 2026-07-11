@@ -6,7 +6,8 @@
 import { memo, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme } from '../../../theme';
 import CachedImage from '../../../components/ui/CachedImage';
 import SectionHeader from '../../../components/ui/SectionHeader';

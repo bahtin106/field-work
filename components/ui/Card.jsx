@@ -21,7 +21,7 @@ export default function Card({
   separated = false,
 }) {
   const { theme } = useTheme();
-  const s = styles(theme);
+  const s = React.useMemo(() => styles(theme), [theme]);
 
   // Normalize children so we can apply small UX rules locally:
   // If a card contains exactly one LabelValueRow (even nested inside fragments),

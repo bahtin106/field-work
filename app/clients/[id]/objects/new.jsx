@@ -1,6 +1,6 @@
 import React from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import AdditionalPhoneInputRow from '../../../../components/clients/AdditionalPhoneInputRow';

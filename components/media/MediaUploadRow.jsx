@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 
 import { listItemStyles } from '../ui/listItemStyles';
 import { useTheme } from '../../theme/ThemeProvider';

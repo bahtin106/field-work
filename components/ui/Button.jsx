@@ -1,5 +1,5 @@
 // components/ui/Button.jsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -30,6 +30,7 @@ export default function Button({
   accessibilityLabel,
   formSubmit = false,
   dismissKeyboardOnPress = false,
+  onPressIn: onPressInProp,
 }) {
   const { theme } = useTheme();
   const formContext = useFormAutoScrollContext();
@@ -37,7 +38,7 @@ export default function Button({
   const mountedRef = useRef(true);
   const pressLockedRef = useRef(false);
 
-  const buttonTokens = theme?.components?.button || {};
+  const buttonTokens = useMemo(() => theme?.components?.button || {}, [theme]);
 
   // Shared press feedback is driven by the same tokens for every button variant.
   const scale = useRef(new Animated.Value(1)).current;
@@ -54,6 +55,9 @@ export default function Button({
   }, []);
 
   const onPressIn = () => {
+    try {
+      onPressInProp?.();
+    } catch {}
     Animated.parallel([
       Animated.timing(scale, {
         toValue: buttonTokens.pressedScale ?? 0.97,
@@ -148,7 +152,10 @@ export default function Button({
   const sizes = sizesMap[size] || sizesMap.md;
   const spinnerColor = palette.fg;
 
-  const s = styles(theme, buttonTokens, palette, sizes, isDisabled);
+  const s = useMemo(
+    () => styles(theme, buttonTokens, palette, sizes, isDisabled),
+    [buttonTokens, isDisabled, palette, sizes, theme],
+  );
   const handlePress = () => {
     if (isDisabled || pressLockedRef.current) return;
     if (formSubmit) prepareFormSubmit(formContext);

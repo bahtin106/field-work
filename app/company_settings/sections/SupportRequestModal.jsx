@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { Dimensions } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import Feather from '@expo/vector-icons/Feather';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Button from '../../../components/ui/Button';
 import { useToast } from '../../../components/ui/ToastProvider';
