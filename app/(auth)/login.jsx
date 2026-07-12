@@ -3,18 +3,16 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 
 import Screen from '../../components/layout/Screen';
+import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import TextField from '../../components/ui/TextField';
@@ -42,6 +40,7 @@ function isValidEmail(value) {
 const createStyles = (theme) => {
   return StyleSheet.create({
     flex: { flex: 1 },
+    scrollContent: { flexGrow: 1 },
     container: {
       flex: 1,
       paddingHorizontal: theme.spacing.lg,
@@ -372,10 +371,9 @@ function LoginScreenContent() {
 
   return (
     <Screen background="background">
-      <KeyboardAvoidingView
+      <KeyboardAwareScrollView
         style={styles.flex}
-        enabled={Platform.OS === 'ios'}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        contentContainerStyle={styles.scrollContent}
       >
         {Platform.OS === 'web' ? (
           <View style={styles.container}>
@@ -476,7 +474,7 @@ function LoginScreenContent() {
             </View>
           </View>
         ) : (
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <DismissKeyboardArea style={styles.flex}>
             <View style={styles.container}>
               <View style={styles.content}>
                 <Text style={styles.title}>{t('login_title')}</Text>
@@ -574,9 +572,9 @@ function LoginScreenContent() {
                 </Text>
               </View>
             </View>
-          </TouchableWithoutFeedback>
+          </DismissKeyboardArea>
         )}
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
 
       <BaseModal
         visible={recoverModalVisible}
@@ -606,7 +604,7 @@ function LoginScreenContent() {
           </View>
         }
       >
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles.modalScroll}
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
@@ -628,7 +626,7 @@ function LoginScreenContent() {
               <Text style={styles.supportLinkText}>{t('login_recover_contact_support')}</Text>
             </Pressable>
           ) : null}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <BaseModal
@@ -663,7 +661,7 @@ function LoginScreenContent() {
           </View>
         }
       >
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles.modalScroll}
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
@@ -698,7 +696,7 @@ function LoginScreenContent() {
             editable={!supportSending}
           />
           <Text style={styles.modalCounter}>{`${String(supportMessage || '').length}/${SUPPORT_MESSAGE_MAX_LEN}`}</Text>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </BaseModal>
     </Screen>
   );

@@ -2,7 +2,7 @@
 import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Button from '../../components/ui/Button';
@@ -15,6 +15,7 @@ import { useFeedback } from '../../src/shared/feedback';
 import { getCardSurfaceStyle, useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 import { LEGAL_LINKS } from '../../config/externalUrls';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 
 const REGISTER_PENDING_KEY = 'register_pending_v1';
 const REGISTER_FINGERPRINT_KEY = 'register_client_fingerprint_v1';
@@ -145,7 +146,7 @@ export default function RegisterCodeScreen() {
       StyleSheet.create({
         safeArea: { flex: 1, backgroundColor: theme.colors.background },
         container: {
-          flex: 1,
+          flexGrow: 1,
           justifyContent: 'center',
           paddingHorizontal: theme.spacing.lg,
           paddingBottom: theme.spacing.xl,
@@ -592,8 +593,7 @@ export default function RegisterCodeScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <View style={styles.container}>
+      <KeyboardAwareScrollView contentContainerStyle={styles.container}>
           <View style={styles.card}>
           <View style={styles.iconWrap}>
             <Feather name="mail" size={30} color={theme.colors.primary} />
@@ -661,8 +661,7 @@ export default function RegisterCodeScreen() {
               <Text style={styles.loginLink}>{t('btn_login')}</Text>
             </Pressable>
           </View>
-        </View>
-      </TouchableWithoutFeedback>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }

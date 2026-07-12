@@ -2,7 +2,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
@@ -47,8 +48,8 @@ export default function AdminCompaniesScreen() {
   }
 
   return (
-    <Screen background="background">
-      <ScrollView
+    <Screen background="background" scroll={false}>
+      <KeyboardAwareScrollView
         contentContainerStyle={styles(theme).content}
         refreshControl={
           <RefreshControl
@@ -117,7 +118,7 @@ export default function AdminCompaniesScreen() {
             </Pressable>
           </Card>
         ))}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }

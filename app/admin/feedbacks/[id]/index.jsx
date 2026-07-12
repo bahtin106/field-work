@@ -7,18 +7,32 @@ import Button from '../../../../components/ui/Button';
 import Card from '../../../../components/ui/Card';
 import { useToast } from '../../../../components/ui/ToastProvider';
 import { ConfirmModal } from '../../../../components/ui/modals';
+import SelectModal from '../../../../components/ui/modals/SelectModal';
 import { useRequireSuperAdmin } from '../../../../hooks/useRequireSuperAdmin';
 import { resolveAppLocale } from '../../../../lib/localeFormatting';
 import { useAuthContext } from '../../../../providers/SimpleAuthProvider';
 import {
   deleteSupportRequest,
   getSupportRequestById,
-  markSupportRequestRead,
   SUPPORT_UNREAD_QUERY_KEY,
+  SUPPORT_STATUS,
+  SUPPORT_STATUS_VALUES,
+  updateSupportRequestStatus,
 } from '../../../../src/features/supportRequests/api';
 import { useTranslation } from '../../../../src/i18n/useTranslation';
 import { useTheme } from '../../../../theme/ThemeProvider';
 import FullscreenImageViewer from '../../../orders/components/FullscreenImageViewer';
+import { withAlpha } from '../../../../theme/colors';
+
+function getStatusMeta(t, theme, status) {
+  const map = {
+    [SUPPORT_STATUS.NEW]: { label: t('support_status_new'), color: theme.colors.primary },
+    [SUPPORT_STATUS.VIEWED]: { label: t('support_status_viewed'), color: theme.colors.textSecondary },
+    [SUPPORT_STATUS.IN_PROGRESS]: { label: t('support_status_in_progress'), color: theme.colors.warning || theme.colors.primary },
+    [SUPPORT_STATUS.COMPLETED]: { label: t('support_status_completed'), color: theme.colors.success || theme.colors.primary },
+  };
+  return map[status] || map[SUPPORT_STATUS.NEW];
+}
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -47,6 +61,25 @@ function LabelValue({ theme, label, value }) {
   );
 }
 
+function formatDevice(context) {
+  if (!context) return null;
+  const manufacturer = String(context.manufacturer || '').trim();
+  const model = String(context.model || '').trim();
+  const deviceName = String(context.deviceName || '').trim();
+  const technicalName = [manufacturer, model].filter(Boolean).join(' ');
+  if (deviceName && technicalName && !technicalName.toLowerCase().includes(deviceName.toLowerCase())) {
+    return `${deviceName} · ${technicalName}`;
+  }
+  return deviceName || technicalName || null;
+}
+
+function formatVersion(version, build) {
+  const normalizedVersion = String(version || '').trim();
+  const normalizedBuild = String(build || '').trim();
+  if (!normalizedVersion) return normalizedBuild || null;
+  return normalizedBuild ? `${normalizedVersion} (${normalizedBuild})` : normalizedVersion;
+}
+
 export default function AdminFeedbackDetailsScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -62,6 +95,8 @@ export default function AdminFeedbackDetailsScreen() {
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [viewerVisible, setViewerVisible] = React.useState(false);
   const [viewerIndex, setViewerIndex] = React.useState(0);
+  const [statusPickerOpen, setStatusPickerOpen] = React.useState(false);
+  const [isChangingStatus, setIsChangingStatus] = React.useState(false);
 
   React.useLayoutEffect(() => {
     nav.setParams({ headerTitle: t('routes.admin/feedbacks/[id]') });
@@ -74,19 +109,37 @@ export default function AdminFeedbackDetailsScreen() {
     staleTime: 10 * 1000,
   });
 
-  React.useEffect(() => {
-    if (!id || !data || data.isRead) return;
-    const readBy = profile?.id || profile?.user_id || null;
-    markSupportRequestRead(id, readBy)
-      .then(async () => {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['adminSupportRequests'] }),
-          queryClient.invalidateQueries({ queryKey: ['adminSupportRequest', id] }),
-          queryClient.invalidateQueries({ queryKey: SUPPORT_UNREAD_QUERY_KEY }),
-        ]);
-      })
-      .catch(() => {});
-  }, [data, id, profile?.id, profile?.user_id, queryClient]);
+  const statusItems = React.useMemo(
+    () => SUPPORT_STATUS_VALUES.map((status) => ({
+      id: status,
+      label: getStatusMeta(t, theme, status).label,
+    })),
+    [t, theme],
+  );
+
+  const handleStatusChange = React.useCallback(async (item) => {
+    const nextStatus = String(item?.id || '').trim();
+    if (!id || nextStatus === data?.status || isChangingStatus) {
+      setStatusPickerOpen(false);
+      return;
+    }
+    setIsChangingStatus(true);
+    setStatusPickerOpen(false);
+    try {
+      const actorId = profile?.id || profile?.user_id || null;
+      await updateSupportRequestStatus(id, nextStatus, actorId);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['adminSupportRequests'] }),
+        queryClient.invalidateQueries({ queryKey: ['adminSupportRequest', id] }),
+        queryClient.invalidateQueries({ queryKey: SUPPORT_UNREAD_QUERY_KEY }),
+      ]);
+      toast.success(t('support_status_changed'));
+    } catch (statusError) {
+      toast.error(String(statusError?.message || t('admin_unknown_error')));
+    } finally {
+      setIsChangingStatus(false);
+    }
+  }, [data?.status, id, isChangingStatus, profile?.id, profile?.user_id, queryClient, t, toast]);
 
   const handleDelete = React.useCallback(async () => {
     if (!id || isDeleting) return;
@@ -115,7 +168,7 @@ export default function AdminFeedbackDetailsScreen() {
   }
 
   return (
-    <Screen background="background">
+    <Screen background="background" scroll={false}>
       <ScrollView contentContainerStyle={styles(theme).content}>
         {!id ? (
           <Text style={styles(theme).muted}>{t('admin_feedback_not_found')}</Text>
@@ -134,12 +187,78 @@ export default function AdminFeedbackDetailsScreen() {
 
         {data ? (
           <>
+            <Card style={styles(theme).card}>
+              <Text style={styles(theme).sectionTitle}>{t('support_status_label')}</Text>
+              <Pressable
+                onPress={() => setStatusPickerOpen(true)}
+                disabled={isChangingStatus}
+                style={({ pressed }) => [styles(theme).statusSelector, pressed && styles(theme).statusSelectorPressed]}
+              >
+                {(() => {
+                  const meta = getStatusMeta(t, theme, data.status);
+                  return (
+                    <View style={[styles(theme).statusPill, { borderColor: meta.color, backgroundColor: withAlpha(meta.color, 0.1) }]}>
+                      <Text style={[styles(theme).statusText, { color: meta.color }]}>{meta.label}</Text>
+                    </View>
+                  );
+                })()}
+                <View style={styles(theme).statusAction}>
+                  <Text style={styles(theme).statusActionText}>
+                    {isChangingStatus ? t('support_status_changing') : t('support_status_change')}
+                  </Text>
+                  <Text style={styles(theme).statusChevron}>›</Text>
+                </View>
+              </Pressable>
+            </Card>
+
             <Card style={styles(theme).card} separated>
               <LabelValue theme={theme} label={t('admin_feedback_created_at')} value={formatDateTime(data.createdAt)} />
               <LabelValue theme={theme} label={t('admin_feedback_author')} value={data.authorName} />
               <LabelValue theme={theme} label={t('admin_feedback_company')} value={data.companyName || data.companyId} />
               <LabelValue theme={theme} label={t('admin_feedback_email')} value={data.authorEmail} />
               <LabelValue theme={theme} label={t('admin_feedback_phone')} value={data.authorPhone} />
+            </Card>
+
+            <Card style={styles(theme).card} separated>
+              <Text style={styles(theme).sectionTitle}>{t('admin_feedback_client_context')}</Text>
+              {data.clientContext ? (
+                <>
+                  <LabelValue
+                    theme={theme}
+                    label={t('admin_feedback_device')}
+                    value={formatDevice(data.clientContext)}
+                  />
+                  <LabelValue
+                    theme={theme}
+                    label={t('admin_feedback_os')}
+                    value={[data.clientContext.osName, data.clientContext.osVersion].filter(Boolean).join(' ')}
+                  />
+                  <LabelValue
+                    theme={theme}
+                    label={t('admin_feedback_app_version')}
+                    value={formatVersion(data.clientContext.appVersion, data.clientContext.appBuild)}
+                  />
+                  <LabelValue
+                    theme={theme}
+                    label={t('admin_feedback_runtime_version')}
+                    value={data.clientContext.runtimeVersion}
+                  />
+                  <LabelValue
+                    theme={theme}
+                    label={t('admin_feedback_environment')}
+                    value={
+                      data.clientContext.executionEnvironment === 'expo_go'
+                        ? [
+                            'Expo Go',
+                            data.clientContext.metadata?.native_app_version,
+                          ].filter(Boolean).join(' ')
+                        : data.clientContext.executionEnvironment
+                    }
+                  />
+                </>
+              ) : (
+                <Text style={styles(theme).muted}>{t('admin_feedback_client_context_unavailable')}</Text>
+              )}
             </Card>
 
             <Card style={styles(theme).card}>
@@ -195,6 +314,16 @@ export default function AdminFeedbackDetailsScreen() {
         cancelLabel={t('btn_cancel')}
         confirmVariant="destructive"
         onConfirm={handleDelete}
+      />
+
+      <SelectModal
+        visible={statusPickerOpen}
+        onClose={() => setStatusPickerOpen(false)}
+        title={t('support_status_select_title')}
+        items={statusItems}
+        selectedId={data?.status || SUPPORT_STATUS.NEW}
+        searchable={false}
+        onSelect={handleStatusChange}
       />
 
       <FullscreenImageViewer
@@ -256,6 +385,24 @@ const styles = (theme) =>
           ? theme.components.sectionHeader.bottom
           : theme.spacing[theme.components.sectionHeader.bottom],
     },
+    statusSelector: {
+      minHeight: theme.components.row.minHeight,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: theme.spacing.md,
+    },
+    statusSelectorPressed: { opacity: 0.82 },
+    statusPill: {
+      borderWidth: 1,
+      borderRadius: theme.radii.pill || 999,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+    },
+    statusText: { fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.semibold },
+    statusAction: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
+    statusActionText: { color: theme.colors.primary, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.semibold },
+    statusChevron: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.xl },
     messageText: {
       color: theme.colors.text,
       fontSize: theme.typography.sizes.md,

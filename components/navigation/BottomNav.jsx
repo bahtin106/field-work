@@ -7,6 +7,8 @@ import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { preloadOrderDetailScreen, preloadRouteScreen } from '../../src/shared/navigation/routePreload';
+import { scheduleUiIdleTask } from '../../src/shared/perf/uiIdleTask';
 import { useToast } from '../ui/ToastProvider';
 
 // -------- helpers --------
@@ -18,12 +20,13 @@ const PATHS = {
   calendar: '/orders/calendar',
 };
 
-function TabButton({ label, active, onPress, colors, metrics }) {
+function TabButton({ label, active, onPress, onPressIn, colors, metrics }) {
   const accLabel = typeof label === 'string' ? label : String(label || 'Tab');
   return (
     <Pressable
       style={({ pressed }) => [styles.btn, pressed && styles.btnPressed]}
       onPress={onPress}
+      onPressIn={onPressIn}
       android_ripple={{ color: colors.ripple, borderless: false }}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
@@ -70,6 +73,26 @@ function BottomNavInner() {
   const accountType = String(user?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin = String(role || '').toLowerCase() === 'admin' && accountType === 'solo';
   const showAllTab = canAll && !isSoloAdmin;
+
+  useEffect(() => {
+    if (roleLoading || !role) return undefined;
+    const likelyRoutes = [
+      PATHS.orders,
+      PATHS.calendar,
+      ...(showAllTab ? [PATHS.all] : []),
+    ].filter((route) => !pathname.startsWith(route));
+    const cancellations = likelyRoutes.map((route, index) =>
+      scheduleUiIdleTask(() => {
+        preloadRouteScreen(route);
+      }, { delayMs: 300 + index * 650, idleTimeoutMs: 1600 }),
+    );
+    cancellations.push(
+      scheduleUiIdleTask(() => {
+        preloadOrderDetailScreen();
+      }, { delayMs: 1500, idleTimeoutMs: 2200 }),
+    );
+    return () => cancellations.forEach((cancel) => cancel());
+  }, [pathname, role, roleLoading, showAllTab]);
 
   // Синхронизация с глобальным состоянием готовности главной страницы
 
@@ -212,6 +235,7 @@ function BottomNavInner() {
               onPress={() => {
                 if (activeKey !== 'orders') navigateTab(PATHS.orders);
               }}
+              onPressIn={() => preloadRouteScreen(PATHS.orders)}
               colors={colors}
               metrics={metrics}
             />
@@ -222,6 +246,7 @@ function BottomNavInner() {
               onPress={() => {
                 if (activeKey !== 'all') navigateTab(PATHS.all);
               }}
+              onPressIn={() => preloadRouteScreen(PATHS.all)}
               colors={colors}
               metrics={metrics}
             />
@@ -234,6 +259,7 @@ function BottomNavInner() {
             onPress={() => {
               if (activeKey !== 'orders') navigateTab(PATHS.orders);
             }}
+            onPressIn={() => preloadRouteScreen(PATHS.orders)}
             colors={colors}
             metrics={metrics}
           />
@@ -246,6 +272,7 @@ function BottomNavInner() {
           onPress={() => {
             if (activeKey !== 'calendar') navigateTab(PATHS.calendar);
           }}
+          onPressIn={() => preloadRouteScreen(PATHS.calendar)}
           colors={colors}
           metrics={metrics}
         />

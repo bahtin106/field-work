@@ -741,6 +741,24 @@ export function SimpleAuthProvider({ children }) {
         : '';
     } catch {}
 
+    // Detach this physical installation while the old access token is still
+    // unquestionably valid. Doing it after local sign-out made cleanup a
+    // best-effort background race with the next account login.
+    if (currentUserId && currentAccessToken) {
+      try {
+        const { token } = await readCurrentPushToken();
+        if (token) {
+          await deletePushToken(currentUserId, {
+            pushToken: token,
+            disableNotifications: false,
+            accessToken: currentAccessToken,
+          });
+        }
+      } catch (error) {
+        log.warn('push installation detach failed during sign-out', error);
+      }
+    }
+
     let signOutError = null;
     try {
       const result = await supabase.auth.signOut({ scope: 'local' });
@@ -761,21 +779,6 @@ export function SimpleAuthProvider({ children }) {
     const cleanupPromise = cleanupSessionRuntime('sign-out').catch(() => {});
     setSignedOutState({ signedOutUserId: currentUserId });
     logoutInProgressRef.current = false;
-
-    if (currentUserId) {
-      (async () => {
-        try {
-          const { token } = await readCurrentPushToken();
-          if (token) {
-            await deletePushToken(currentUserId, {
-              pushToken: token,
-              disableNotifications: false,
-              accessToken: currentAccessToken,
-            });
-          }
-        } catch {}
-      })();
-    }
 
     await cleanupPromise;
   }, [setSignedOutState, state.user?.id]);

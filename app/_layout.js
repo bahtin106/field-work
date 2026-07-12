@@ -22,7 +22,6 @@ LogBox.ignoreLogs([
 ]);
 
 import BottomNav from '../components/navigation/BottomNav';
-import DismissKeyboardArea from '../components/layout/DismissKeyboardArea';
 import ToastProvider, { useToast } from '../components/ui/ToastProvider';
 import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
@@ -61,6 +60,15 @@ import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 import { KeyboardProvider } from '../lib/keyboardControllerCompat';
 
+function getNotificationRecipientUserId(notification) {
+  return String(notification?.request?.content?.data?.recipient_user_id || '').trim();
+}
+
+function notificationBelongsToUser(notification, userId) {
+  const recipientUserId = getNotificationRecipientUserId(notification);
+  return !recipientUserId || recipientUserId === String(userId || '').trim();
+}
+
 function ensureForegroundNotificationHandler() {
   if (Platform.OS === 'web') return;
   if (globalThis.__foregroundNotifHandlerConfigured) return;
@@ -69,12 +77,18 @@ function ensureForegroundNotificationHandler() {
   import('expo-notifications')
     .then((Notifications) => {
       Notifications.setNotificationHandler({
-        handleNotification: async () => ({
-          shouldShowBanner: true,
-          shouldShowList: true,
-          shouldPlaySound: true,
-          shouldSetBadge: false,
-        }),
+        handleNotification: async (notification) => {
+          const belongsToCurrentUser = notificationBelongsToUser(
+            notification,
+            globalThis.__activeNotificationUserId,
+          );
+          return {
+            shouldShowBanner: belongsToCurrentUser,
+            shouldShowList: belongsToCurrentUser,
+            shouldPlaySound: belongsToCurrentUser,
+            shouldSetBadge: false,
+          };
+        },
       });
     })
     .catch(() => {
@@ -178,7 +192,7 @@ function RootLayoutInner() {
   const segmentsRef = useRef(segments);
   const accessCheckInFlightRef = useRef(false);
   const lastAccessCheckAtRef = useRef(0);
-  const pushSyncInFlightRef = useRef(false);
+  const pushSyncInFlightRef = useRef(null);
   const pushSyncDoneForUserRef = useRef(null);
   const notificationOpenInFlightRef = useRef(false);
   const lastHandledNotificationKeyRef = useRef('');
@@ -189,6 +203,7 @@ function RootLayoutInner() {
   const returnToHomeAfterLogoutRef = useRef(false);
   const authSnapshotRef = useRef({ isAuthenticated, userId: String(user?.id || '') });
   authSnapshotRef.current = { isAuthenticated, userId: String(user?.id || '') };
+  globalThis.__activeNotificationUserId = isAuthenticated ? String(user?.id || '') : '';
   const [initialNotificationCheckPending, setInitialNotificationCheckPending] = useState(Platform.OS !== 'web');
   const [pendingNotificationLaunch, setPendingNotificationLaunch] = useState(false);
   const inAuthGroup = segments[0] === '(auth)';
@@ -593,22 +608,31 @@ function RootLayoutInner() {
 
     let active = true;
     const runBootstrap = async (requestPermission) => {
-      if (pushSyncInFlightRef.current) return;
-      pushSyncInFlightRef.current = true;
+      if (pushSyncInFlightRef.current === user.id) return;
+      pushSyncInFlightRef.current = user.id;
       try {
-        await bootstrapPushForUserWithOptions(user.id, { requestPermission });
-        if (active && requestPermission) {
+        const result = await bootstrapPushForUserWithOptions(user.id, { requestPermission });
+        if (active && requestPermission && result?.ok) {
           pushSyncDoneForUserRef.current = user.id;
         }
       } catch {} finally {
-        pushSyncInFlightRef.current = false;
+        if (pushSyncInFlightRef.current === user.id) {
+          pushSyncInFlightRef.current = null;
+        }
       }
     };
 
+    // Existing permission/token state is read silently and rebound to the new
+    // account immediately. The delayed pass below is only for permission UX.
+    const silentBootstrap = runBootstrap(false).catch(() => {});
+
     let bootstrapTask = null;
     const bootstrapTimer = setTimeout(() => {
-      bootstrapTask = InteractionManager.runAfterInteractions(() => {
-        runBootstrap(true).catch(() => {});
+      silentBootstrap.finally(() => {
+        if (!active) return;
+        bootstrapTask = InteractionManager.runAfterInteractions(() => {
+          runBootstrap(true).catch(() => {});
+        });
       });
     }, PUSH_BOOTSTRAP_DELAY_MS);
 
@@ -970,6 +994,14 @@ function RootLayoutInner() {
       if (!active || !response) return;
       const expectedUserId = authSnapshotRef.current.userId;
       if (!isAuthenticatedUserCurrent(expectedUserId)) return;
+      if (!notificationBelongsToUser(response?.notification, expectedUserId)) {
+        try {
+          const identifier = String(response?.notification?.request?.identifier || '').trim();
+          if (identifier) await Notifications?.dismissNotificationAsync?.(identifier);
+          await Notifications?.clearLastNotificationResponseAsync?.();
+        } catch {}
+        return;
+      }
       const dedupeKey = getNotificationResponseKey(response);
       if (dedupeKey && lastHandledNotificationKeyRef.current === dedupeKey) return;
       if (dedupeKey) lastHandledNotificationKeyRef.current = dedupeKey;
@@ -1004,6 +1036,12 @@ function RootLayoutInner() {
         }
 
         receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+          const currentUserId = authSnapshotRef.current.userId;
+          if (!notificationBelongsToUser(notification, currentUserId)) {
+            const identifier = String(notification?.request?.identifier || '').trim();
+            if (identifier) Notifications.dismissNotificationAsync?.(identifier).catch(() => {});
+            return;
+          }
           rememberNotificationIdentifier(notification);
         });
         responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -1122,7 +1160,7 @@ function RootLayoutInner() {
             style={{ flex: 1, backgroundColor: theme.colors.background }}
           >
             {isAuthenticated && !isBlockedScreen ? <OfflineStatusBanner /> : null}
-            <DismissKeyboardArea style={{ flex: 1, minHeight: 0 }}>
+            <View style={{ flex: 1, minHeight: 0 }}>
               <Stack
                 initialRouteName="(auth)"
                 screenOptions={{
@@ -1170,6 +1208,7 @@ function RootLayoutInner() {
                   <Stack.Screen name="clients/[id]/index" options={{ title: t('routes.clients/[id]/index') }} />
                   <Stack.Screen name="clients/[id]/edit" options={{ title: t('routes.clients/[id]/edit') }} />
                   <Stack.Screen name="billing/index" options={{ title: t('routes.billing/index') }} />
+                  <Stack.Screen name="support/index" options={{ title: t('support_requests_title') }} />
                   <Stack.Screen name="admin/index" />
                   <Stack.Screen name="admin/users/index" />
                   <Stack.Screen name="admin/users/[id]/index" />
@@ -1184,7 +1223,7 @@ function RootLayoutInner() {
                   <Stack.Screen name="admin/server/index" />
                 <Stack.Screen name="stats" options={{ title: t('routes.stats') }} />
               </Stack>
-            </DismissKeyboardArea>
+            </View>
             {isSigningOut || (!isAuthenticated && !inAuthFlow) ? (
               <View
                 pointerEvents="auto"

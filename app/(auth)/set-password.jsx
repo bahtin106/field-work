@@ -1,14 +1,12 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from '@expo/vector-icons/Feather';
 
@@ -213,23 +211,18 @@ export default function SetPasswordScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       edges={['left', 'right']}
     >
-      <KeyboardAvoidingView
+      <KeyboardAwareScrollView
+        ref={scrollRef}
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        onScroll={(e) => {
+          try {
+            scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
+          } catch {}
+        }}
+        scrollEventThrottle={16}
       >
-        <ScrollView
-          ref={scrollRef}
-          style={styles.flex}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          onScroll={(e) => {
-            try {
-              scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
-            } catch {}
-          }}
-          scrollEventThrottle={16}
-        >
           <Text style={styles.title}>{t('set_password_title')}</Text>
           <Text style={styles.subtitle}>
             {t('set_password_subtitle')}
@@ -371,8 +364,7 @@ export default function SetPasswordScreen() {
               loading={submitting}
             />
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }

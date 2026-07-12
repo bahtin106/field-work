@@ -1,5 +1,6 @@
 import React from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import TextField from '../ui/TextField';
 import { BaseModal } from '../ui/modals';
 import ModalActionsRow from '../ui/modals/ModalActionsRow';
@@ -83,7 +84,7 @@ export default function ClientAddressEditorModal({
       footer={footer}
       maxHeightRatio={0.86}
     >
-      <ScrollView
+      <KeyboardAwareScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -107,7 +108,7 @@ export default function ClientAddressEditorModal({
             style={styles.field}
           />
         ))}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </BaseModal>
   );
 }

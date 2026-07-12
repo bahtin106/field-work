@@ -5,7 +5,7 @@ import { supabase } from '../../../lib/supabase';
 import { getMyCompanyId } from '../../features/profile/api';
 import { getOfflineSnapshot } from '../offline/offlineStatus';
 import { queryKeys } from './queryKeys';
-import { getRequestById, listRequests, listRequestExecutors } from '../../features/requests/api';
+import { getRequestById, listCalendarRequests, listRequests, listRequestExecutors } from '../../features/requests/api';
 import { prefetchExecutorNames, seedExecutorNames } from '../../features/requests/executorNameCache';
 import { markRequestDetailLoaded } from '../../features/requests/queries';
 import { scheduleUiIdleTask } from '../perf/uiIdleTask';
@@ -22,6 +22,7 @@ const PROFILE_CONFIG: Record<
     cooldownMs: number;
     includeAllRequests: boolean;
     includeExecutors: boolean;
+    includeCalendar: boolean;
     allRequestsDelayMs: number;
     executorsDelayMs: number;
     detailCount: number;
@@ -31,6 +32,7 @@ const PROFILE_CONFIG: Record<
     cooldownMs: 8 * 60 * 1000,
     includeAllRequests: false,
     includeExecutors: false,
+    includeCalendar: false,
     allRequestsDelayMs: 0,
     executorsDelayMs: 0,
     detailCount: 0,
@@ -39,6 +41,7 @@ const PROFILE_CONFIG: Record<
     cooldownMs: 5 * 60 * 1000,
     includeAllRequests: true,
     includeExecutors: true,
+    includeCalendar: true,
     allRequestsDelayMs: 180,
     executorsDelayMs: 180,
     detailCount: 2,
@@ -47,6 +50,7 @@ const PROFILE_CONFIG: Record<
     cooldownMs: 2 * 60 * 1000,
     includeAllRequests: true,
     includeExecutors: true,
+    includeCalendar: true,
     allRequestsDelayMs: 100,
     executorsDelayMs: 100,
     detailCount: 4,
@@ -175,6 +179,35 @@ async function prefetchRequestList(
   return page;
 }
 
+function getCurrentCalendarRange() {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const start = new Date(first);
+  start.setDate(first.getDate() - ((first.getDay() + 6) % 7));
+
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const end = new Date(last);
+  end.setDate(last.getDate() + ((7 - last.getDay()) % 7));
+  return { startDate: start.toISOString(), endDate: end.toISOString() };
+}
+
+async function prefetchCurrentCalendar(queryClient: QueryClient, authScopeKey: string, runGeneration: number) {
+  const profile: any = queryClient.getQueryData(queryKeys.profile.me());
+  const userId = String(profile?.id || authScopeKey.split(':')[0] || '').trim();
+  if (!userId) return [];
+  const role = String(profile?.role || '').trim();
+  const scope = 'my';
+  const { startDate, endDate } = getCurrentCalendarRange();
+  return queryClient.prefetchQuery({
+    queryKey: queryKeys.requests.calendar({ userId, role, scope, startDate, endDate }),
+    queryFn: async () => {
+      assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
+      return listCalendarRequests({ userId, role, scope, startDate, endDate });
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function resetSmartPrefetchRuntime() {
   activeRunGeneration += 1;
   lastRunAt = 0;
@@ -193,8 +226,8 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
     if (!authScopeKey) return false;
 
     const myRows = await prefetchRequestList(queryClient, 'my', authScopeKey, runGeneration);
-    await Promise.allSettled(
-      myRows.slice(0, cfg.detailCount).map((row: any) =>
+    await Promise.allSettled([
+      ...myRows.slice(0, cfg.detailCount).map((row: any) =>
         row?.id
           ? queryClient.prefetchQuery({
               queryKey: queryKeys.requests.detail(row.id),
@@ -208,7 +241,10 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
             })
           : Promise.resolve(null),
       ),
-    );
+      ...(cfg.includeCalendar
+        ? [prefetchCurrentCalendar(queryClient, authScopeKey, runGeneration)]
+        : []),
+    ]);
     if (cfg.includeAllRequests) {
       await new Promise((resolve) => setTimeout(resolve, cfg.allRequestsDelayMs));
       assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));

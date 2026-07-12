@@ -1,7 +1,8 @@
 ﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import React from 'react';
-import { ScrollView, StyleSheet, Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
@@ -175,8 +176,8 @@ export default function AdminCompanyEditScreen() {
   const blockedByAdmin = members.filter((m) => m.admin_blocked).length;
 
   return (
-    <Screen background="background">
-      <ScrollView contentContainerStyle={styles(theme).content}>
+    <Screen background="background" scroll={false}>
+      <KeyboardAwareScrollView contentContainerStyle={styles(theme).content}>
         {isLoading ? <Text style={styles(theme).muted}>{t('admin_loading')}</Text> : null}
         {error ? <Text style={styles(theme).error}>{String(error?.message || t('admin_unknown_error'))}</Text> : null}
 
@@ -233,7 +234,7 @@ export default function AdminCompanyEditScreen() {
           ) : null}
         </Card>
 
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }

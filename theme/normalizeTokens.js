@@ -304,8 +304,8 @@ export function buildTheme(mode) {
       paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
     },
     keyboardAware: {
-      bottomOffset: base.components?.keyboardAware?.bottomOffset ?? 40,
-      extraKeyboardSpace: base.components?.keyboardAware?.extraKeyboardSpace ?? 60,
+      bottomOffset: base.components?.keyboardAware?.bottomOffset ?? 20,
+      extraKeyboardSpace: base.components?.keyboardAware?.extraKeyboardSpace ?? 0,
     },
     filtersPanel: {
       openSpring: {

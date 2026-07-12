@@ -646,12 +646,6 @@ export default function FieldEditorScreen() {
     closeLabelEditor();
   }, [closeLabelEditor, labelDraftValue, labelEditField, updateDraft]);
 
-  React.useEffect(() => {
-    if (!labelEditField) return;
-    const timer = setTimeout(() => labelInputRef.current?.focus?.(), 30);
-    return () => clearTimeout(timer);
-  }, [labelEditField]);
-
   const getEntityStatusLabel = React.useCallback((entityType) => {
     const state = saveStateMap[entityType];
     if (!state) return null;
@@ -759,6 +753,7 @@ export default function FieldEditorScreen() {
                 {isLabelEditing ? (
                   <TextInput
                     ref={labelInputRef}
+                    autoFocus
                     value={labelDraftValue}
                     onChangeText={(nextText) =>
                       setLabelDraftValue(String(nextText || '').replace(/[\r\n]+/g, ' ').slice(0, 64))
@@ -877,7 +872,7 @@ export default function FieldEditorScreen() {
         contentContainerStyle={s.content}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
-        bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 40}
+        bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 20}
         extraKeyboardSpace={theme.components?.keyboardAware?.extraKeyboardSpace ?? 0}
         stickyHeaderIndices={[0]}
       >

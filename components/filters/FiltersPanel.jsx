@@ -19,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { getLocale, t } from '../../src/i18n';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { getRoleLabel } from '../../constants/roles';
@@ -2090,9 +2091,9 @@ export default function FiltersPanel({
           </View>
 
           <View style={styles.options}>
-            <ScrollView style={styles.optionsScroll} contentContainerStyle={{ paddingBottom: sz.sm }}>
+            <KeyboardAwareScrollView style={styles.optionsScroll} contentContainerStyle={{ paddingBottom: sz.sm }}>
               {renderOptions()}
-            </ScrollView>
+            </KeyboardAwareScrollView>
           </View>
         </View>
 

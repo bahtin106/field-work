@@ -25,6 +25,7 @@ import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings'
 import { EXCHANGE_RATE_ENDPOINTS } from '../../config/externalUrls';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 
 import Feather from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -1757,7 +1758,7 @@ export default function CompanySettings() {
           </View>
         }
       >
-        <View style={{ gap: theme.spacing.md }}>
+        <KeyboardAwareScrollView contentContainerStyle={{ gap: theme.spacing.md }}>
           <Text style={{ color: theme.colors.textSecondary }}>
             {t('modal_currency_confirm_recalc')}
           </Text>
@@ -1938,7 +1939,7 @@ export default function CompanySettings() {
               ) : null}
             </View>
           ) : null}
-        </View>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
 
@@ -1995,7 +1996,7 @@ export default function CompanySettings() {
           </View>
         }
       >
-        <View style={{ gap: theme.spacing.lg }}>
+        <KeyboardAwareScrollView contentContainerStyle={{ gap: theme.spacing.lg }}>
 
           <View
             style={{
@@ -2122,7 +2123,7 @@ export default function CompanySettings() {
               </Text>
             </View>
           </View>
-        </View>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
 

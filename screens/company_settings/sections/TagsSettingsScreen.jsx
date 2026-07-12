@@ -1,6 +1,7 @@
 import React from 'react';
 // Heavy implementation is loaded by a lightweight Expo Router wrapper.
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import Button from '../../../components/ui/Button';
@@ -214,14 +215,14 @@ export default function TagsSettingsScreen() {
   };
 
   return (
-    <Screen headerOptions={{ title: t('settings_sections_reference_items_tags') }}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <Screen scroll={false} headerOptions={{ title: t('settings_sections_reference_items_tags') }}>
+      <KeyboardAwareScrollView contentContainerStyle={styles.content}>
         <SectionHeader>{t('tags_clients_title')}</SectionHeader>
         {renderDictionaryBlock(TAG_TYPE.CLIENT)}
 
         <SectionHeader>{t('tags_objects_title')}</SectionHeader>
         {renderDictionaryBlock(TAG_TYPE.OBJECT)}
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <ConfirmModal
         visible={confirmDelete.visible}

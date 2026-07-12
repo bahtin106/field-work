@@ -1,7 +1,8 @@
 ﻿import React from 'react';
 import Feather from '@expo/vector-icons/Feather';
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
@@ -903,7 +904,7 @@ export default function FinanceRulesSettingsScreen() {
           </View>
         }
       >
-        <ScrollView keyboardShouldPersistTaps="handled">
+        <KeyboardAwareScrollView>
           <TextField
             label={t('finance_rule_name')}
             required
@@ -1094,7 +1095,7 @@ export default function FinanceRulesSettingsScreen() {
               onValueChange={(value) => setDraft((prev) => ({ ...prev, apply_to_existing: value === true }))}
             />
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <ConfirmModal

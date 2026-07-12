@@ -494,6 +494,7 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
           entity_type: 'support_feedback',
           entity_id: feedbackId,
           ...(event.payload || {}),
+          recipient_user_id: row.user_id,
         }
       : {
           order_id: event.order_id,
@@ -504,6 +505,7 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
           entity_type: 'order',
           entity_id: event.order_id,
           ...(event.payload || {}),
+          recipient_user_id: row.user_id,
         },
     sound: 'default' as const,
     channelId: PUSH_ANDROID_CHANNEL_ID,

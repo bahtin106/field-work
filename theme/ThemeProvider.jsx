@@ -399,11 +399,9 @@ function buildTheme(mode, systemScheme = null) {
       paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
     },
     keyboardAware: {
-      bottomOffset: base.components?.keyboardAware?.bottomOffset ?? 40,
+      bottomOffset: base.components?.keyboardAware?.bottomOffset ?? 20,
       extraKeyboardSpace:
-        base.components?.keyboardAware?.extraKeyboardSpace ??
-        (base.components?.input?.height ?? base.components?.listItem?.height ?? 48) +
-          (base.spacing?.lg ?? 16),
+        base.components?.keyboardAware?.extraKeyboardSpace ?? 0,
     },
     filtersPanel: {
       openSpring: {
@@ -639,7 +637,7 @@ export const ThemeProvider = ({ children }) => {
         keyboardShouldPersistTaps: 'handled',
         keyboardDismissMode: 'none',
         contentInsetAdjustmentBehavior: Platform.OS === 'ios' ? 'always' : 'automatic',
-        bottomOffset: theme.components?.keyboardAware?.bottomOffset ?? 40,
+        bottomOffset: theme.components?.keyboardAware?.bottomOffset ?? 20,
         extraKeyboardSpace: theme.components?.keyboardAware?.extraKeyboardSpace ?? 0,
       });
       // Р“Р»РѕР±Р°Р»СЊРЅРѕРµ РїРѕРІРµРґРµРЅРёРµ РґР»СЏ С‚РµРєСЃС‚Р° РІ РїРѕР»СЏС…: РѕР±СЂРµР·Р°С‚СЊ РґР»РёРЅРЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ С‚СЂРѕРµС‚РѕС‡РёРµРј.

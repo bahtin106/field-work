@@ -94,25 +94,13 @@ export default function LazyRouteScreen({
 
   React.useEffect(() => {
     if (LoadedScreen && canMountScreen) return undefined;
-    let cancelled = false;
-    let timer = null;
 
-    // Only a genuinely new module needs the lightweight first frame. Once the
-    // module is cached, subsequent route mounts render the real screen
-    // immediately and never flash an intermediate placeholder.
-    const frame = requestAnimationFrame(() => {
-      timer = setTimeout(() => {
-        if (cancelled) return;
-        if (LoadedScreen) setCanMountScreen(true);
-        else startLoad();
-      }, 0);
-    });
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(frame);
-      if (timer) clearTimeout(timer);
-    };
+    // Effects already run after the route's first committed frame. Start the
+    // module request here instead of adding another frame and timer to every
+    // cold navigation.
+    if (LoadedScreen) setCanMountScreen(true);
+    else startLoad();
+    return undefined;
   }, [LoadedScreen, canMountScreen, startLoad]);
 
   if (LoadedScreen && canMountScreen) return <LoadedScreen {...screenProps} />;

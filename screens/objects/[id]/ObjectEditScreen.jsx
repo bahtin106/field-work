@@ -6,7 +6,8 @@ import * as Clipboard from 'expo-clipboard';
 import { useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BackHandler, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import AdditionalPhoneInputRow from '../../../components/clients/AdditionalPhoneInputRow';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
@@ -1713,7 +1714,7 @@ export default function EditObjectScreen() {
           />
         )}
       >
-        <ScrollView
+        <KeyboardAwareScrollView
           style={{ width: '100%' }}
           contentContainerStyle={{ paddingVertical: theme.spacing.sm }}
           keyboardShouldPersistTaps="handled"
@@ -1808,7 +1809,7 @@ export default function EditObjectScreen() {
               ))}
             </Card>
           ) : null}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <BaseModal

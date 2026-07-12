@@ -18,6 +18,7 @@ import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { withAlpha } from '../../../theme/colors';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 
 const EMPTY_FORM = {
   id: null,
@@ -254,7 +255,7 @@ export default function AdminPromoCodesScreen() {
           </View>
         }
       >
-        <View style={styles(theme).form}>
+        <KeyboardAwareScrollView contentContainerStyle={styles(theme).form}>
           <TextField label={t('admin_promocode_name_label')} value={form.name} onChangeText={(name) => setForm((p) => ({ ...p, name }))} />
           <View style={styles(theme).codeRow}>
             <View style={styles(theme).codeInput}>
@@ -290,7 +291,7 @@ export default function AdminPromoCodesScreen() {
             multiline
             minLines={3}
           />
-        </View>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <DateTimeModal

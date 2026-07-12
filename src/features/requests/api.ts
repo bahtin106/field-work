@@ -100,30 +100,6 @@ function normalizeDepartureTimeString(input) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-function hasExplicitTimeInDatetime(input) {
-  const raw = String(input ?? '').trim();
-  if (!raw) return false;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
-  const timeMatch = raw.match(/[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/);
-  if (!timeMatch) return false;
-  const hours = Number(timeMatch[1]);
-  const minutes = Number(timeMatch[2]);
-  const seconds = Number(timeMatch[3] ?? '0');
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) return false;
-  return hours !== 0 || minutes !== 0 || seconds !== 0;
-}
-
-function extractDepartureTimeFromLegacyDatetime(input) {
-  if (!hasExplicitTimeInDatetime(input)) return null;
-  if (!input) return null;
-  const parsed = new Date(input);
-  if (Number.isNaN(parsed?.getTime?.())) return null;
-  const hours = parsed.getHours();
-  const minutes = parsed.getMinutes();
-  if (hours === 0 && minutes === 0) return null;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-}
-
 function normalizeOrder(row) {
   if (!row) return row;
   const customerPhoneVisible =
@@ -134,9 +110,7 @@ function normalizeOrder(row) {
   const address = extractOrderAddress(row);
   const addressMode = normalizeOrderAddressMode(row.address_mode);
   const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
-  const departureTime =
-    normalizeDepartureTimeString(row?.departure_time) ||
-    extractDepartureTimeFromLegacyDatetime(row?.time_window_start);
+  const departureTime = normalizeDepartureTimeString(row?.departure_time);
   return {
     ...row,
     title: resolveRequestTitle(row, {
@@ -149,6 +123,7 @@ function normalizeOrder(row) {
     phone_visible: legacyPhoneVisible,
     time_window_start: row.time_window_start ?? null,
     departure_time: departureTime,
+    __departureTimeIndependent: true,
     object: objectItem,
     client: clientItem,
     fio: customerName || null,
@@ -177,7 +152,23 @@ function normalizeOrder(row) {
 }
 
 async function enrichOrderWithExtraFields(row) {
-  return normalizeOrder(row);
+  const normalized = normalizeOrder(row);
+  const workTypeId = String(normalized?.work_type_id || '').trim();
+  const existingName = String(
+    normalized?.work_type_name || normalized?.work_type?.name || '',
+  ).trim();
+  if (!workTypeId || existingName) return normalized;
+
+  const { data, error } = await supabase
+    .from('work_types')
+    .select('id, name')
+    .eq('id', workTypeId)
+    .maybeSingle();
+  if (error || !data) return normalized;
+  const name = String(data?.name || '').trim();
+  return name
+    ? { ...normalized, work_type_name: name, work_type: { id: data.id, name } }
+    : normalized;
 }
 
 function buildConcurrencyError(message: string, latest: any = null) {

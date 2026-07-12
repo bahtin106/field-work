@@ -298,9 +298,9 @@ const light = {
       paddingBottom: 24, // Standard scroll bottom padding
     },
     keyboardAware: {
-      bottomOffset: 40,
-      extraKeyboardSpace: 60,
-    },
+      bottomOffset: 20,
+      extraKeyboardSpace: 0,
+    },
     authRegister: {
       contentTopSpacing: 'sm',
       formCardTopPadding: 'md',

@@ -3,7 +3,7 @@ import FeatherIcon from '@expo/vector-icons/Feather';
 import { useIsFocused } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
@@ -24,6 +24,7 @@ import { useTranslation } from '../src/i18n/useTranslation';
 import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 import { markFirstContent, markScreenMount, measureNetwork } from '../src/shared/perf/devMetrics';
 import { scheduleUiIdleTask } from '../src/shared/perf/uiIdleTask';
+import { hasRoutePreloader, preloadRouteScreen } from '../src/shared/navigation/routePreload';
 import { queryKeys } from '../src/shared/query/queryKeys';
 import { queryClient as appQueryClient } from '../src/shared/query/queryClient';
 import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
@@ -39,8 +40,6 @@ import {
 import Button from './ui/Button';
 import Card from './ui/Card';
 import { useToast } from './ui/ToastProvider';
-
-const SupportRequestModal = lazy(() => import('../app/company_settings/sections/SupportRequestModal'));
 
 const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
 const HOME_PROFILE_STALE_MS = 2 * 60 * 1000;
@@ -59,6 +58,7 @@ const HOME_ROUTES = {
   billing: '/billing',
   createOrder: '/orders/create-order',
   calendar: '/orders/calendar',
+  support: '/support',
 };
 
 const homeMyOrdersPrefetchStartedByScope = new Set();
@@ -305,8 +305,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => sub?.subscription?.unsubscribe?.();
   }, [qc, user]);
 
-  const [supportRequestOpen, setSupportRequestOpen] = useState(false);
-  const [supportRequestNonce, setSupportRequestNonce] = useState(0);
   const [secondaryNetworkEnabled, setSecondaryNetworkEnabled] = useState(false);
   const isFocused = useIsFocused();
   const homeLiveEnabled = secondaryNetworkEnabled && isFocused;
@@ -537,10 +535,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     () => navigateTo(HOME_ROUTES.admin),
     [navigateTo],
   );
-  const openSupportRequest = useCallback(() => {
-    setSupportRequestNonce((value) => value + 1);
-    setSupportRequestOpen(true);
-  }, []);
+  const openSupportRequest = useCallback(
+    () => navigateTo(HOME_ROUTES.support),
+    [navigateTo],
+  );
   const showFutureFeatureToast = useCallback(() => {
     toast.info(t('feature_future'));
   }, [t, toast]);
@@ -648,6 +646,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           title: t('company_settings_write_support'),
           icon: 'message-square',
           onPress: openSupportRequest,
+          route: HOME_ROUTES.support,
           visible: true,
         },
         {
@@ -930,7 +929,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     let cancelPrefetch = null;
     const timer = setTimeout(() => {
       cancelPrefetch = scheduleSmartPrefetch(qc);
-    }, 6500);
+    }, 1400);
     return () => {
       clearTimeout(timer);
       try {
@@ -938,6 +937,22 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       } catch {}
     };
   }, [homeCriticalReady, isFocused, qc, uid]);
+
+  useEffect(() => {
+    if (!homeCriticalReady || !isFocused) return undefined;
+    const likelyRoutes = [
+      canCreateOrders ? HOME_ROUTES.createOrder : null,
+      !isSoloAdmin ? HOME_ROUTES.appSettings : null,
+      isAdmin ? HOME_ROUTES.companySettings : null,
+      HOME_ROUTES.support,
+    ].filter(Boolean);
+    const cancellations = likelyRoutes.map((route, index) =>
+      scheduleUiIdleTask(() => {
+        preloadRouteScreen(route);
+      }, { delayMs: 450 + index * 700, idleTimeoutMs: 1800 }),
+    );
+    return () => cancellations.forEach((cancel) => cancel());
+  }, [canCreateOrders, homeCriticalReady, isAdmin, isFocused, isSoloAdmin]);
 
   if (shouldShowHomeLoader) {
     return (
@@ -1063,6 +1078,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             <Pressable
               key={item.key}
               onPress={item.onPress}
+              onPressIn={item.route && hasRoutePreloader(item.route) ? () => preloadRouteScreen(item.route) : undefined}
               unstable_pressDelay={0}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
@@ -1143,6 +1159,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           <Button
             title={t('home_btn_create_order')}
             onPress={openCreateOrder}
+            onPressIn={() => preloadRouteScreen(HOME_ROUTES.createOrder)}
           />
         </View>
       )}
@@ -1152,16 +1169,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       </View>
       </ScrollView>
 
-      {supportRequestOpen ? (
-        <Suspense fallback={null}>
-          <SupportRequestModal
-            key={`support-request-${supportRequestNonce}`}
-            visible={supportRequestOpen}
-            onClose={() => setSupportRequestOpen(false)}
-            profile={currentProfile}
-          />
-        </Suspense>
-      ) : null}
     </>
   );
 }

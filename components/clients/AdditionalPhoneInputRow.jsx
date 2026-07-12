@@ -37,12 +37,6 @@ export default function AdditionalPhoneInputRow({
   }, [isEditing, resolvedLabel]);
 
   React.useEffect(() => {
-    if (!isEditing) return;
-    const timer = setTimeout(() => inputRef.current?.focus?.(), 30);
-    return () => clearTimeout(timer);
-  }, [isEditing]);
-
-  React.useEffect(() => {
     if (!isEditing) return undefined;
 
     const id = fieldIdRef.current;
@@ -80,6 +74,7 @@ export default function AdditionalPhoneInputRow({
             {isEditing ? (
               <TextInput
                 ref={inputRef}
+                autoFocus
                 value={draftLabel}
                 onChangeText={(nextText) => {
                   const cleaned = String(nextText || '')

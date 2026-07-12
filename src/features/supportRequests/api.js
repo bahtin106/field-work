@@ -1,16 +1,39 @@
 ﻿import { supabase } from '../../../lib/supabase';
 import { formatPersonName } from '../../../lib/personName';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 import { cleanupProfileMediaEntity, inspectProfileMedia, uploadProfileMedia } from '../profileMedia/api';
 
 export const SUPPORT_MESSAGE_MAX_LEN = 2000;
 export const SUPPORT_PHOTO_MAX_COUNT = 5;
 export const SUPPORT_UNREAD_QUERY_KEY = ['adminSupportRequestsUnreadCount'];
 export const SUPPORT_UNREAD_REFETCH_MS = 15 * 1000;
+export const SUPPORT_STATUS = Object.freeze({
+  NEW: 'new',
+  VIEWED: 'viewed',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+});
+export const SUPPORT_STATUS_VALUES = Object.freeze(Object.values(SUPPORT_STATUS));
 const FEEDBACK_DELETION_STATE = {
   ACTIVE: 'active',
   PENDING: 'pending_cleanup',
   FAILED: 'cleanup_failed',
 };
+const FEEDBACK_LEGACY_SELECT =
+  'id, text, created_at, user_id, company_id, photo_url, is_read, read_at, read_by, contact, full_name, deletion_state, delete_error';
+const FEEDBACK_WORKFLOW_SELECT = `${FEEDBACK_LEGACY_SELECT}, status, status_updated_at, status_updated_by`;
+
+function isMissingWorkflowSchema(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return (
+    message.includes('feedbacks.status') ||
+    message.includes('status_updated_at') ||
+    message.includes('status_updated_by') ||
+    (message.includes('column') && message.includes('status'))
+  );
+}
 
 function toIso(value) {
   const date = value ? new Date(value) : null;
@@ -20,6 +43,106 @@ function toIso(value) {
 
 function normalizeMessage(value) {
   return String(value || '').trim();
+}
+
+function contextText(value, maxLength = 160) {
+  const text = String(value ?? '').trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+function collectSupportClientContext() {
+  try {
+    const platformConstants = Platform.constants || {};
+    const expoConfig = Constants?.expoConfig || Constants?.manifest || {};
+    const platformConfig = Platform.OS === 'ios' ? expoConfig?.ios || {} : expoConfig?.android || {};
+    const model =
+      platformConstants.Model ||
+      platformConstants.model ||
+      platformConstants.Device ||
+      null;
+    const runtimeVersion = platformConfig?.runtimeVersion || expoConfig?.runtimeVersion || null;
+    const appOwnership = contextText(Constants?.appOwnership, 64);
+    const executionEnvironment = appOwnership === 'expo'
+      ? 'expo_go'
+      : contextText(Constants?.executionEnvironment || appOwnership, 64);
+
+    return {
+      platform: contextText(Platform.OS, 32),
+      device_name: contextText(Constants?.deviceName || model),
+      manufacturer: contextText(
+        platformConstants.Manufacturer || platformConstants.manufacturer || platformConstants.Brand,
+      ),
+      model: contextText(model),
+      os_name: contextText(
+        Platform.OS === 'android' ? 'Android' : Platform.OS === 'ios' ? 'iOS' : Platform.OS,
+        64,
+      ),
+      os_version: contextText(platformConstants.Release || Platform.Version, 64),
+      app_version: contextText(expoConfig?.version || Application?.nativeApplicationVersion, 64),
+      app_build: contextText(
+        platformConfig?.versionCode ||
+          platformConfig?.buildNumber ||
+          (appOwnership === 'expo' ? null : Application?.nativeBuildVersion),
+        64,
+      ),
+      app_id: contextText(
+        Application?.applicationId || platformConfig?.package || platformConfig?.bundleIdentifier,
+      ),
+      runtime_version: contextText(runtimeVersion, 64),
+      execution_environment: executionEnvironment,
+      metadata: {
+        app_ownership: appOwnership,
+        native_app_version: contextText(Application?.nativeApplicationVersion, 64),
+        native_build_version: contextText(Application?.nativeBuildVersion, 64),
+        development: typeof __DEV__ !== 'undefined' ? __DEV__ === true : null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function saveSupportClientContext(feedbackId) {
+  const id = String(feedbackId || '').trim();
+  const context = collectSupportClientContext();
+  if (!id || !context) return;
+  const { error } = await supabase
+    .from('feedback_client_context')
+    .insert({ feedback_id: id, ...context });
+  if (error) throw error;
+}
+
+async function loadSupportClientContext(feedbackId) {
+  const id = String(feedbackId || '').trim();
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from('feedback_client_context')
+    .select(
+      'platform, device_name, manufacturer, model, os_name, os_version, app_version, app_build, app_id, runtime_version, execution_environment, created_at, metadata',
+    )
+    .eq('feedback_id', id)
+    .maybeSingle();
+  if (error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (message.includes('feedback_client_context')) return null;
+    throw error;
+  }
+  if (!data) return null;
+  return {
+    platform: contextText(data.platform, 32),
+    deviceName: contextText(data.device_name),
+    manufacturer: contextText(data.manufacturer),
+    model: contextText(data.model),
+    osName: contextText(data.os_name, 64),
+    osVersion: contextText(data.os_version, 64),
+    appVersion: contextText(data.app_version, 64),
+    appBuild: contextText(data.app_build, 64),
+    appId: contextText(data.app_id),
+    runtimeVersion: contextText(data.runtime_version, 64),
+    executionEnvironment: contextText(data.execution_environment, 64),
+    recordedAt: toIso(data.created_at),
+    metadata: data.metadata && typeof data.metadata === 'object' ? data.metadata : {},
+  };
 }
 
 function shortMessage(value, max = 120) {
@@ -52,6 +175,13 @@ function mapFeedbackRow(row, profilesById, companiesById) {
     photoUrls.unshift(legacyPhoto);
   }
 
+  const rawStatus = String(row?.status || '').trim();
+  const status = SUPPORT_STATUS_VALUES.includes(rawStatus)
+    ? rawStatus
+    : row?.is_read === true
+      ? SUPPORT_STATUS.VIEWED
+      : SUPPORT_STATUS.NEW;
+
   return {
     id: String(row?.id || ''),
     companyId: companyId || null,
@@ -66,7 +196,10 @@ function mapFeedbackRow(row, profilesById, companiesById) {
     photoUrl: legacyPhoto || null,
     photoUrls,
     photoCount: photoUrls.length,
-    isRead: row?.is_read === true,
+    status,
+    statusUpdatedAt: toIso(row?.status_updated_at),
+    statusUpdatedBy: String(row?.status_updated_by || '').trim() || null,
+    isRead: status !== SUPPORT_STATUS.NEW,
     deletionState: String(row?.deletion_state || FEEDBACK_DELETION_STATE.ACTIVE),
     deleteError: String(row?.delete_error || '').trim() || null,
     readAt: toIso(row?.read_at),
@@ -259,6 +392,9 @@ export async function createSupportRequest({
 
   const effectiveCompanyId = String(canonicalRow?.company_id || inserted?.company_id || actorCompanyId || '').trim() || null;
 
+  // Diagnostic context is optional and must never prevent the request itself.
+  await saveSupportClientContext(inserted.id).catch(() => {});
+
   if (normalizedUris.length > 0 && !effectiveCompanyId) {
     try {
       await supabase.from('feedbacks').delete().eq('id', inserted.id);
@@ -322,11 +458,20 @@ export async function createSupportRequest({
     throw new Error('support_request_photos_upload_failed');
   }
 
-  const { data: fresh, error: freshError } = await supabase
+  let { data: fresh, error: freshError } = await supabase
     .from('feedbacks')
-    .select('id, text, created_at, user_id, company_id, photo_url, is_read, read_at, read_by, contact, full_name')
+    .select(FEEDBACK_WORKFLOW_SELECT)
     .eq('id', inserted.id)
     .maybeSingle();
+  if (freshError && isMissingWorkflowSchema(freshError)) {
+    const legacyResult = await supabase
+      .from('feedbacks')
+      .select(FEEDBACK_LEGACY_SELECT)
+      .eq('id', inserted.id)
+      .maybeSingle();
+    fresh = legacyResult.data;
+    freshError = legacyResult.error;
+  }
   if (freshError) throw freshError;
   return {
     ...(fresh || inserted),
@@ -337,17 +482,25 @@ export async function createSupportRequest({
   };
 }
 
-export async function listSupportRequests({ limit = 200 } = {}) {
+export async function listSupportRequests({ limit = 200, includeCompleted = false } = {}) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
-  const { data, error } = await supabase
+  const buildQuery = (select, workflowEnabled) => {
+    let query = supabase
     .from('feedbacks')
-    .select(
-      'id, text, created_at, user_id, company_id, photo_url, is_read, read_at, read_by, contact, full_name, deletion_state, delete_error',
-    )
+    .select(select)
     .neq('deletion_state', FEEDBACK_DELETION_STATE.PENDING)
-    .order('is_read', { ascending: true })
+    .order(workflowEnabled ? 'status' : 'is_read', { ascending: true })
     .order('created_at', { ascending: false })
     .limit(safeLimit);
+    if (workflowEnabled && !includeCompleted) query = query.neq('status', SUPPORT_STATUS.COMPLETED);
+    return query;
+  };
+  let { data, error } = await buildQuery(FEEDBACK_WORKFLOW_SELECT, true);
+  if (error && isMissingWorkflowSchema(error)) {
+    const legacyResult = await buildQuery(FEEDBACK_LEGACY_SELECT, false);
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
 
   if (error) throw error;
   const rows = Array.isArray(data) ? data : [];
@@ -361,17 +514,58 @@ export async function listSupportRequests({ limit = 200 } = {}) {
   return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, profilesById, companiesById));
 }
 
+export async function listMySupportRequests({ userId, limit = 100 } = {}) {
+  const id = String(userId || '').trim();
+  if (!id) return [];
+  const safeLimit = Math.max(1, Math.min(300, Number(limit) || 100));
+  let { data, error } = await supabase
+    .from('feedbacks')
+    .select(FEEDBACK_WORKFLOW_SELECT)
+    .eq('user_id', id)
+    .neq('deletion_state', FEEDBACK_DELETION_STATE.PENDING)
+    .order('created_at', { ascending: false })
+    .limit(safeLimit);
+  if (error && isMissingWorkflowSchema(error)) {
+    const legacyResult = await supabase
+      .from('feedbacks')
+      .select(FEEDBACK_LEGACY_SELECT)
+      .eq('user_id', id)
+      .neq('deletion_state', FEEDBACK_DELETION_STATE.PENDING)
+      .order('created_at', { ascending: false })
+      .limit(safeLimit);
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
+  if (error) throw error;
+
+  const rows = Array.isArray(data) ? data : [];
+  const attachmentsByFeedbackId = await loadAttachmentsByFeedbackIds(rows.map((row) => row?.id));
+  const rowsWithPhotos = rows.map((row) => ({
+    ...row,
+    photo_urls: attachmentsByFeedbackId.get(String(row?.id || '').trim()) || [],
+  }));
+  const rowsWithResolvedPhotos = await resolveSupportPhotoUrls(rowsWithPhotos);
+  return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, new Map(), new Map()));
+}
+
 export async function getSupportRequestById(feedbackId) {
   const id = String(feedbackId || '').trim();
   if (!id) throw new Error('feedback id is required');
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('feedbacks')
-    .select(
-      'id, text, created_at, user_id, company_id, photo_url, is_read, read_at, read_by, contact, full_name, deletion_state, delete_error',
-    )
+    .select(FEEDBACK_WORKFLOW_SELECT)
     .eq('id', id)
     .maybeSingle();
+  if (error && isMissingWorkflowSchema(error)) {
+    const legacyResult = await supabase
+      .from('feedbacks')
+      .select(FEEDBACK_LEGACY_SELECT)
+      .eq('id', id)
+      .maybeSingle();
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
 
   if (error) throw error;
   if (!data) return null;
@@ -382,8 +576,14 @@ export async function getSupportRequestById(feedbackId) {
   };
   const [dataWithResolvedPhotos] = await resolveSupportPhotoUrls([dataWithPhotos]);
 
-  const { profilesById, companiesById } = await loadProfilesAndCompanies([dataWithPhotos]);
-  return mapFeedbackRow(dataWithResolvedPhotos || dataWithPhotos, profilesById, companiesById);
+  const [{ profilesById, companiesById }, clientContext] = await Promise.all([
+    loadProfilesAndCompanies([dataWithPhotos]),
+    loadSupportClientContext(data.id),
+  ]);
+  return {
+    ...mapFeedbackRow(dataWithResolvedPhotos || dataWithPhotos, profilesById, companiesById),
+    clientContext,
+  };
 }
 
 export async function markSupportRequestRead(feedbackId, readByUserId) {
@@ -391,11 +591,36 @@ export async function markSupportRequestRead(feedbackId, readByUserId) {
   if (!id) return;
 
   const patch = {
+    status: SUPPORT_STATUS.VIEWED,
+    status_updated_at: new Date().toISOString(),
+    status_updated_by: readByUserId || null,
     is_read: true,
     read_at: new Date().toISOString(),
     read_by: readByUserId || null,
   };
 
+  const { error } = await supabase.from('feedbacks').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+export async function updateSupportRequestStatus(feedbackId, status, changedByUserId) {
+  const id = String(feedbackId || '').trim();
+  const nextStatus = String(status || '').trim();
+  if (!id) throw new Error('feedback id is required');
+  if (!SUPPORT_STATUS_VALUES.includes(nextStatus)) {
+    throw new Error('support_request_invalid_status');
+  }
+
+  const isRead = nextStatus !== SUPPORT_STATUS.NEW;
+  const patch = {
+    status: nextStatus,
+    status_updated_at: new Date().toISOString(),
+    status_updated_by: changedByUserId || null,
+    is_read: isRead,
+    ...(isRead
+      ? { read_by: changedByUserId || null }
+      : { read_at: null, read_by: null }),
+  };
   const { error } = await supabase.from('feedbacks').update(patch).eq('id', id);
   if (error) throw error;
 }
@@ -469,11 +694,20 @@ export async function deleteSupportRequest(feedbackId) {
 }
 
 export async function countUnreadSupportRequests() {
-  const { count, error } = await supabase
+  let { count, error } = await supabase
     .from('feedbacks')
     .select('id', { count: 'exact', head: true })
-    .eq('is_read', false)
+    .eq('status', SUPPORT_STATUS.NEW)
     .eq('deletion_state', FEEDBACK_DELETION_STATE.ACTIVE);
+  if (error && isMissingWorkflowSchema(error)) {
+    const legacyResult = await supabase
+      .from('feedbacks')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_read', false)
+      .eq('deletion_state', FEEDBACK_DELETION_STATE.ACTIVE);
+    count = legacyResult.count;
+    error = legacyResult.error;
+  }
   if (error) throw error;
   return Number(count) || 0;
 }

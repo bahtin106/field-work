@@ -1,7 +1,8 @@
 import React from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Linking } from 'react-native';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import Feather from '@expo/vector-icons/Feather';
 import AdditionalPhoneInputRow from '../clients/AdditionalPhoneInputRow';
 import Button from '../ui/Button';
@@ -305,7 +306,7 @@ export default function ClientObjectEditorModal({
       footer={footer}
       maxHeightRatio={0.86}
     >
-      <ScrollView
+      <KeyboardAwareScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -500,7 +501,7 @@ export default function ClientObjectEditorModal({
             ))}
           </>
         ) : null}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </BaseModal>
   );
 }

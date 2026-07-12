@@ -9,11 +9,11 @@ import {
   BackHandler,
   Linking,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
@@ -69,7 +69,6 @@ import {
 } from '../../../src/features/fieldSettings/catalog';
 import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
 import { useUsers } from '../../../components/hooks/useUsers';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
@@ -83,7 +82,6 @@ import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField, { SwitchField } from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
-import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { usePermissions } from '../../../lib/permissions';
 import { formatPersonName } from '../../../lib/personName';
 import { supabase } from '../../../lib/supabase';
@@ -106,7 +104,6 @@ import { openCoordinatesInYandex } from '../../../components/ui/map';
 import { resolveRequestTitle } from '../../../src/features/requests/title';
 import { buildAssigneeSelectItems } from '../../../src/features/requests/assigneeSelect';
 
-const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
@@ -421,8 +418,6 @@ function EditOrderContent() {
   const [fieldErrors, setFieldErrors] = useState({});
   const titlePrefix = useMemo(() => T('order_auto_title_prefix'), []);
   const scrollRef = useRef(null);
-  const scrollYRef = useRef(0);
-  const insets = useSafeAreaInsets();
   const titleRef = useRef(null);
   const descriptionRef = useRef(null);
   const regionRef = useRef(null);
@@ -508,7 +503,6 @@ function EditOrderContent() {
       if (key === 'departure_time') {
         return (
           String(orderData?.departure_time || '').trim().length > 0 ||
-          hasExplicitTimeLike(orderData?.time_window_start) ||
           hasExplicitTimeLike(orderData?.departure_time) ||
           hasExplicitTimeLike(departureTime)
         );
@@ -1465,10 +1459,7 @@ function EditOrderContent() {
             0,
           )
         : null;
-      const legacyDepartureTime = hasExplicitTimeLike(row.time_window_start)
-        ? normalizeDateOrNull(row.time_window_start)
-        : null;
-      const nextDepartureTime = parseTimeStringToDate(row.departure_time) || legacyDepartureTime || null;
+      const nextDepartureTime = parseTimeStringToDate(row.departure_time);
       const nextDepartureEndDate = normalizeDateOrNull(row.time_window_end);
       const nextIsDepartureRange = !!nextDepartureEndDate;
       const nextAssigneeId = isSoloAdmin ? soloAdminUserId : (row.assigned_to || null);
@@ -1970,17 +1961,6 @@ function EditOrderContent() {
     }
   }, [isDirty]);
 
-  const focusField = useCallback(
-    (fieldRef) =>
-      ensureVisibleField({
-        fieldRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight: theme?.components?.header?.height ?? HEADER_HEIGHT_FALLBACK,
-      }),
-    [insets.bottom, theme?.components?.header?.height],
-  );
   const assigneeItems = useMemo(() => {
     const departmentsById = new Map(
       (Array.isArray(departments) ? departments : []).map((department) => [
@@ -2434,7 +2414,6 @@ function EditOrderContent() {
                 multiline
                 minLines={1}
                 style={styles.field}
-                onFocus={() => focusField(titleRef)}
                 error={getFieldError('title') ? 'invalid' : undefined}
               />
               <FieldErrorText message={getFieldError('title')} />
@@ -2456,7 +2435,6 @@ function EditOrderContent() {
                 multiline
                 minLines={1}
                 style={styles.field}
-                onFocus={() => focusField(descriptionRef)}
                 error={getFieldError('comment') ? 'invalid' : undefined}
               />
               <FieldErrorText message={getFieldError('comment')} />
@@ -2487,7 +2465,6 @@ function EditOrderContent() {
     [
       clearFieldError,
       description,
-      focusField,
       getFieldError,
       isFieldRequired,
       displayDepartureDate,
@@ -2836,11 +2813,6 @@ function EditOrderContent() {
           },
         }}
         scrollRef={scrollRef}
-        onScroll={(e) => {
-          try {
-            scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-          } catch {}
-        }}
       >
       <SectionHeader>{T('order_details_general_data')}</SectionHeader>
           <Card padded={false} style={styles.card}>
@@ -2908,7 +2880,7 @@ function EditOrderContent() {
           </View>
         )}
       >
-        <ScrollView
+        <KeyboardAwareScrollView
           style={{ flexShrink: 1, minHeight: 0 }}
           contentContainerStyle={{ paddingBottom: theme.spacing.sm }}
           keyboardShouldPersistTaps="handled"
@@ -2975,12 +2947,11 @@ function EditOrderContent() {
                     }
                     keyboardType={field.keyboardType}
                     style={styles.field}
-                    onFocus={() => focusField(field.ref)}
                   />
                 ))
               : null}
           </Card>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <SelectModal

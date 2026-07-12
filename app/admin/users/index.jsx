@@ -2,7 +2,8 @@ import Feather from '@expo/vector-icons/Feather';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
@@ -48,8 +49,8 @@ export default function AdminUsersScreen() {
   }
 
   return (
-    <Screen background="background">
-      <ScrollView contentContainerStyle={styles(theme).content}>
+    <Screen background="background" scroll={false}>
+      <KeyboardAwareScrollView contentContainerStyle={styles(theme).content}>
         <Card style={styles(theme).card}>
           <TextInput
             value={search}
@@ -101,7 +102,7 @@ export default function AdminUsersScreen() {
             </Pressable>
           </Card>
         ))}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }

@@ -9,9 +9,24 @@ import Card from '../../../components/ui/Card';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { resolveAppLocale } from '../../../lib/localeFormatting';
 import { supabase } from '../../../lib/supabase';
-import { listSupportRequests, SUPPORT_UNREAD_REFETCH_MS } from '../../../src/features/supportRequests/api';
+import {
+  listSupportRequests,
+  SUPPORT_STATUS,
+  SUPPORT_UNREAD_REFETCH_MS,
+} from '../../../src/features/supportRequests/api';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { withAlpha } from '../../../theme/colors';
+
+function getStatusMeta(t, theme, status) {
+  const map = {
+    [SUPPORT_STATUS.NEW]: { label: t('support_status_new'), color: theme.colors.primary },
+    [SUPPORT_STATUS.VIEWED]: { label: t('support_status_viewed'), color: theme.colors.textSecondary },
+    [SUPPORT_STATUS.IN_PROGRESS]: { label: t('support_status_in_progress'), color: theme.colors.warning || theme.colors.primary },
+    [SUPPORT_STATUS.COMPLETED]: { label: t('support_status_completed'), color: theme.colors.success || theme.colors.primary },
+  };
+  return map[status] || map[SUPPORT_STATUS.NEW];
+}
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -36,20 +51,23 @@ export default function AdminFeedbacksScreen() {
   const nav = useNavigation();
   const router = useRouter();
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
+  const [includeCompleted, setIncludeCompleted] = React.useState(false);
+  const [statusFilter, setStatusFilter] = React.useState('active');
 
   React.useLayoutEffect(() => {
     nav.setParams({ headerTitle: t('routes.admin/feedbacks') });
   }, [nav, t]);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['adminSupportRequests'],
-    queryFn: () => listSupportRequests({ limit: 300 }),
+    queryKey: ['adminSupportRequests', { includeCompleted }],
+    queryFn: () => listSupportRequests({ limit: 300, includeCompleted }),
     enabled: isAllowed,
     staleTime: 10 * 1000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     refetchInterval: SUPPORT_UNREAD_REFETCH_MS,
     refetchIntervalInBackground: true,
+    placeholderData: (previous) => previous,
   });
 
   React.useEffect(() => {
@@ -72,9 +90,68 @@ export default function AdminFeedbacksScreen() {
     return <Screen background="background" />;
   }
 
+  const statusCounts = (data || []).reduce((result, item) => {
+    result[item.status] = (result[item.status] || 0) + 1;
+    return result;
+  }, {});
+  const statusOrder = {
+    [SUPPORT_STATUS.NEW]: 0,
+    [SUPPORT_STATUS.IN_PROGRESS]: 1,
+    [SUPPORT_STATUS.VIEWED]: 2,
+    [SUPPORT_STATUS.COMPLETED]: 3,
+  };
+  const visibleData = (statusFilter === 'active'
+    ? (data || []).filter((item) => item.status !== SUPPORT_STATUS.COMPLETED)
+    : (data || []).filter((item) => item.status === statusFilter))
+    .slice()
+    .sort((left, right) => {
+      const statusDelta = (statusOrder[left.status] ?? 9) - (statusOrder[right.status] ?? 9);
+      if (statusDelta !== 0) return statusDelta;
+      return new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime();
+    });
+  const filterItems = [
+    { id: 'active', label: t('support_filter_active'), count: (data || []).filter((item) => item.status !== SUPPORT_STATUS.COMPLETED).length },
+    { id: SUPPORT_STATUS.NEW, label: t('support_status_new'), count: statusCounts[SUPPORT_STATUS.NEW] || 0 },
+    { id: SUPPORT_STATUS.VIEWED, label: t('support_status_viewed'), count: statusCounts[SUPPORT_STATUS.VIEWED] || 0 },
+    { id: SUPPORT_STATUS.IN_PROGRESS, label: t('support_status_in_progress'), count: statusCounts[SUPPORT_STATUS.IN_PROGRESS] || 0 },
+    ...(includeCompleted
+      ? [{ id: SUPPORT_STATUS.COMPLETED, label: t('support_status_completed'), count: statusCounts[SUPPORT_STATUS.COMPLETED] || 0 }]
+      : []),
+  ];
+
   return (
-    <Screen background="background">
+    <Screen background="background" scroll={false}>
       <ScrollView contentContainerStyle={styles(theme).content}>
+        <View style={styles(theme).toolbar}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles(theme).filters}>
+            {filterItems.map((filter) => {
+              const selected = statusFilter === filter.id;
+              return (
+                <Pressable
+                  key={filter.id}
+                  onPress={() => setStatusFilter(filter.id)}
+                  style={[
+                    styles(theme).filterChip,
+                    selected && styles(theme).filterChipSelected,
+                  ]}
+                >
+                  <Text style={[styles(theme).filterText, selected && styles(theme).filterTextSelected]}>
+                    {filter.label} · {filter.count}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          <Button
+            title={includeCompleted ? t('support_hide_completed') : t('support_show_completed')}
+            variant="secondary"
+            size="sm"
+            onPress={() => {
+              setIncludeCompleted((value) => !value);
+              if (includeCompleted && statusFilter === SUPPORT_STATUS.COMPLETED) setStatusFilter('active');
+            }}
+          />
+        </View>
         {isLoading ? <Text style={styles(theme).muted}>{t('admin_loading')}</Text> : null}
         {error ? (
           <Card style={styles(theme).card}>
@@ -89,16 +166,18 @@ export default function AdminFeedbacksScreen() {
           </Card>
         ) : null}
 
-        {!isLoading && !error && (!data || data.length === 0) ? (
+        {!isLoading && !error && visibleData.length === 0 ? (
           <Text style={styles(theme).muted}>{t('admin_feedbacks_empty')}</Text>
         ) : null}
 
-        {data?.map((item) => (
+        {visibleData.map((item) => {
+          const statusMeta = getStatusMeta(t, theme, item.status);
+          return (
           <Card
             key={item.id}
             style={[
               styles(theme).card,
-              item.isRead ? null : styles(theme).cardUnread,
+              item.status !== SUPPORT_STATUS.NEW ? null : styles(theme).cardUnread,
             ]}
             padded={false}
           >
@@ -120,11 +199,11 @@ export default function AdminFeedbacksScreen() {
                         {t('admin_feedbacks_cleanup_failed_badge')}
                       </Text>
                     </View>
-                  ) : !item.isRead ? (
-                    <View style={styles(theme).badge}>
-                      <Text style={styles(theme).badgeText}>{t('admin_feedbacks_unread_badge')}</Text>
+                  ) : (
+                    <View style={[styles(theme).badge, { borderColor: statusMeta.color, backgroundColor: withAlpha(statusMeta.color, 0.1) }]}>
+                      <Text style={[styles(theme).badgeText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
                     </View>
-                  ) : null}
+                  )}
                 </View>
                 <Text style={styles(theme).name} numberOfLines={1}>
                   {item.authorName || '—'}
@@ -144,7 +223,8 @@ export default function AdminFeedbacksScreen() {
               <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
             </Pressable>
           </Card>
-        ))}
+          );
+        })}
       </ScrollView>
     </Screen>
   );
@@ -181,6 +261,19 @@ const styles = (theme) =>
       marginTop: theme.spacing.sm,
       alignSelf: 'flex-start',
     },
+    toolbar: { gap: theme.spacing.sm, marginBottom: theme.spacing.xs },
+    filters: { gap: theme.spacing.sm, paddingRight: theme.spacing.md },
+    filterChip: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.pill || 999,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+      backgroundColor: theme.colors.surface,
+    },
+    filterChipSelected: { borderColor: theme.colors.primary, backgroundColor: withAlpha(theme.colors.primary, 0.1) },
+    filterText: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.medium },
+    filterTextSelected: { color: theme.colors.primary, fontWeight: theme.typography.weight.semibold },
     row: {
       minHeight: theme.components.row.minHeight + theme.spacing.xl,
       paddingHorizontal: theme.spacing.md,

@@ -35,7 +35,8 @@ const ICON_BTN_SIZE = 40;
 const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
 const DATA_IMAGE_URI_RE = /^data:image\//i;
 const REMOTE_URI_RE = /^https?:\/\//i;
-const imageSizeCache = new Map();
+const GALLERY_WINDOW_SIZE = 3;
+const GALLERY_SNAP_TIMING = { duration: 220 };
 
 const haptic = (style = 'Light') =>
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(() => {});
@@ -66,36 +67,6 @@ const measureImage = (uri) =>
     );
   });
 
-const getCachedImageSize = (uri) => {
-  if (!uri) return Promise.resolve(null);
-
-  const cached = imageSizeCache.get(uri);
-  if (cached) return cached;
-
-  const pending = measureImage(uri).then((size) => {
-    if (!size) imageSizeCache.delete(uri);
-    return size;
-  });
-  imageSizeCache.set(uri, pending);
-  return pending;
-};
-
-const fitImageInsideViewport = (imageSize, viewportWidth, viewportHeight) => {
-  if (!imageSize?.width || !imageSize?.height || !viewportWidth || !viewportHeight) {
-    return { width: viewportWidth, height: viewportHeight };
-  }
-
-  const fitScale = Math.min(
-    viewportWidth / imageSize.width,
-    viewportHeight / imageSize.height,
-  );
-
-  return {
-    width: imageSize.width * fitScale,
-    height: imageSize.height * fitScale,
-  };
-};
-
 const getImageExtension = (uri) => {
   const path = String(uri || '').trim().split('?')[0].split('#')[0];
   const match = path.match(/\.(jpe?g|png|gif|webp)$/i);
@@ -107,23 +78,6 @@ const GalleryPhoto = memo(function GalleryPhoto({
   viewportWidth,
   viewportHeight,
 }) {
-  const [imageSize, setImageSize] = useState(null);
-
-  useEffect(() => {
-    let active = true;
-    setImageSize(null);
-
-    getCachedImageSize(uri).then((size) => {
-      if (active) setImageSize(size);
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [uri]);
-
-  const fittedSize = fitImageInsideViewport(imageSize, viewportWidth, viewportHeight);
-
   return (
     <ExpoImage
       source={{ uri }}
@@ -131,7 +85,10 @@ const GalleryPhoto = memo(function GalleryPhoto({
       cachePolicy="memory-disk"
       transition={0}
       recyclingKey={uri}
-      style={[styles.galleryPhoto, fittedSize]}
+      style={[
+        styles.galleryPhoto,
+        { width: viewportWidth, height: viewportHeight },
+      ]}
     />
   );
 });
@@ -145,6 +102,7 @@ const ZoomGallery = memo(function ZoomGallery({
   keyExtractor,
   onIndexChange,
   onTap,
+  onPanEnd,
 }) {
   return (
     <Gallery
@@ -156,8 +114,10 @@ const ZoomGallery = memo(function ZoomGallery({
       keyExtractor={keyExtractor}
       onIndexChange={onIndexChange}
       onTap={onTap}
+      onPanEnd={onPanEnd}
       maxScale={5}
-      windowSize={5}
+      windowSize={GALLERY_WINDOW_SIZE}
+      snapTimingConfig={GALLERY_SNAP_TIMING}
       tapOnEdgeToItem={false}
       allowPinchPanning
       allowOverflow={false}
@@ -201,9 +161,10 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const dismissNotifiedRef = useRef(false);
   const modalOverlayOpenRef = useRef(false);
 
-  const initialImages = normalizeImages(images);
-  const imageSignature = initialImages.join('\u001f');
+  const initialImages = useMemo(() => normalizeImages(images), [images]);
+  const imageSignature = useMemo(() => initialImages.join('\u001f'), [initialImages]);
   const initialSafeIndex = clampIndex(initialIndex, initialImages.length);
+  const currentIndexRef = useRef(initialSafeIndex);
   const syncedSignatureRef = useRef(imageSignature);
   const visibleRef = useRef(visible);
 
@@ -353,6 +314,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       dismissNotifiedRef.current = false;
     }
     setLocalImages(nextImages);
+    currentIndexRef.current = nextIndex;
     setCurrentIndex(nextIndex);
     setViewerIndex(nextIndex);
     setMenuOpen(false);
@@ -378,10 +340,25 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   }, [confirmDelete, infoOpen, menuOpen]);
 
   useEffect(() => {
-    localImages.forEach((uri) => {
-      ExpoImage.prefetch(uri, 'memory-disk').catch(() => {});
-    });
-  }, [localImages]);
+    let active = true;
+    const candidates = [
+      localImages[currentIndex],
+      localImages[currentIndex + 1],
+      localImages[currentIndex - 1],
+    ].filter(Boolean);
+    const uniqueCandidates = [...new Set(candidates)];
+
+    (async () => {
+      for (const uri of uniqueCandidates) {
+        if (!active) break;
+        await ExpoImage.prefetch(uri, 'memory-disk').catch(() => false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [currentIndex, localImages]);
 
   const flushRotations = useCallback(() => {
     if (rotationsFlushedRef.current) return;
@@ -583,6 +560,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
 
     const nextIndex = Math.min(idx, remaining.length - 1);
     setLocalImages(remaining);
+    currentIndexRef.current = nextIndex;
     setCurrentIndex(nextIndex);
     setViewerIndex(nextIndex);
     setConfirmDelete(false);
@@ -617,8 +595,34 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   }, [infoOpen, t]);
 
   const handleIndexChange = useCallback((nextIndex) => {
-    setCurrentIndex(clampIndex(nextIndex, localImages.length));
+    const safeIndex = clampIndex(nextIndex, localImages.length);
+    currentIndexRef.current = safeIndex;
+    setCurrentIndex(safeIndex);
   }, [localImages.length]);
+
+  const handleGalleryPanEnd = useCallback((event) => {
+    const translationX = Number(event?.translationX) || 0;
+    const translationY = Number(event?.translationY) || 0;
+    const horizontalDistance = Math.abs(translationX);
+    const verticalDistance = Math.abs(translationY);
+    const distanceThreshold = Math.max(32, Math.min(64, viewportWidth * 0.14));
+    const galleryScale = Number(galleryRef.current?.getState?.()?.scale) || 1;
+
+    if (galleryScale > 1.01) return;
+    if (horizontalDistance < distanceThreshold) return;
+    if (horizontalDistance <= verticalDistance * 1.15) return;
+
+    const direction = translationX < 0 ? 1 : -1;
+    const nextIndex = clampIndex(currentIndexRef.current + direction, localImages.length);
+    if (nextIndex === currentIndexRef.current) return;
+
+    currentIndexRef.current = nextIndex;
+    setCurrentIndex(nextIndex);
+    // The toolkit only reports quick flicks as swipes. Remounting at the
+    // intended index handles a deliberate slower drag without changing its
+    // pinch/zoom behavior.
+    setViewerIndex(nextIndex);
+  }, [localImages.length, viewportWidth]);
 
   const handleGalleryTap = useCallback(() => {
     if (modalOverlayOpenRef.current) {
@@ -677,6 +681,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                 keyExtractor={galleryKeyExtractor}
                 onIndexChange={handleIndexChange}
                 onTap={handleGalleryTap}
+                onPanEnd={handleGalleryPanEnd}
               />
             </View>
 

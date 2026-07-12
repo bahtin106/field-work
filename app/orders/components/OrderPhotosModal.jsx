@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,9 +9,17 @@ import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { pickGalleryImages } from '../../../src/shared/media/imagePipeline';
-import PhotoCaptureFlowModal from './PhotoCaptureFlowModal';
 import PhotoGrid from './PhotoGrid';
+
+const PhotoCaptureFlowModal = lazy(() => import('./PhotoCaptureFlowModal'));
+let imagePipelineModulePromise = null;
+
+function loadImagePipelineModule() {
+  if (!imagePipelineModulePromise) {
+    imagePipelineModulePromise = import('../../../src/shared/media/imagePipeline');
+  }
+  return imagePipelineModulePromise;
+}
 
 const hapticTap = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 const hapticMedium = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -139,6 +147,7 @@ export default function MediaUploadModal({
     if (!canAddFromGallery) return;
     hapticTap();
     try {
+      const { pickGalleryImages } = await loadImagePipelineModule();
       const picked = await pickGalleryImages({
         quality: 1,
         selectionLimit: 20,
@@ -419,7 +428,9 @@ export default function MediaUploadModal({
     <>
       {embedded ? (
         cameraVisible && canAddFromCamera ? (
-          <PhotoCaptureFlowModal visible onClose={handleCloseCamera} onSave={handleSaveFromCamera} />
+          <Suspense fallback={<View style={s.cameraLoading}><ActivityIndicator color={theme.colors.primary} /></View>}>
+            <PhotoCaptureFlowModal visible onClose={handleCloseCamera} onSave={handleSaveFromCamera} />
+          </Suspense>
         ) : (
           <View style={s.embeddedRoot}>
             <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
@@ -456,11 +467,13 @@ export default function MediaUploadModal({
         onFullscreenRequestClose={handleCloseCamera}
         fullscreenContent={
           cameraVisible && canAddFromCamera ? (
-            <PhotoCaptureFlowModal
-              visible
-              onClose={handleCloseCamera}
-              onSave={handleSaveFromCamera}
-            />
+            <Suspense fallback={<View style={s.cameraLoading}><ActivityIndicator color={theme.colors.primary} /></View>}>
+              <PhotoCaptureFlowModal
+                visible
+                onClose={handleCloseCamera}
+                onSave={handleSaveFromCamera}
+              />
+            </Suspense>
           ) : null
         }
       >
@@ -478,6 +491,12 @@ function buildStyles(theme, insets) {
   const rd = theme.radii;
 
   return StyleSheet.create({
+    cameraLoading: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: cl.background,
+    },
     embeddedRoot: {
       flex: 1,
       justifyContent: 'flex-end',

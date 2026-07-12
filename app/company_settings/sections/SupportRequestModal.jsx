@@ -2,7 +2,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { Dimensions } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import Button from '../../../components/ui/Button';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
@@ -18,7 +19,7 @@ import { useTranslation } from '../../../src/i18n/useTranslation';
 import { pickGalleryImages } from '../../../src/shared/media/imagePipeline';
 import { useTheme } from '../../../theme/ThemeProvider';
 
-export default function SupportRequestModal({ visible, onClose, profile }) {
+export default function SupportRequestModal({ visible, onClose, onSubmitted, profile, userId }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
@@ -165,7 +166,7 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
       const created = await createSupportRequest({
         message: trimmed,
         photoLocalUris: photos.map((item) => String(item?.uri || '').trim()).filter(Boolean),
-        userId: profile?.id || profile?.user_id || null,
+        userId: userId || profile?.id || profile?.user_id || null,
         companyId: profile?.company_id || null,
         contact: profile?.full_name || null,
         fullName: profile?.full_name || null,
@@ -174,6 +175,7 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
       const requestedPhotos = Number(created?._supportMeta?.requestedPhotos || 0);
       const uploadedPhotos = Number(created?._supportMeta?.uploadedPhotos || 0);
       queryClient.invalidateQueries({ queryKey: SUPPORT_UNREAD_QUERY_KEY });
+      onSubmitted?.(created);
       closeWithoutConfirm(true);
       setTimeout(() => {
         toast.success(t('support_request_sent'));
@@ -198,6 +200,7 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
   }, [
     closeWithoutConfirm,
     message,
+    onSubmitted,
     photos,
     profile?.company_id,
     profile?.full_name,
@@ -206,6 +209,7 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
     queryClient,
     t,
     toast,
+    userId,
   ]);
 
   const photoUris = React.useMemo(
@@ -248,7 +252,7 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
           </View>
         }
       >
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles(theme).scroll}
           contentContainerStyle={styles(theme).contentWrap}
           keyboardShouldPersistTaps="handled"
@@ -320,7 +324,7 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
               ))}
             </View>
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <ConfirmModal

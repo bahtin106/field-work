@@ -2000,7 +2000,6 @@ function CreateOrderContent() {
                     <ClearButton
                       onPress={() => {
                         setDepartureDate(null);
-                        setDepartureTime(null);
                         setDepartureEndDate(null);
                         setIsDepartureRange(false);
                       }}
@@ -2053,19 +2052,16 @@ function CreateOrderContent() {
                   isFieldRequired('departure_time'),
                 )}
                 value={
-                  departureDate && hasDepartureTimeValue(departureTime)
+                  hasDepartureTimeValue(departureTime)
                     ? formatTime(departureTime)
-                    : departureDate
-                      ? t('create_order_placeholder_time')
-                      : t('create_order_placeholder_time_disabled')
+                    : t('create_order_placeholder_time')
                 }
                 pressable
-                disabled={!departureDate}
                 style={formStyles.field}
                 ref={timeFieldRef}
                 error={shouldShowError('departure_time') && fieldErrors?.departure_time ? 'invalid' : undefined}
                 rightSlot={
-                  departureDate && hasDepartureTimeValue(departureTime) ? (
+                  hasDepartureTimeValue(departureTime) ? (
                     <ClearButton
                       onPress={() => {
                         setDepartureTime(null);

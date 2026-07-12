@@ -8,14 +8,15 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
+import { Image as ExpoImage } from 'expo-image';
 
 import CachedImage from '../../../components/ui/CachedImage';
-import { prefetchMediaUrls } from '../../../src/shared/media/imagePipeline';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const NUM_COLUMNS = 3;
 const PHOTO_ACTION_HIT_SLOP = { top: 10, right: 10, bottom: 10, left: 10 };
+const PHOTO_PRESS_RETENTION_OFFSET = { top: 14, right: 14, bottom: 14, left: 14 };
 const LOCAL_FILE_URI_RE = /^file:\/\//i;
 
 function normalizePhotoKeySource(value) {
@@ -128,6 +129,7 @@ const PhotoItem = memo(function PhotoItem({
       <Pressable
         onPress={handlePress}
         onLongPress={handleLongPress}
+        pressRetentionOffset={PHOTO_PRESS_RETENTION_OFFSET}
         disabled={isPending && !isFailed}
         accessibilityRole={isFailed ? 'button' : 'image'}
         accessibilityLabel={isFailed ? t('btn_retry') : undefined}
@@ -282,8 +284,12 @@ function PhotoGrid({
   useEffect(() => {
     const displayUrls = data
       .filter((item) => !item.isPending && !item.issueMessage)
-      .map((item) => item.displayUri || item.uri);
-    prefetchMediaUrls(displayUrls, { batchSize: 6 }).catch(() => {});
+      .slice(0, 12)
+      .map((item) => item.displayUri || item.uri)
+      .filter(Boolean);
+    if (displayUrls.length) {
+      ExpoImage.prefetch(displayUrls, 'memory-disk').catch(() => {});
+    }
   }, [data]);
 
   const handleOpenViewer = useCallback(

@@ -249,26 +249,30 @@ export async function handlePushTokenSyncRequest(req: Request) {
       if (appVersion) tokenRow.app_version = appVersion;
       if (locale) tokenRow.locale = locale;
 
-      const { error: upErr } = await admin.from('push_tokens').upsert(tokenRow, { onConflict: 'token' });
-      if (upErr) {
-        console.error('[push-token-sync][upsert]', normalizeError(upErr));
-        throw upErr;
-      }
-
+      // A physical installation can belong to only one current account.
+      // Invalidate previous tokens for this device across every user before
+      // making the new token valid; doing this after the upsert leaves a race
+      // window and conflicts with the database uniqueness invariant.
       if (deviceId) {
         const { error: invalidateOldErr } = await admin
           .from('push_tokens')
           .update({
             is_valid: false,
-            invalid_reason: 'ReplacedByNewerToken',
+            invalid_reason: 'ReassignedToAnotherAccount',
           })
-          .eq('user_id', user.id)
           .eq('device_id', deviceId)
           .neq('token', pushToken)
           .eq('is_valid', true);
         if (invalidateOldErr) {
-          console.warn('[push-token-sync][invalidate-old-device-tokens]', normalizeError(invalidateOldErr));
+          console.error('[push-token-sync][invalidate-old-device-tokens]', normalizeError(invalidateOldErr));
+          throw invalidateOldErr;
         }
+      }
+
+      const { error: upErr } = await admin.from('push_tokens').upsert(tokenRow, { onConflict: 'token' });
+      if (upErr) {
+        console.error('[push-token-sync][upsert]', normalizeError(upErr));
+        throw upErr;
       }
 
       if (body.enable_notifications !== false) await upsertAllowPrefs(true);
@@ -379,10 +383,30 @@ export async function handlePushTokenSyncRequest(req: Request) {
 
     if (action === 'delete') {
       const pushToken = String(body.push_token || '').trim();
-      let query = admin.from('push_tokens').delete().eq('user_id', user.id);
-      if (pushToken) query = query.eq('token', pushToken);
-      const { error: delErr } = await query;
-      if (delErr) throw delErr;
+      const deviceId = String(body.device_id || '').trim();
+      if (deviceId) {
+        const { error: deviceDeleteError } = await admin
+          .from('push_tokens')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('device_id', deviceId);
+        if (deviceDeleteError) throw deviceDeleteError;
+      }
+      if (pushToken) {
+        const { error: tokenDeleteError } = await admin
+          .from('push_tokens')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('token', pushToken);
+        if (tokenDeleteError) throw tokenDeleteError;
+      }
+      if (!deviceId && !pushToken) {
+        const { error: deleteAllError } = await admin
+          .from('push_tokens')
+          .delete()
+          .eq('user_id', user.id);
+        if (deleteAllError) throw deleteAllError;
+      }
       if (body.disable_notifications === true) await upsertAllowPrefs(false);
       return json(200, { ok: true });
     }

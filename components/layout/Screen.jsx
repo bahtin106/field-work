@@ -32,7 +32,7 @@ export default function Screen({
   const showHeader = !isAuthScreen && headerOptions?.headerShown !== false;
   const insets = useSafeAreaInsets();
   const useScroll = scroll !== false && !isAuthScreen;
-  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 40;
+  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 20;
   const extraKeyboardSpace = theme.components?.keyboardAware?.extraKeyboardSpace ?? 0;
   const internalScrollRef = React.useRef(null);
   const internalScrollYRef = React.useRef(0);

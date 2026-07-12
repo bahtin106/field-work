@@ -396,8 +396,8 @@ export default function RegisterScreen() {
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const headerHeight = theme.components?.header?.height ?? 56;
-  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 40;
-  const extraKeyboardSpace = theme.components?.keyboardAware?.extraKeyboardSpace ?? 60;
+  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 20;
+  const extraKeyboardSpace = theme.components?.keyboardAware?.extraKeyboardSpace ?? 0;
   const { scrollToFirstInvalid } = useFormAutoScroll({
     scrollRef,
     scrollYRef,

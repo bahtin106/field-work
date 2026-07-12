@@ -11,7 +11,6 @@ import {
   InteractionManager,
   Keyboard,
   Linking,
-  Platform,
   Pressable,
   Animated as RNAnimated,
   ScrollView,
@@ -21,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 
 import { useAuth } from '../../components/hooks/useAuth';
 import {
@@ -63,6 +63,7 @@ import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import MediaUploadRow from '../../components/media/MediaUploadRow';
+import MediaUploadModal from '../../components/media/MediaUploadModal';
 import { OrderStatusCapsuleView } from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import AnimatedChevron from '../../components/ui/AnimatedChevron';
@@ -138,8 +139,16 @@ import {
   setOrderPhotoUploadQueueStatus,
 } from '../../src/shared/media/orderPhotoQueue';
 
-const MediaUploadModal = lazy(() => import('../../components/media/MediaUploadModal'));
-const FullscreenImageViewer = lazy(() => import('../../app/orders/components/FullscreenImageViewer'));
+let fullscreenImageViewerModulePromise = null;
+
+function loadFullscreenImageViewerModule() {
+  if (!fullscreenImageViewerModulePromise) {
+    fullscreenImageViewerModulePromise = import('../../app/orders/components/FullscreenImageViewer');
+  }
+  return fullscreenImageViewerModulePromise;
+}
+
+const FullscreenImageViewer = lazy(loadFullscreenImageViewerModule);
 
 let imageManipulatorPromise = null;
 let legacyFileSystemPromise = null;
@@ -272,16 +281,6 @@ function normalizeOrderRouteId(value) {
   return normalized;
 }
 
-function extractLegacyDepartureTime(input) {
-  if (!input) return null;
-  const parsed = new Date(input);
-  if (Number.isNaN(parsed?.getTime?.())) return null;
-  const hh = parsed.getHours();
-  const mm = parsed.getMinutes();
-  if (hh === 0 && mm === 0) return null;
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
-}
-
 function normalizeDepartureTimeString(input) {
   const raw = String(input || '').trim();
   if (!raw) return null;
@@ -295,10 +294,48 @@ function normalizeDepartureTimeString(input) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
 
+function parseOrderDateOnly(input) {
+  if (!input) return null;
+  if (input instanceof Date) {
+    if (Number.isNaN(input.getTime())) return null;
+    return new Date(input.getFullYear(), input.getMonth(), input.getDate());
+  }
+  const raw = String(input || '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function parseOrderDepartureDate(dateInput, timeInput) {
+  const date = parseOrderDateOnly(dateInput);
+  if (!date) return null;
+  const normalizedTime = normalizeDepartureTimeString(timeInput);
+  if (!normalizedTime) return date;
+  const [hours, minutes, seconds] = normalizedTime.split(':').map(Number);
+  date.setHours(hours, minutes, seconds || 0, 0);
+  return date;
+}
+
 function formatDateOnlyForStorage(input) {
-  const parsed = input instanceof Date ? input : new Date(input);
+  const parsed = parseOrderDateOnly(input);
   if (!parsed || Number.isNaN(parsed?.getTime?.())) return null;
   return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+}
+
+function isOrderSnapshotReadyForDisplay(snapshot) {
+  if (!isRequestDetailLoaded(snapshot)) return false;
+  if (snapshot?.__departureTimeIndependent !== true) return false;
+  const workTypeId = String(snapshot?.work_type_id || '').trim();
+  if (!workTypeId) return true;
+  return Boolean(
+    String(snapshot?.work_type_name || '').trim() ||
+      String(snapshot?.work_type?.name || '').trim(),
+  );
 }
 
 const REQUEST_SYNC_FIELDS = [
@@ -316,6 +353,7 @@ const REQUEST_SYNC_FIELDS = [
   'fio',
   'phone',
   'work_type_id',
+  'work_type_name',
   'start_price',
   'payment_status',
   'payment_method',
@@ -598,8 +636,23 @@ function OrderDetailsContent() {
   const firstContentTrackedRef = useRef(false);
   const lastRequestSyncRef = useRef('');
 
-  const [order, setOrder] = useState(initialCachedOrder);
-  const [orderReady, setOrderReady] = useState(() => !!initialCachedOrder || !id);
+  const initialDisplayOrder = useMemo(
+    () => {
+      const workTypesFeatureKnown =
+        typeof companySettings?.use_work_types === 'boolean' ||
+        Boolean(
+          initialCachedOrder?.work_type_id ||
+            initialCachedOrder?.work_type_name ||
+            initialCachedOrder?.work_type?.name,
+        );
+      return isOrderSnapshotReadyForDisplay(initialCachedOrder) && workTypesFeatureKnown
+        ? initialCachedOrder
+        : null;
+    },
+    [companySettings?.use_work_types, initialCachedOrder],
+  );
+  const [order, setOrder] = useState(initialDisplayOrder);
+  const [orderReady, setOrderReady] = useState(() => !!initialDisplayOrder || !id);
   const [role, setRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [executorName, setExecutorName] = useState(null);
@@ -634,6 +687,7 @@ function OrderDetailsContent() {
     String(subscriptionGuard.reason || '').startsWith('subscription_');
   const [useWorkTypes, setUseWorkTypesFlag] = useState(() =>
     !!(
+      companySettings?.use_work_types ||
       initialCachedOrder?.work_type_id ||
       initialCachedOrder?.work_type_name ||
       initialCachedOrder?.work_type?.name
@@ -642,6 +696,10 @@ function OrderDetailsContent() {
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(() => initialCachedOrder?.work_type_id ?? null);
   const [amount, setAmount] = useState('');
+  useEffect(() => {
+    if (typeof companySettings?.use_work_types !== 'boolean') return;
+    setUseWorkTypesFlag(companySettings.use_work_types);
+  }, [companySettings?.use_work_types]);
   const effectiveEditToFeed = isSoloAdmin ? false : toFeed;
   const effectiveEditAssigneeId = isSoloAdmin ? (assigneeId || userId || authUserId || null) : assigneeId;
   const showFeedCustomerField = isFeedOrderFieldVisible(
@@ -746,12 +804,7 @@ function OrderDetailsContent() {
         return addressFieldKeys.some((addressKey) => String(order?.[addressKey] || '').trim().length > 0);
       }
       if (key === 'departure_time') {
-        if (String(order?.departure_time || '').trim().length > 0) return true;
-        const startRaw = order?.time_window_start;
-        if (!startRaw) return false;
-        const startDate = new Date(startRaw);
-        if (Number.isNaN(startDate?.getTime?.())) return false;
-        return startDate.getHours() !== 0 || startDate.getMinutes() !== 0;
+        return normalizeDepartureTimeString(order?.departure_time) !== null;
       }
       if (key === 'payment_status') return String(order?.payment_status || '').trim().length > 0;
       if (key === 'payment_method') return String(order?.payment_method || '').trim().length > 0;
@@ -807,14 +860,6 @@ function OrderDetailsContent() {
       showFeedPhoneField,
     ],
   );
-  const hasExplicitDepartureTime = useMemo(() => {
-    if (String(order?.departure_time || '').trim().length > 0) return true;
-    const startRaw = order?.time_window_start;
-    if (!startRaw) return false;
-    const startDate = new Date(startRaw);
-    if (Number.isNaN(startDate?.getTime?.())) return false;
-    return startDate.getHours() !== 0 || startDate.getMinutes() !== 0;
-  }, [order?.departure_time, order?.time_window_start]);
   const getOrderFieldLabel = useCallback(
     (fieldKey, fallbackLabel) => {
       const field = orderFieldsByKey.get(String(fieldKey || ''));
@@ -940,7 +985,6 @@ function OrderDetailsContent() {
   const [resolvedClientId, setResolvedClientId] = useState(null);
   const [localPendingMap, setLocalPendingMap] = useState({});
   const [pendingPhotoDeleteMap, setPendingPhotoDeleteMap] = useState({});
-  const [photoQueueHydrated, setPhotoQueueHydrated] = useState(false);
   const cloudFallbackNoticeShownRef = useRef(false);
   const activeOrderPhotoUploadsRef = useRef(new Set());
   const orderPhotoRotateJobsRef = useRef(new Map());
@@ -1401,8 +1445,7 @@ function OrderDetailsContent() {
       .replace(/\D/g, '')
       .replace(/^8(\d{10})$/, '7$1');
 
-    const persistedDepartureTime =
-      normalizeDepartureTimeString(o?.departure_time) || extractLegacyDepartureTime(o?.time_window_start);
+    const persistedDepartureTime = normalizeDepartureTimeString(o?.departure_time);
 
     return JSON.stringify({
       title: resolveRequestTitle(o, { prefix: titlePrefix }),
@@ -1491,7 +1534,7 @@ function OrderDetailsContent() {
     setHouse(o.house || '');
     setCustomerName(o.fio || o.customer_name || '');
     setPhone(rawDigits || '');
-    setDepartureDate(o.time_window_start ? new Date(o.time_window_start) : null);
+    setDepartureDate(parseOrderDepartureDate(o.time_window_start, o.departure_time));
     setAssigneeId(o.assigned_to || null);
     setToFeed(isSoloAdmin ? false : !o.assigned_to);
     setUrgent(!!o.urgent);
@@ -1518,28 +1561,15 @@ function OrderDetailsContent() {
       // в”Ђв”Ђ 2. Order data: show cache instantly, then refetch в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       const cachedOrderRaw = queryClient.getQueryData(queryKeys.requests.detail(id));
 
-      // If we have cached data and screen hasn't shown content yet, render instantly
-      if (cachedOrderRaw && !firstContentTrackedRef.current) {
-        const cachedOrder = { ...cachedOrderRaw, time_window_start: cachedOrderRaw.time_window_start ?? null };
-        hydrateFormFields(cachedOrder);
-        setOrder(cachedOrder);
-        setCompanyId((prev) => prev || cachedOrder.company_id || null);
-        setWorkTypeId(cachedOrder.work_type_id ?? null);
-        if (cachedOrder.work_type_id || cachedOrder.work_type_name || cachedOrder.work_type?.name) {
-          setUseWorkTypesFlag(true);
-        }
-        setOrderReady(true);
-      }
-
-      let fetchedOrderRaw = isRequestDetailLoaded(cachedOrderRaw) ? cachedOrderRaw : null;
-      if (!fetchedOrderRaw && isRequestDetailLoaded(requestDataRef.current)) {
+      let fetchedOrderRaw = isOrderSnapshotReadyForDisplay(cachedOrderRaw) ? cachedOrderRaw : null;
+      if (!fetchedOrderRaw && isOrderSnapshotReadyForDisplay(requestDataRef.current)) {
         fetchedOrderRaw = requestDataRef.current;
       }
       if (fetchedOrderRaw) {
         refetchRequestData()
           .then((refetched) => {
             const fresh = refetched?.data;
-            if (!fresh) return;
+            if (!isOrderSnapshotReadyForDisplay(fresh)) return;
             const nextOrder = { ...fresh, time_window_start: fresh.time_window_start ?? null };
             queryClient.setQueryData(queryKeys.requests.detail(id), nextOrder);
             setOrder((prev) => ({ ...(prev || {}), ...nextOrder }));
@@ -1593,6 +1623,37 @@ function OrderDetailsContent() {
           effectiveOrder = fetchedOrder;
         }
       }
+
+      const effectiveWorkTypeId = String(effectiveOrder?.work_type_id || '').trim();
+      const effectiveWorkTypeName = String(
+        effectiveOrder?.work_type_name || effectiveOrder?.work_type?.name || '',
+      ).trim();
+      try {
+        const workTypeCompanyId = effectiveOrder?.company_id || (await getMyCompanyId());
+        if (workTypeCompanyId) {
+          const workTypePayload = await fetchWorkTypes(workTypeCompanyId, {
+            includeDisabled: true,
+          });
+          setUseWorkTypesFlag(!!workTypePayload?.useWorkTypes);
+          setWorkTypes(workTypePayload?.types || []);
+          if (effectiveWorkTypeId && !effectiveWorkTypeName) {
+            const resolvedWorkType = (workTypePayload?.types || []).find(
+              (item) => String(item?.id || '').trim() === effectiveWorkTypeId,
+            );
+            if (resolvedWorkType?.name) {
+              effectiveOrder = {
+                ...effectiveOrder,
+                work_type_name: resolvedWorkType.name,
+                work_type: resolvedWorkType,
+              };
+              queryClient.setQueryData(queryKeys.requests.detail(id), (previous) => ({
+                ...(previous || {}),
+                ...effectiveOrder,
+              }));
+            }
+          }
+        }
+      } catch {}
 
       // в”Ђв”Ђ 5. Resolve media (async, non-blocking for screen) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       // Show order + form immediately, resolve media in background
@@ -3710,7 +3771,7 @@ function OrderDetailsContent() {
       setHouse(data.house || '');
       setCustomerName(formatClientNameForOrder(linkedClient) || '');
       setPhone(rawDigitsSaved || '');
-      setDepartureDate(data.time_window_start ? new Date(data.time_window_start) : null);
+      setDepartureDate(parseOrderDepartureDate(data.time_window_start, data.departure_time));
       setAssigneeId(data.assigned_to || null);
       setToFeed(isSoloAdmin ? false : !data.assigned_to);
       setUrgent(!!data.urgent);
@@ -3794,7 +3855,7 @@ function OrderDetailsContent() {
       setHouse(order.house || '');
       setCustomerName(order.fio || '');
       setPhone(rawDigits || '');
-      setDepartureDate(order.time_window_start ? new Date(order.time_window_start) : null);
+      setDepartureDate(parseOrderDepartureDate(order.time_window_start, order.departure_time));
       setAssigneeId(order.assigned_to || null);
       setToFeed(isSoloAdmin ? false : !order.assigned_to);
       setUrgent(!!order.urgent);
@@ -3952,11 +4013,15 @@ function OrderDetailsContent() {
   // в”Ђв”Ђв”Ђ Photo viewer (uses FullscreenImageViewer) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   const openViewer = useCallback(
     (photos, index, category, label) => {
-      if (!Array.isArray(photos) || !photos.length) return;
+      if (!Array.isArray(photos) || !photos.length) return false;
       const pairs = photos
-        .map((raw, originalIndex) => ({ raw, originalIndex, display: orderMedia.getDisplayUrl(raw) }))
+        .map((raw, originalIndex) => ({
+          raw,
+          originalIndex,
+          display: orderMedia.getDisplayUrl(raw) || orderMedia.getThumbnailUrl(raw),
+        }))
         .filter((p) => p.display);
-      if (!pairs.length) return;
+      if (!pairs.length) return false;
       const nextIndex = pairs.findIndex((p) => p.originalIndex === index);
       viewerRawPhotosRef.current = pairs.map((p) => p.raw);
       viewerCategoryRef.current = category || null;
@@ -3964,6 +4029,7 @@ function OrderDetailsContent() {
       setViewerPhotos(pairs.map((p) => p.display));
       setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
       setViewerVisible(true);
+      return true;
     },
     [orderMedia],
   );
@@ -3976,7 +4042,8 @@ function OrderDetailsContent() {
     if (!pendingOrderPhotoViewer) return;
     const { photos, index, category, label } = pendingOrderPhotoViewer;
     setPendingOrderPhotoViewer(null);
-    openViewer(photos, index, category, label);
+    const opened = openViewer(photos, index, category, label);
+    if (!opened) setOrderPhotosModalSuspended(false);
   }, [openViewer, pendingOrderPhotoViewer]);
 
   const handleViewerDismiss = useCallback(() => {
@@ -4115,7 +4182,20 @@ function OrderDetailsContent() {
   }, []);
 
   useEffect(() => {
-    if (!requestData || editMode || !isRequestDetailLoaded(requestData)) return;
+    if (!order?.id || !canViewOrderPhotos) return undefined;
+    const hasPhotos = ORDER_MEDIA_FIELD_KEYS.some(
+      (category) => Array.isArray(order?.[category]) && order[category].length > 0,
+    );
+    if (!hasPhotos) return undefined;
+
+    const preloadTask = InteractionManager.runAfterInteractions(() => {
+      loadFullscreenImageViewerModule().catch(() => {});
+    });
+    return () => preloadTask?.cancel?.();
+  }, [canViewOrderPhotos, order]);
+
+  useEffect(() => {
+    if (!requestData || editMode || !isOrderSnapshotReadyForDisplay(requestData)) return;
     const syncToken = buildOrderSyncToken(requestData);
     if (lastRequestSyncRef.current === syncToken) return;
     lastRequestSyncRef.current = syncToken;
@@ -4132,8 +4212,7 @@ function OrderDetailsContent() {
     if (Object.prototype.hasOwnProperty.call(requestData, 'work_type_id')) {
       setWorkTypeId(requestData?.work_type_id ?? null);
     }
-    if (!orderReady) setOrderReady(true);
-  }, [requestData, editMode, hasMeaningfulOrderDiff, orderReady, buildOrderSyncToken, isSoloAdmin]);
+  }, [requestData, editMode, hasMeaningfulOrderDiff, buildOrderSyncToken, isSoloAdmin]);
 
   useEffect(() => {
     if (!order?.id || firstContentTrackedRef.current) return;
@@ -4310,7 +4389,11 @@ function OrderDetailsContent() {
 
   useEffect(() => {
     if (!order?.id) return undefined;
-    setPhotoQueueHydrated(false);
+    // Persisted request media is already available with the request itself.
+    // Offline queue hydration augments it in the background and must never
+    // block opening the media UI.
+    setLocalPendingMap({});
+    setPendingPhotoDeleteMap({});
     let active = true;
     getOrderPhotoQueueItems(order.id)
       .then((items) => {
@@ -4343,11 +4426,8 @@ function OrderDetailsContent() {
             deletes[category] = [...(deletes[category] || []), targetUrl];
           });
         setPendingPhotoDeleteMap(deletes);
-        setPhotoQueueHydrated(true);
       })
-      .catch(() => {
-        if (active) setPhotoQueueHydrated(true);
-      });
+      .catch(() => {});
     return () => {
       active = false;
     };
@@ -4463,10 +4543,10 @@ function OrderDetailsContent() {
   }, [id, fetchData]);
 
   useEffect(() => {
-    if (!initialCachedOrder || editMode) return;
-    setOrder((prev) => prev || initialCachedOrder);
+    if (!initialDisplayOrder || editMode) return;
+    setOrder((prev) => prev || initialDisplayOrder);
     setOrderReady(true);
-  }, [editMode, initialCachedOrder]);
+  }, [editMode, initialDisplayOrder]);
 
   useEffect(() => {
     let alive = true;
@@ -4871,6 +4951,33 @@ function OrderDetailsContent() {
   const showExecutorRow = !isInFeedStatus && !isSoloAdmin && isOrderFieldVisible('assigned_to');
   const showDepartureDateRow =
     isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time');
+  const departureCalendarDate = parseOrderDateOnly(order?.time_window_start);
+  const normalizedDepartureTime = normalizeDepartureTimeString(order?.departure_time);
+  const departureTimeLabel = normalizedDepartureTime
+    ? normalizedDepartureTime.slice(0, 5)
+    : '';
+  const departureDisplayValue = (() => {
+    if (!departureCalendarDate) {
+      return departureTimeLabel || t('order_details_departure_not_specified');
+    }
+    const locale = resolveDateFnsLocale();
+    const endDate = parseOrderDateOnly(order?.time_window_end);
+    const dateLabel = endDate
+      ? `${format(departureCalendarDate, 'd MMMM yyyy', { locale })} — ${format(endDate, 'd MMMM yyyy', { locale })}`
+      : format(departureCalendarDate, 'd MMMM yyyy', { locale });
+    return departureTimeLabel ? `${dateLabel}, ${departureTimeLabel}` : dateLabel;
+  })();
+  const departureRow = (
+    <LabelValueRow
+      label={t('order_details_departure_time')}
+      valueComponent={
+        <Text style={[base.value, departureCalendarDate ? styles.link : null]}>
+          {departureDisplayValue}
+        </Text>
+      }
+      hideWhenEmpty={false}
+    />
+  );
   const showCustomerRow = isOrderFieldVisible('client_id');
   const showObjectRow = isOrderFieldVisible('object_id');
   const showPhoneRow = isOrderFieldVisible('phone');
@@ -4880,7 +4987,7 @@ function OrderDetailsContent() {
   const visibleMediaFields = canViewOrderPhotos
     ? ORDER_MEDIA_FIELD_KEYS.filter((fieldKey) => isOrderFieldVisible(fieldKey))
     : [];
-  const orderMediaSnapshotReady = isRequestDetailLoaded(order) && photoQueueHydrated;
+  const orderMediaSnapshotReady = isRequestDetailLoaded(order);
   const financeEntryPhotosContent = financeEntryPhotosModalVisible ? (
     <Suspense fallback={null}>
       <MediaUploadModal
@@ -5066,52 +5173,27 @@ function OrderDetailsContent() {
               ) : null}
 
               {showDepartureDateRow ? (
-                <Pressable
-                  onPress={() => {
-                  const dateStr = order.time_window_start
-                    ? new Date(order.time_window_start).toISOString().slice(0, 10)
-                    : undefined;
-                  const assignee = order.assigned_to || undefined;
-                  router.push({
-                    pathname: '/orders/calendar',
-                    params: {
-                      selectedDate: dateStr,
-                      selectedUserId: assignee,
-                      returnTo: `/orders/${order.id}`,
-                      returnParams: JSON.stringify({}),
-                    },
-                  });
-                }}
-              >
-                  <LabelValueRow
-                    label={t('order_details_departure_date')}
-                    valueComponent={
-                      <Text style={[base.value, styles.link]}>
-                        {(() => {
-                          if (!order.time_window_start) return t('order_details_departure_not_specified');
-                          const startDate = new Date(order.time_window_start);
-                          const hasRangeEnd = !!order.time_window_end;
-                          const showDepartureTime =
-                            isOrderFieldVisible('departure_time') && hasExplicitDepartureTime;
-                          const departureTimeLabel = (() => {
-                            const normalized = normalizeDepartureTimeString(order?.departure_time);
-                            if (normalized) return normalized.slice(0, 5);
-                            const legacy = extractLegacyDepartureTime(order?.time_window_start);
-                            return legacy ? legacy.slice(0, 5) : '';
-                          })();
-                          if (!hasRangeEnd) {
-                            const dateLabel = format(startDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() });
-                            if (!showDepartureTime || !departureTimeLabel) return dateLabel;
-                            return `${dateLabel}, ${departureTimeLabel}`;
-                          }
-                          const endDate = new Date(order.time_window_end);
-                          return `${format(startDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() })} — ${format(endDate, 'd MMMM yyyy', { locale: resolveDateFnsLocale() })}`;
-                        })()}
-                      </Text>
-                    }
-                    hideWhenEmpty={false}
-                  />
-                </Pressable>
+                departureCalendarDate ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    onPress={() => {
+                      const assignee = order.assigned_to || undefined;
+                      router.push({
+                        pathname: '/orders/calendar',
+                        params: {
+                          selectedDate: formatDateOnlyForStorage(order.time_window_start) || undefined,
+                          selectedUserId: assignee,
+                          returnTo: `/orders/${order.id}`,
+                          returnParams: JSON.stringify({}),
+                        },
+                      });
+                    }}
+                  >
+                    {departureRow}
+                  </Pressable>
+                ) : (
+                  departureRow
+                )
               ) : null}
 
               {isOrderFieldVisible('comment') && !!descriptionValue ? (
@@ -5597,9 +5679,16 @@ function OrderDetailsContent() {
                       label: getOrderFieldLabel(fieldKey, t(`order_media_field_${ORDER_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`)),
                     }))
                     .map((row, idx) => {
+                    const categoryPending = localPendingMap[row.key] || [];
+                    const hasActiveUpload = categoryPending.some(
+                      (entry) =>
+                        entry?.pending !== false &&
+                        !entry?.failed &&
+                        !String(entry?.uploadedUrl || '').trim(),
+                    );
                     const count = orderMediaSnapshotReady
                       ? (orderWithPendingDeletesHidden?.[row.key] || []).length +
-                        (localPendingMap[row.key] || []).filter((entry) => !entry?.uploadedUrl).length
+                        categoryPending.filter((entry) => !entry?.uploadedUrl).length
                       : 0;
                     return (
                       <View key={row.key}>
@@ -5607,7 +5696,7 @@ function OrderDetailsContent() {
                         <MediaUploadRow
                           label={row.label}
                           countLabel={t('order_photos_count').replace('{count}', String(count))}
-                          busy={!orderMediaSnapshotReady || (localPendingMap[row.key] || []).length > 0}
+                          busy={hasActiveUpload}
                           allowPressWhenBusy={orderMediaSnapshotReady}
                           disabled={!orderMediaSnapshotReady}
                           onPress={() => setOrderPhotosModal({ visible: true, category: row.key })}
@@ -5656,12 +5745,12 @@ function OrderDetailsContent() {
                     };
                     const category = orderPhotosModal.category;
                     const label = catLabels[category] || '';
-                    if (Platform.OS === 'ios') {
-                      setPendingOrderPhotoViewer({ photos, index: idx, category, label });
-                      setOrderPhotosModalSuspended(true);
-                      return;
-                    }
-                    openViewer(photos, idx, category, label);
+                    // Never stack the fullscreen native viewer on top of the
+                    // photo sheet. Waiting for the shared sheet to dismiss is
+                    // reliable on both platforms and prevents lost taps or a
+                    // frozen native modal layer on Android.
+                    setPendingOrderPhotoViewer({ photos, index: idx, category, label });
+                    setOrderPhotosModalSuspended(true);
                   }}
                 />
               </Suspense>
@@ -5772,16 +5861,12 @@ function OrderDetailsContent() {
       <BaseModal
         visible={amountEditModalVisible}
         onClose={() => setAmountEditModalVisible(false)}
-        onShow={() => {
-          setTimeout(() => {
-            amountEditInputRef.current?.focus?.();
-          }, 40);
-        }}
         title={t('order_modal_edit_amount_title')}
         maxHeightRatio={0.45}
       >
         <TextField
           ref={amountEditInputRef}
+          autoFocus
           showSoftInputOnFocus
           label={t('order_modal_edit_amount_label')}
           value={amountDraft}
@@ -6135,7 +6220,7 @@ function OrderDetailsContent() {
           </View>
         }
       >
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles.financeEntryModalScroll}
           contentContainerStyle={styles.financeEntryModalScrollContent}
           showsVerticalScrollIndicator={false}
@@ -6254,7 +6339,7 @@ function OrderDetailsContent() {
               onPress={openFinanceEntryPhotosModal}
             />
           ) : null}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <AlertModal

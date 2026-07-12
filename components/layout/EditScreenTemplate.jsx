@@ -34,7 +34,7 @@ export default function EditScreenTemplate({
     24,
     (theme.components?.scrollView?.paddingBottom ?? 24) + (insets?.bottom ?? 0),
   );
-  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 40;
+  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 20;
   const extraKeyboardSpace = theme.components?.keyboardAware?.extraKeyboardSpace ?? 0;
 
   const mergedOptions = {

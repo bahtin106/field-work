@@ -374,7 +374,7 @@ export default function AccessSettingsScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
         showsVerticalScrollIndicator={false}
-        bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 40}
+        bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 20}
         extraKeyboardSpace={theme.components?.keyboardAware?.extraKeyboardSpace ?? 0}
       >
         <Button

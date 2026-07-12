@@ -10,8 +10,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
-  Dimensions,
-  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -19,7 +17,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
@@ -47,7 +44,6 @@ import {
 import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
 import { getEmailChangeRedirectUrl } from '../../../lib/authRedirects';
-import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { useClearResolvedFieldErrors } from '../../../src/shared/forms/useClearResolvedFieldErrors';
 import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../../../lib/personName';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
@@ -1126,8 +1122,6 @@ export default function EditUser() {
   const scrollRef = useRef(null);
   const _pwdRef = useRef(null);
   const confirmPwdRef = useRef(null);
-  const activePasswordFieldRef = useRef(null); // 'new' | 'confirm' | null
-  const keyboardHeightRef = useRef(0);
   const firstNameRef = useRef(null);
   const middleNameRef = useRef(null);
   const lastNameRef = useRef(null);
@@ -1140,9 +1134,6 @@ export default function EditUser() {
   const _deptFieldRef = useRef(null);
   const _roleFieldRef = useRef(null);
   const _statusFieldRef = useRef(null);
-  const insets = useSafeAreaInsets();
-  const scrollYRef = useRef(0);
-  const headerHeight = theme?.components?.header?.height ?? 56;
   const edgeTargetProfileId = useMemo(
     () =>
       [
@@ -1318,76 +1309,6 @@ export default function EditUser() {
     };
   }, [checkEmailAvailability, email, emailValid, employeeData?.email, fieldUi]);
 
-  const ensurePasswordFieldVisible = useCallback(
-    (fieldRef, extraBottomGap = 24) => {
-      const currentField = fieldRef?.current;
-      if (!currentField) return;
-
-      const doScrollCheck = () => {
-        try {
-          const nativeField = currentField?.getNativeRef?.() || currentField;
-          if (!nativeField?.measureInWindow) return false;
-
-          nativeField.measureInWindow((_x, y, _w, h) => {
-            try {
-              const screenHeight = Dimensions.get('window').height;
-              const keyboardHeight = Number(keyboardHeightRef.current || 0);
-              if (keyboardHeight <= 0) return;
-
-              const visibleBottom = screenHeight - keyboardHeight - (insets.bottom || 0);
-              const fieldBottom = y + h;
-              const overlap = fieldBottom + extraBottomGap - visibleBottom;
-              if (overlap > 0) {
-                const current = Number(scrollYRef.current || 0);
-                scrollRef.current?.scrollTo?.({ y: Math.max(0, current + overlap), animated: true });
-              }
-            } catch {}
-          });
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
-      if (doScrollCheck()) return;
-
-      ensureVisibleField({
-        fieldRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-    },
-    [headerHeight, insets.bottom],
-  );
-
-  useEffect(() => {
-    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
-      keyboardHeightRef.current = Number(e?.endCoordinates?.height || 0);
-    });
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
-      keyboardHeightRef.current = 0;
-    });
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const sub = Keyboard.addListener(showEvent, () => {
-      if (activePasswordFieldRef.current === 'confirm') {
-        ensurePasswordFieldVisible(confirmPwdRef, 36);
-        setTimeout(() => ensurePasswordFieldVisible(confirmPwdRef, 36), Platform.OS === 'android' ? 110 : 70);
-      } else if (activePasswordFieldRef.current === 'new') {
-        ensurePasswordFieldVisible(_pwdRef, 24);
-        setTimeout(() => ensurePasswordFieldVisible(_pwdRef, 24), Platform.OS === 'android' ? 110 : 70);
-      }
-    });
-    return () => sub.remove();
-  }, [ensurePasswordFieldVisible]);
 
   const syncEmployeeBlockState = useCallback(async () => {
     if (!userId) return null;
@@ -2668,13 +2589,6 @@ export default function EditUser() {
             }}
             onFocus={() => {
               setFocusFirst(true);
-              ensureVisibleField({
-                fieldRef: firstNameRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
             }}
             onBlur={() => {
               setFocusFirst(false);
@@ -2699,15 +2613,6 @@ export default function EditUser() {
             onChangeText={(val) => {
               setMiddleName(val);
               clearFieldError('middleName');
-            }}
-            onFocus={() => {
-              ensureVisibleField({
-                fieldRef: middleNameRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
             }}
             onBlur={() => {
               setTouched((prev) => ({ ...prev, middleName: true }));
@@ -2734,13 +2639,6 @@ export default function EditUser() {
             }}
             onFocus={() => {
               setFocusLast(true);
-              ensureVisibleField({
-                fieldRef: lastNameRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
             }}
             onBlur={() => {
               setFocusLast(false);
@@ -2797,13 +2695,6 @@ export default function EditUser() {
             }}
             onFocus={() => {
               setFocusEmail(true);
-              ensureVisibleField({
-                fieldRef: emailRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
             }}
             onBlur={() => {
               setFocusEmail(false);
@@ -2829,13 +2720,6 @@ export default function EditUser() {
             required={fieldUi.isRequired('phone')}
             onFocus={() => {
               setFocusPhone(true);
-              ensureVisibleField({
-                fieldRef: phoneRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
             }}
             onBlur={() => {
               setFocusPhone(false);
@@ -2879,11 +2763,6 @@ export default function EditUser() {
       rightDisabled={saving || submitCheckingEmail || emailCheckStatus === 'checking'}
       onRightPress={handleSave}
       scrollRef={scrollRef}
-      onScroll={(e) => {
-        try {
-          scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-        } catch {}
-      }}
     >
       <View>
             <View
@@ -3071,13 +2950,6 @@ export default function EditUser() {
                     }}
                     placeholder={t('register_placeholder_password')}
                     inputStyle={styles.field}
-                    onFocus={() => {
-                      activePasswordFieldRef.current = 'new';
-                      ensurePasswordFieldVisible(_pwdRef, 24);
-                    }}
-                    onBlur={() => {
-                      if (activePasswordFieldRef.current === 'new') activePasswordFieldRef.current = null;
-                    }}
                     returnKeyType="next"
                     onSubmitEditing={() => confirmPwdRef.current?.focus?.()}
                   />
@@ -3129,13 +3001,6 @@ export default function EditUser() {
                     }}
                     placeholder={t('placeholder_repeat_password')}
                     inputStyle={styles.field}
-                    onFocus={() => {
-                      activePasswordFieldRef.current = 'confirm';
-                      ensurePasswordFieldVisible(confirmPwdRef, 36);
-                    }}
-                    onBlur={() => {
-                      if (activePasswordFieldRef.current === 'confirm') activePasswordFieldRef.current = null;
-                    }}
                     returnKeyType="done"
                     onSubmitEditing={handleSave}
                   />

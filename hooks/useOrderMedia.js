@@ -133,6 +133,23 @@ function pruneLocalCacheMap(mapObj, maxEntries = ORDER_MEDIA_LOCAL_CACHE_MAX_ENT
   return obj;
 }
 
+async function runWithConcurrency(items, worker, concurrency = 2) {
+  const source = Array.isArray(items) ? items : [];
+  if (!source.length) return;
+  let cursor = 0;
+  const runnerCount = Math.max(1, Math.min(concurrency, source.length));
+  const runners = Array.from({ length: runnerCount }, async () => {
+    while (cursor < source.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        await worker(source[index], index);
+      } catch {}
+    }
+  });
+  await Promise.all(runners);
+}
+
 /**
  * Resolves display URLs for order media — parallelised for speed.
  *
@@ -365,7 +382,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
           if (Object.keys(resolved).length) {
             for (const [k, v] of Object.entries(resolved)) setResolvedCacheEntry(k, v);
             setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, resolved));
-            prefetchMediaUrls(Object.values(resolved)).catch(() => {});
+            prefetchMediaUrls(Object.values(resolved), { batchSize: 2 }).catch(() => {});
           }
           if (Object.keys(issuesMap).length) {
             for (const [k, v] of Object.entries(issuesMap)) setIssueCacheEntry(k, v);
@@ -457,11 +474,14 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, nextResolved));
         setIssues(nextIssues);
       }
-      prefetchMediaUrls(Object.values(nextResolved)).catch(() => {});
+      prefetchMediaUrls(Object.values(nextResolved), { batchSize: 2 }).catch(() => {});
       if (getOfflineSnapshot().isOnline) {
         const cachedPairs = Object.entries(nextResolved);
         if (cachedPairs.length) {
-          await Promise.allSettled(cachedPairs.map(([source, display]) => ensureLocalCached(source, display)));
+          await runWithConcurrency(
+            cachedPairs,
+            ([source, display]) => ensureLocalCached(source, display),
+          );
         }
       }
       return nextOrder;
@@ -487,7 +507,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         if (Object.keys(displayMap).length) {
           for (const [key, value] of Object.entries(displayMap)) setResolvedCacheEntry(key, value);
           setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, displayMap));
-          prefetchMediaUrls(Object.values(displayMap), { batchSize: 6 }).catch(() => {});
+          prefetchMediaUrls(Object.values(displayMap), { batchSize: 2 }).catch(() => {});
         }
         if (Object.keys(thumbMap).length) {
           for (const [key, value] of Object.entries(thumbMap)) {
@@ -544,16 +564,25 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   useEffect(() => {
     if (!order?.id) return;
     if (!getOfflineSnapshot().isOnline) return;
+    let cancelled = false;
     const jobs = [];
     for (const cat of MEDIA_CATEGORIES) {
       const urls = Array.isArray(order?.[cat]) ? order[cat].filter(Boolean) : [];
       for (const src of urls) {
         const source = String(src || '').trim();
         const display = resolvedRef.current?.[source] || (isRenderableSourceUrl(source) ? source : '');
-        if (display) jobs.push(ensureLocalCached(source, display));
+        if (display) jobs.push({ source, display });
       }
     }
-    if (jobs.length) Promise.allSettled(jobs).catch(() => {});
+    if (jobs.length) {
+      runWithConcurrency(jobs, ({ source, display }) => {
+        if (cancelled) return undefined;
+        return ensureLocalCached(source, display);
+      }).catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
   }, [ensureLocalCached, order]);
 
   // ─── Clear caches on provider/order switch ──────────────────────
