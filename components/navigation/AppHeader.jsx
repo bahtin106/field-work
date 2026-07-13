@@ -78,11 +78,11 @@ const createStyles = (theme, metrics) =>
     titleHelpRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      flexShrink: 1,
+      flex: 1,
       minWidth: 0,
     },
     titleHelpViewport: {
-      flexShrink: 1,
+      flex: 1,
       minWidth: 0,
       overflow: 'hidden',
       marginLeft: metrics.titleGap,
