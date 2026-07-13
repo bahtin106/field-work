@@ -675,6 +675,7 @@ function UsersIndexContent() {
             options={{
               headerTitleAlign: 'left',
               title: t('routes_users_index'),
+              helpTopic: 'employees',
               rightTextLabel: t('btn_create'),
               onRightPress: () => {
                 if (

@@ -215,7 +215,7 @@ export default function TagsSettingsScreen() {
   };
 
   return (
-    <Screen scroll={false} headerOptions={{ title: t('settings_sections_reference_items_tags') }}>
+    <Screen scroll={false} headerOptions={{ title: t('settings_sections_reference_items_tags'), helpTopic: 'tags' }}>
       <KeyboardAwareScrollView contentContainerStyle={styles.content}>
         <SectionHeader>{t('tags_clients_title')}</SectionHeader>
         {renderDictionaryBlock(TAG_TYPE.CLIENT)}

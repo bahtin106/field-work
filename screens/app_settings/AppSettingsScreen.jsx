@@ -35,6 +35,8 @@ import { TBL } from '../../lib/constants';
 import { saveUserLocale } from '../../lib/userLocale';
 import { availableLocales, getLocale, setLocale, t as T } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { useHelpCenter } from '../../src/features/helpCenter/HelpCenterProvider';
+import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
 
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
 const TIME_PICKER_MINUTE_STEP = Number(APP_DEFAULTS?.timeStep) || 5;
@@ -116,14 +118,18 @@ const SETTINGS_SECTIONS = Object.freeze([
     items: [
       { key: 'allow', switch: true },
       { key: 'sounds', type: 'select', comingSoon: true },
-      { key: 'events', type: 'select' },
+      { key: 'events', type: 'select', helpTopic: 'notification_events' },
     ],
+  },
+  {
+    key: 'help',
+    items: [{ key: 'help_center', type: 'select' }],
   },
   {
     key: 'quiet',
     items: [
-      { key: 'quiet_start', type: 'select' },
-      { key: 'quiet_end', type: 'select' },
+      { key: 'quiet_start', type: 'select', helpTopic: 'quiet_hours' },
+      { key: 'quiet_end', type: 'select', helpTopic: 'quiet_hours' },
       { key: 'quiet_reset', type: 'select' },
     ],
   },
@@ -289,6 +295,11 @@ export default function AppSettings() {
     String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
 
   const { theme, mode, setMode } = useTheme();
+  const {
+    ready: helpReady,
+    preferences: helpPreferences,
+    openHelpSettings,
+  } = useHelpCenter();
   const toast = useToast();
   const [themeOpen, setThemeOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
@@ -924,6 +935,7 @@ export default function AppSettings() {
       if (sectionKey === 'appearance' && itemKey === 'theme') return () => setThemeOpen(true);
       if (sectionKey === 'appearance' && itemKey === 'language') return () => setLangOpen(true);
       if (sectionKey === 'notifications' && itemKey === 'events') return () => router.push('/app_settings/sections/events');
+      if (sectionKey === 'help' && itemKey === 'help_center') return openHelpSettings;
       if (sectionKey === 'quiet' && itemKey === 'quiet_start') return openTimePicker('start');
       if (sectionKey === 'quiet' && itemKey === 'quiet_end') return openTimePicker('end');
       if (sectionKey === 'quiet' && itemKey === 'quiet_reset') return onResetQuietTimes;
@@ -952,7 +964,7 @@ export default function AppSettings() {
         return mapped;
       }),
     }));
-  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openExternalPage, openTimePicker, router, t]);
+  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openExternalPage, openHelpSettings, openTimePicker, router, t]);
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
   const visibleSectionBase = useMemo(() => {
@@ -985,16 +997,31 @@ export default function AppSettings() {
           if (sec.key === 'appearance' && it.key === 'theme') {
             return { ...it, value: currentThemeLabel };
           }
+          if (sec.key === 'help' && it.key === 'help_center') {
+            const enabledCount = Number(helpPreferences.contextualHelpEnabled !== false) +
+              Number(helpPreferences.smartTipsEnabled !== false);
+            return {
+              ...it,
+              value: !helpReady
+                ? t('help_settings_summary_loading')
+                : enabledCount === 2
+                  ? t('help_settings_summary_on')
+                  : enabledCount === 0
+                    ? t('help_settings_summary_off')
+                    : t('help_settings_summary_partial'),
+              disabled: !helpReady,
+            };
+          }
           return it;
         }),
       })),
-    [visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, t],
+    [visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, helpPreferences, helpReady, t],
   );
 
   return (
     <Screen
       scroll={false}
-      headerOptions={{ title: t('routes.app_settings/AppSettings') }}
+      headerOptions={{ title: t('routes.app_settings/AppSettings'), helpTopic: 'app_settings' }}
     >
       <ScrollView
         contentContainerStyle={s.contentWrap}
@@ -1029,6 +1056,9 @@ export default function AppSettings() {
                       <SelectField
                         label={it.label}
                         value={it.value}
+                        labelAccessory={
+                          it.helpTopic ? <HelpInfoButton topicId={it.helpTopic} size={22} /> : null
+                        }
                         onPress={it.comingSoon ? futureFeature : it.onPress}
                         disabled={!!it.disabled || !!it.comingSoon}
                         onDisabledPress={it.comingSoon ? futureFeature : undefined}

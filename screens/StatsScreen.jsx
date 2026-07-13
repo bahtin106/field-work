@@ -804,7 +804,7 @@ function StatsScreenContent() {
 
   return (
     <View style={styles.container}>
-      <AppHeader options={{ title: t('stats_title') }} back />
+      <AppHeader options={{ title: t('stats_title'), helpTopic: 'statistics' }} back />
 
       <View style={{ flex: 1 }}>
         {refreshIndicator}

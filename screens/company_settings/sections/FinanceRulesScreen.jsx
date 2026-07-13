@@ -778,7 +778,7 @@ export default function FinanceRulesSettingsScreen() {
     return (
       <Screen
         background="background"
-        headerOptions={{ title: t('finance_rules_title') }}
+        headerOptions={{ title: t('finance_rules_title'), helpTopic: 'finance_rules' }}
         contentContainerStyle={styles.container}
       >
         <View style={styles.loadingWrap}>
@@ -792,7 +792,7 @@ export default function FinanceRulesSettingsScreen() {
     return (
       <Screen
         background="background"
-        headerOptions={{ title: t('finance_rules_title') }}
+        headerOptions={{ title: t('finance_rules_title'), helpTopic: 'finance_rules' }}
         contentContainerStyle={styles.container}
       >
         <Card paddedXOnly>
@@ -807,7 +807,7 @@ export default function FinanceRulesSettingsScreen() {
   return (
     <Screen
       background="background"
-      headerOptions={{ title: t('finance_rules_title') }}
+      headerOptions={{ title: t('finance_rules_title'), helpTopic: 'finance_rules' }}
       contentContainerStyle={styles.container}
     >
       <SectionHeader>

@@ -2486,6 +2486,7 @@ function MyOrdersContent() {
         options={{
           headerTitleAlign: 'left',
           title: t('routes.orders/my-orders'),
+          helpTopic: 'my_orders',
         }}
       />
       <View style={{ flex: 1 }}>

@@ -180,7 +180,7 @@ export default function ClientsIndexScreen() {
   if (!canViewClients) {
     return (
       <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
-        <AppHeader back options={{ title: t('routes_clients_index') }} />
+        <AppHeader back options={{ title: t('routes_clients_index'), helpTopic: 'clients' }} />
         <View style={styles.loaderWrap}>
           <Text style={styles.mutedText}>{t('clients_no_view_permission')}</Text>
         </View>
@@ -194,6 +194,7 @@ export default function ClientsIndexScreen() {
         back
         options={{
           title: t('routes_clients_index'),
+          helpTopic: 'clients',
           rightTextLabel: canCreateClients ? t('btn_create') : undefined,
           onRightPress: canCreateClients ? () => router.push('/clients/new') : undefined,
         }}

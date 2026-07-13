@@ -19,6 +19,7 @@ import { yandexDiskIntegration } from '../../../lib/yandexDiskIntegration';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
+import HelpInfoButton from '../../../src/features/helpCenter/HelpInfoButton';
 
 function toYandexIntegrationMessage(rawError, t) {
   const fallback = t('toast_error');
@@ -360,13 +361,14 @@ export default function YandexDiskIntegrationScreen() {
   return (
     <Screen
       background="background"
-      headerOptions={{ title: t('settings_integrations_yandex_disk') }}
+      headerOptions={{ title: t('settings_integrations_yandex_disk'), helpTopic: 'cloud_storage' }}
     >
       <ScrollView contentContainerStyle={styles.container} style={styles.scroll} keyboardShouldPersistTaps="handled">
         <SectionHeader>{t('company_integrations_storage_provider_title')}</SectionHeader>
         <Card padded={false} separated>
           <SelectField
             label={t('company_integrations_media_orders_label')}
+            labelAccessory={<HelpInfoButton topicId="storage_provider" size={22} />}
             value={providerLabel}
             onPress={() => {
               setProviderTarget('orders');

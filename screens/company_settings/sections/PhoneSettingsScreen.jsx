@@ -266,7 +266,7 @@ export default function PhoneVisibilitySettingsScreen() {
   return (
     <Screen
       background="background"
-      headerOptions={{ title: t('phone_visibility_title') }}
+      headerOptions={{ title: t('phone_visibility_title'), helpTopic: 'phone_visibility' }}
       contentContainerStyle={styles.screenContent}
     >
       <View style={styles.content}>

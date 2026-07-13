@@ -367,7 +367,7 @@ export default function AccessSettingsScreen() {
     <Screen
       background="background"
       scroll={false}
-      headerOptions={{ title: t('settings_management_access') }}
+      headerOptions={{ title: t('settings_management_access'), helpTopic: 'access_settings' }}
     >
       <KeyboardAwareScrollView
         contentContainerStyle={s.screenContent}

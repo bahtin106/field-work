@@ -431,7 +431,7 @@ export default function WorkTypesSettings() {
 
   if (loading) {
     return (
-      <Screen>
+      <Screen headerOptions={{ title: t('work_types_settings_title'), helpTopic: 'work_types' }}>
         <View style={s.loadingWrap}>
           <ActivityIndicator
             size={theme.components?.activityIndicator?.size || DEFAULT_ACTIVITY_INDICATOR_SIZE}
@@ -444,7 +444,7 @@ export default function WorkTypesSettings() {
   }
 
   return (
-    <Screen>
+    <Screen headerOptions={{ title: t('work_types_settings_title'), helpTopic: 'work_types' }}>
       <ScrollView style={s.screen} contentContainerStyle={s.content}>
         <Card padded={false} style={formStyles.card}>
           <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>

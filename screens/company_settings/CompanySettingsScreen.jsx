@@ -37,6 +37,7 @@ import { supabase } from '../../lib/supabase';
 import { saveUserLocale } from '../../lib/userLocale';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { availableLocales, getLocale, setLocale } from '../../src/i18n';
+import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
 
 /* Helpers */
 const getDeviceTimeZone = () => {
@@ -1145,6 +1146,7 @@ export default function CompanySettings() {
           title: isSoloAdmin
             ? t('settings_title')
             : t('company_settings_title', t('settings')),
+          helpTopic: 'company_settings',
         }}
       >
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -1163,6 +1165,7 @@ export default function CompanySettings() {
         title: isSoloAdmin
           ? t('settings_title')
           : t('company_settings_title', t('settings')),
+        helpTopic: 'company_settings',
       }}
     >
       <ScrollView
@@ -1189,12 +1192,14 @@ export default function CompanySettings() {
             ) : null}
             <SelectField
               label={t('settings_company_timezone')}
+              labelAccessory={<HelpInfoButton topicId="timezone" size={22} />}
               value={timeZoneLabel}
               onPress={() => setTzOpen(true)}
             />
 
             <SelectField
               label={t('settings_company_work_mode')}
+              labelAccessory={<HelpInfoButton topicId="work_mode" size={22} />}
               value={currentWorkModeLabel}
               onPress={() => setWorkModeOpen(true)}
             />
@@ -1207,6 +1212,7 @@ export default function CompanySettings() {
                       ? t('settings_company_billing_solo')
                       : t('settings_company_billing')
                   }
+                  labelAccessory={<HelpInfoButton topicId="billing" size={22} />}
                   showValue={false}
                   onPress={billingRoute ? go(billingRoute) : undefined}
                   disabled={!billingRoute}
@@ -1253,6 +1259,7 @@ export default function CompanySettings() {
               <React.Fragment key={it.key}>
                 <SelectField
                   label={t(it.labelKey)}
+                  labelAccessory={it.helpTopic ? <HelpInfoButton topicId={it.helpTopic} size={22} /> : null}
                   showValue={false}
                   onPress={it.route ? go(it.route) : undefined}
                   disabled={!it.route}
@@ -1271,6 +1278,7 @@ export default function CompanySettings() {
               <React.Fragment key={it.key}>
                 <SelectField
                   label={t(`settings_integrations_${it.key}`)}
+                  labelAccessory={it.helpTopic ? <HelpInfoButton topicId={it.helpTopic} size={22} /> : null}
                   showValue={false}
                   onPress={it.route ? go(it.route) : undefined}
                   disabled={!it.route}
@@ -1294,6 +1302,7 @@ export default function CompanySettings() {
                 <React.Fragment key={it.key}>
                   <SelectField
                     label={t(`settings_management_${it.key}`)}
+                    labelAccessory={it.helpTopic ? <HelpInfoButton topicId={it.helpTopic} size={22} /> : null}
                     showValue={false}
                     onPress={go(it.route)}
                     disabled={disabledManagementKeys.has(it.key)}
@@ -1311,6 +1320,7 @@ export default function CompanySettings() {
             <Card paddedXOnly separated>
               <SelectField
                 label={t('settings_phone_mode')}
+                labelAccessory={<HelpInfoButton topicId="phone_visibility" size={22} />}
                 showValue={false}
                 onPress={go('/company_settings/sections/phone')}
               />

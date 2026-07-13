@@ -494,6 +494,7 @@ export function SelectField({
   required,
   forceValidation = false,
   right, // optional custom right ReactNode
+  labelAccessory, // optional control rendered next to the label without replacing the value
   showValue = true, // when false -> only chevron shown
   disabled = false,
   style,
@@ -642,14 +643,28 @@ export function SelectField({
           </>
         ) : (
           <>
-            <Text
-              style={[base.label, s.label, { color: labelColor }]}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              allowFontScaling
-            >
-              {resolvedLabel}
-            </Text>
+            {labelAccessory ? (
+              <View style={s.labelWrap}>
+                <Text
+                  style={[base.label, s.label, s.labelText, { color: labelColor }]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  allowFontScaling
+                >
+                  {resolvedLabel}
+                </Text>
+                <View style={s.labelAccessory}>{labelAccessory}</View>
+              </View>
+            ) : (
+              <Text
+                style={[base.label, s.label, { color: labelColor }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+                allowFontScaling
+              >
+                {resolvedLabel}
+              </Text>
+            )}
             <View style={s.rightWrap}>
               {right ? (
                 right
@@ -688,6 +703,7 @@ export function SelectField({
 //   <SwitchField label="Уведомления" value={true} onValueChange={...} />
 export function SwitchField({
   label,
+  labelAccessory,
   value,
   onValueChange,
   disabled = false,
@@ -702,7 +718,16 @@ export function SwitchField({
     <View
       style={[base.row, disabled && { opacity: theme.components.listItem.disabledOpacity }, style]}
     >
-      <Text style={base.label}>{label}</Text>
+      {labelAccessory ? (
+        <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={[base.label, { flexShrink: 1 }]} numberOfLines={1}>{label}</Text>
+          <View style={{ marginLeft: theme.spacing?.xs ?? 4, marginRight: theme.spacing?.xs ?? 4 }}>
+            {labelAccessory}
+          </View>
+        </View>
+      ) : (
+        <Text style={base.label}>{label}</Text>
+      )}
       <View style={base.rightWrap}>
         <View style={base.switchWrap}>
           <ThemedSwitch
@@ -736,6 +761,18 @@ const selectStyles = (t, isError = false) => {
       flexShrink: 1,
       paddingRight: valueGap,
       fontWeight: isError ? t.typography.weight.bold : t.typography.weight.medium,
+    },
+    labelWrap: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    labelText: { minWidth: 0 },
+    labelAccessory: {
+      marginLeft: Math.max(2, Math.floor(valueGap / 2)),
+      marginRight: Math.max(2, Math.floor(valueGap / 2)),
+      flexShrink: 0,
     },
     value: {
       flexShrink: 1,

@@ -59,6 +59,7 @@ import { withAlpha } from '../theme/colors';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 import { KeyboardProvider } from '../lib/keyboardControllerCompat';
+import { HelpCenterProvider } from '../src/features/helpCenter/HelpCenterProvider';
 
 function getNotificationRecipientUserId(notification) {
   return String(notification?.request?.content?.data?.recipient_user_id || '').trim();
@@ -1260,7 +1261,9 @@ export default function RootLayout() {
             <ToastProvider>
               <FeedbackProvider>
                 <SimpleAuthProvider>
-                  <RootLayoutInner />
+                  <HelpCenterProvider>
+                    <RootLayoutInner />
+                  </HelpCenterProvider>
                 </SimpleAuthProvider>
               </FeedbackProvider>
             </ToastProvider>

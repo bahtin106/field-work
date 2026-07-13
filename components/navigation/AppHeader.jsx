@@ -11,6 +11,7 @@ import { useFormAutoScrollContext } from '../../src/shared/forms/FormAutoScrollC
 import { prepareFormSubmit } from '../../src/shared/forms/prepareFormSubmit';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
+import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
 
 const EMPTY_ROUTE_PARAMS = {};
 const ENABLE_HEADER_MARQUEE = true;
@@ -74,6 +75,20 @@ const createStyles = (theme, metrics) =>
       fontWeight: metrics.titleFontWeight,
       marginLeft: metrics.titleGap,
     },
+    titleHelpRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    titleWithHelp: {
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    titleHelpButton: {
+      marginLeft: Math.max(2, metrics.titleGap / 2),
+      marginRight: 2,
+    },
     backText: {
       fontSize: Math.max(metrics.actionFontSize, theme.typography?.sizes?.md ?? 16),
       fontWeight: theme.typography?.weight?.semibold ?? '600',
@@ -127,6 +142,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   const routeParams = route?.params || EMPTY_ROUTE_PARAMS;
   const pathname = usePathname?.() || '';
   const title = useRouteTitle(options, route, pathname);
+  const helpTopic = String(options?.helpTopic ?? routeParams?.helpTopic ?? '').trim();
 
   // Если в options или в route.params передана функция headerTitle (рендер-функция),
   // используем её напрямую — это позволяет передавать JSX из Screen headerOptions.
@@ -329,7 +345,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   const END_PAUSE = headerMetrics.marqueeEndPause;
 
   useEffect(() => {
-    if (!ENABLE_HEADER_MARQUEE) {
+    if (!ENABLE_HEADER_MARQUEE || helpTopic) {
       marqueeAnim.stopAnimation?.();
       marqueeAnim.setValue(0);
       marqueeRunning.current = false;
@@ -388,6 +404,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     MS_PER_PIXEL,
     START_DELAY,
     END_PAUSE,
+    helpTopic,
   ]);
 
   return (
@@ -476,17 +493,31 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
               </Animated.View>
             ) : null}
             {/* Статичный заголовок скрываем, когда marquee активен */}
-            {!wantCenterTitle && textWidth <= containerWidth ? (
+            {!wantCenterTitle && (helpTopic || textWidth <= containerWidth) ? (
               headerTitleElement ? (
                 headerTitleElement
               ) : titleText ? (
-                <Text
-                  numberOfLines={1}
-                  allowFontScaling={false}
-                  style={[s.title, { color: theme.colors.text }, titleStyleOverride]}
-                >
-                  {titleText}
-                </Text>
+                helpTopic ? (
+                  <View style={s.titleHelpRow}>
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      allowFontScaling={false}
+                      style={[s.title, s.titleWithHelp, { color: theme.colors.text }, titleStyleOverride]}
+                    >
+                      {titleText}
+                    </Text>
+                    <HelpInfoButton topicId={helpTopic} style={s.titleHelpButton} />
+                  </View>
+                ) : (
+                  <Text
+                    numberOfLines={1}
+                    allowFontScaling={false}
+                    style={[s.title, { color: theme.colors.text }, titleStyleOverride]}
+                  >
+                    {titleText}
+                  </Text>
+                )
               ) : null
             ) : null}
           </>
@@ -494,7 +525,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
       </View>
 
       {/* Marquee overlay — работает для любого заголовка автоматически */}
-      {ENABLE_HEADER_MARQUEE && titleText ? (
+      {ENABLE_HEADER_MARQUEE && !helpTopic && titleText ? (
         <View
           pointerEvents="none"
           style={{
@@ -551,7 +582,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
       ) : null}
 
       {/* Invisible measuring text placed outside the clipped marquee container so it measures full natural width */}
-      {ENABLE_HEADER_MARQUEE && titleText ? (
+      {ENABLE_HEADER_MARQUEE && !helpTopic && titleText ? (
         <Text
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
@@ -574,7 +605,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
       ) : null}
 
       {/* Centered title overlay when requested */}
-      {wantCenterTitle && textWidth <= containerWidth ? (
+      {wantCenterTitle && !helpTopic && textWidth <= containerWidth ? (
         <View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}

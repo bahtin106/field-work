@@ -605,7 +605,7 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
 
   if (loading) {
     return (
-      <Screen background="background">
+      <Screen background="background" headerOptions={{ title: tr('title'), helpTopic: 'messenger_bot' }}>
         <View style={s.loader}>
           <ActivityIndicator color={theme.colors.primary} />
         </View>
@@ -614,7 +614,7 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
   }
 
   return (
-    <Screen background="background" scroll={false}>
+    <Screen background="background" scroll={false} headerOptions={{ title: tr('title'), helpTopic: 'messenger_bot' }}>
       <ScrollView contentContainerStyle={s.content} stickyHeaderIndices={stickyHeaderIndices}>
         {screenError ? (
           <Card style={s.errorCard}>

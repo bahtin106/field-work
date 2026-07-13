@@ -2085,6 +2085,7 @@ function AllOrdersContent() {
           options={{
             headerTitleAlign: 'left',
             title: t('routes.orders/all-orders'),
+            helpTopic: 'all_orders',
           }}
         />
         <View style={styles.centered}>
@@ -2103,6 +2104,7 @@ function AllOrdersContent() {
           options={{
             headerTitleAlign: 'left',
             title: t('routes.orders/all-orders'),
+            helpTopic: 'all_orders',
           }}
         />
         <View style={styles.centered}>
@@ -2122,6 +2124,7 @@ function AllOrdersContent() {
         options={{
           headerTitleAlign: 'left',
           title: t('routes.orders/all-orders'),
+          helpTopic: 'all_orders',
         }}
       />
 

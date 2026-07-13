@@ -325,11 +325,11 @@ export default function OrderStatusesScreen() {
   );
 
   if (companyLoading || statusesLoading) {
-    return <Screen background="background" headerOptions={{ title: t('order_statuses_title') }}><View style={s.loading}><ActivityIndicator color={theme.colors.primary} /></View></Screen>;
+    return <Screen background="background" headerOptions={{ title: t('order_statuses_title'), helpTopic: 'order_statuses' }}><View style={s.loading}><ActivityIndicator color={theme.colors.primary} /></View></Screen>;
   }
 
   return (
-    <Screen background="background" headerOptions={{ title: t('order_statuses_title') }} scroll={false}>
+    <Screen background="background" headerOptions={{ title: t('order_statuses_title'), helpTopic: 'order_statuses' }} scroll={false}>
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
         <SectionHeader>{t('order_statuses_title')}</SectionHeader>
         <Card padded={false}>

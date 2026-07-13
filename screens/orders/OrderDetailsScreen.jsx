@@ -5038,6 +5038,7 @@ function OrderDetailsContent() {
           headerTitleAlign: 'left',
           title: fullTitle,
           fullTitle,
+          helpTopic: 'order_details',
           headerTitleStyle: {
             fontSize: theme?.typography?.sizes?.md ?? 15,
             fontWeight: theme?.typography?.weight?.semibold ?? '600',

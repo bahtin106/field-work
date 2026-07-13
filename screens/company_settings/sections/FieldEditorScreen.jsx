@@ -855,7 +855,7 @@ export default function FieldEditorScreen() {
 
   if (!isAdmin) {
     return (
-      <Screen background="background">
+      <Screen background="background" headerOptions={{ title: t('settings_management_form_builder'), helpTopic: 'form_builder' }}>
         <View style={s.center}>
           <Text style={s.muted}>
             {t('field_settings_admin_only')}
@@ -866,7 +866,7 @@ export default function FieldEditorScreen() {
   }
 
   return (
-    <Screen background="background" scroll={false}>
+    <Screen background="background" scroll={false} headerOptions={{ title: t('settings_management_form_builder'), helpTopic: 'form_builder' }}>
       <KeyboardAwareScrollView
         ref={scrollRef}
         contentContainerStyle={s.content}

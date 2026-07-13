@@ -448,7 +448,7 @@ export default function DepartmentsSettings() {
 
   if (loading) {
     return (
-      <Screen>
+      <Screen headerOptions={{ title: t('departments_settings_title'), helpTopic: 'departments' }}>
         <View style={s.loadingWrap}>
           <ActivityIndicator
             size={theme.components?.activityIndicator?.size || DEFAULT_ACTIVITY_INDICATOR_SIZE}
@@ -461,7 +461,7 @@ export default function DepartmentsSettings() {
   }
 
   return (
-    <Screen>
+    <Screen headerOptions={{ title: t('departments_settings_title'), helpTopic: 'departments' }}>
       <ScrollView style={s.screen} contentContainerStyle={s.content}>
         <Card padded={false} style={formStyles.card}>
           <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>

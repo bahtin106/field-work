@@ -417,7 +417,7 @@ export default function ObjectsIndex() {
   if (!has('canViewObjects')) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }} edges={['left', 'right']}>
-        <AppHeader back options={{ title: t('clients_objects_section') }} />
+        <AppHeader back options={{ title: t('clients_objects_section'), helpTopic: 'objects' }} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: theme.spacing.lg }}>
           <Text style={{ color: theme.colors.textSecondary }}>{t('objects_no_view_permission')}</Text>
         </View>
@@ -437,7 +437,7 @@ export default function ObjectsIndex() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }} edges={['left', 'right']}>
-      <AppHeader back options={{ title: t('clients_objects_section') }} />
+      <AppHeader back options={{ title: t('clients_objects_section'), helpTopic: 'objects' }} />
 
       <DismissKeyboardArea style={{ flex: 1 }}>
         <View style={{ paddingTop: theme.spacing.sm }}>

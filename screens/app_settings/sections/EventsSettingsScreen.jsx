@@ -289,7 +289,7 @@ export default function NotificationEventsScreen() {
   return (
     <Screen
       scroll={false}
-      headerOptions={{ title: t('settings_events_title') }}
+      headerOptions={{ title: t('settings_events_title'), helpTopic: 'notification_events' }}
     >
       <ScrollView
         contentContainerStyle={s.container}

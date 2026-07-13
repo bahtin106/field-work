@@ -2454,6 +2454,7 @@ function CalendarScreenContent() {
         options={{
           headerTitleAlign: 'left',
           title: t('routes.orders/calendar'),
+          helpTopic: 'order_calendar',
         }}
       />
       <View style={styles.container}>
