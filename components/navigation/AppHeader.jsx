@@ -81,9 +81,14 @@ const createStyles = (theme, metrics) =>
       flexShrink: 1,
       minWidth: 0,
     },
-    titleWithHelp: {
+    titleHelpViewport: {
       flexShrink: 1,
       minWidth: 0,
+      overflow: 'hidden',
+      marginLeft: metrics.titleGap,
+    },
+    titleWithHelp: {
+      marginLeft: 0,
     },
     titleHelpButton: {
       marginLeft: Math.max(2, metrics.titleGap / 2),
@@ -345,7 +350,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   const END_PAUSE = headerMetrics.marqueeEndPause;
 
   useEffect(() => {
-    if (!ENABLE_HEADER_MARQUEE || helpTopic) {
+    if (!ENABLE_HEADER_MARQUEE) {
       marqueeAnim.stopAnimation?.();
       marqueeAnim.setValue(0);
       marqueeRunning.current = false;
@@ -404,7 +409,6 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     MS_PER_PIXEL,
     START_DELAY,
     END_PAUSE,
-    helpTopic,
   ]);
 
   return (
@@ -499,14 +503,69 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
               ) : titleText ? (
                 helpTopic ? (
                   <View style={s.titleHelpRow}>
-                    <Text
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                      allowFontScaling={false}
-                      style={[s.title, s.titleWithHelp, { color: theme.colors.text }, titleStyleOverride]}
+                    <View
+                      style={s.titleHelpViewport}
+                      onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width || 0)}
                     >
-                      {titleText}
-                    </Text>
+                      {textWidth > 0 && containerWidth > 0 && textWidth > containerWidth ? (
+                        <Animated.View
+                          key={`help-${textWidth}-${containerWidth}`}
+                          style={{
+                            flexDirection: 'row',
+                            width: textWidth * 2 + MARQUEE_GAP,
+                            transform: [{ translateX: marqueeAnim }],
+                          }}
+                        >
+                          <Text
+                            numberOfLines={1}
+                            ellipsizeMode="clip"
+                            allowFontScaling={false}
+                            style={[
+                              s.title,
+                              s.titleWithHelp,
+                              {
+                                width: textWidth,
+                                color: theme.colors.text,
+                              },
+                              titleStyleOverride,
+                            ]}
+                          >
+                            {titleText}
+                          </Text>
+                          <View style={{ width: MARQUEE_GAP }} />
+                          <Text
+                            numberOfLines={1}
+                            ellipsizeMode="clip"
+                            allowFontScaling={false}
+                            style={[
+                              s.title,
+                              s.titleWithHelp,
+                              {
+                                width: textWidth,
+                                color: theme.colors.text,
+                              },
+                              titleStyleOverride,
+                            ]}
+                          >
+                            {titleText}
+                          </Text>
+                        </Animated.View>
+                      ) : (
+                        <Text
+                          numberOfLines={1}
+                          ellipsizeMode="tail"
+                          allowFontScaling={false}
+                          style={[
+                            s.title,
+                            s.titleWithHelp,
+                            { color: theme.colors.text },
+                            titleStyleOverride,
+                          ]}
+                        >
+                          {titleText}
+                        </Text>
+                      )}
+                    </View>
                     <HelpInfoButton topicId={helpTopic} style={s.titleHelpButton} />
                   </View>
                 ) : (
@@ -582,7 +641,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
       ) : null}
 
       {/* Invisible measuring text placed outside the clipped marquee container so it measures full natural width */}
-      {ENABLE_HEADER_MARQUEE && !helpTopic && titleText ? (
+      {ENABLE_HEADER_MARQUEE && titleText ? (
         <Text
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
