@@ -19,6 +19,7 @@ const gradleProperties = read('android/gradle.properties');
 const externalUrls = read('config/externalUrls.js');
 const financeQueue = read('src/features/finance/queries.js');
 const photoQueue = read('src/shared/media/orderPhotoQueue.js');
+const emailServer = read('email-server.cjs');
 
 check(!packageJson.dependencies?.['expo-dev-client'], 'expo-dev-client must not be bundled in production dependencies');
 check(packageJson.dependencies?.['expo-background-task'], 'expo-background-task is required for deferred media delivery');
@@ -50,6 +51,14 @@ check(externalUrls.includes('https://monitorapp.ru/data-deletion'), 'Public acco
 check(financeQueue.includes('ownerUserId') && financeQueue.includes('mutateFinanceOutbox'), 'Finance outbox must be owner-scoped and serialized');
 check(photoQueue.includes('ownerUserId') && photoQueue.includes('flushOrderPhotoQueue'), 'Photo queue must be owner-scoped and globally flushable');
 check(fs.existsSync(path.join(root, 'supabase/migrations/20260712190000_harden_error_logs.sql')), 'Error log schema migration is required');
+check(
+  emailServer.includes("'X-Postmaster-Msgtype': POSTMASTER_MESSAGE_TYPES[type]"),
+  'Transactional email must expose a stable Postmaster message type',
+);
+check(
+  emailServer.includes('<!doctype html>') && emailServer.includes('<html lang="ru">'),
+  'Transactional verification email must use a complete HTML document',
+);
 
 if (failures.length) {
   console.error('Release validation failed:');

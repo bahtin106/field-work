@@ -470,6 +470,11 @@ const transporter = nodemailer.createTransport({
 const DEFAULT_TRANSACTIONAL_FROM = '\u041c\u043e\u043d\u0438\u0442\u043e\u0440 <noreply@monitorapp.ru>';
 const DEFAULT_ENVELOPE_FROM = 'noreply@monitorapp.ru';
 const EMAIL_BRAND_NAME = String(process.env.EMAIL_BRAND_NAME || '\u041c\u043e\u043d\u0438\u0442\u043e\u0440').trim();
+const POSTMASTER_MESSAGE_TYPES = Object.freeze({
+  'registration-code': 'registrationcode',
+  'password-recovery-code': 'passwordrecovery',
+  'email-change-code': 'emailchange',
+});
 
 function getRegistrationFromAddress() {
   return String(process.env.REGISTRATION_SMTP_FROM || DEFAULT_TRANSACTIONAL_FROM).trim();
@@ -489,6 +494,7 @@ function buildTransactionalHeaders(type) {
     'Auto-Submitted': 'auto-generated',
     'X-Auto-Response-Suppress': 'All',
     'X-MonitorApp-Email-Type': type,
+    'X-Postmaster-Msgtype': POSTMASTER_MESSAGE_TYPES[type] || 'transactional',
   };
 }
 
@@ -947,33 +953,42 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
         `
       : '';
     const actionText = isRecoveryPurpose ? `\n\n${actionLabel}: ${verifyUrl}` : '';
-    const html = `
-      <div style="margin:0; padding:0; background:#f3f6fb; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
-        <div style="max-width:600px; margin:0 auto; padding:24px 16px;">
-          <div style="background:#ffffff; border:1px solid #e3e8f0; border-radius:18px; padding:28px;">
-            <h1 style="margin:0 0 14px; color:#0f1b34; font-size:32px; line-height:1.15; font-weight:800;">
-              ${heading}
-            </h1>
-            <p style="margin:0 0 16px; color:#33415c; font-size:16px; line-height:1.5;">
-              ${description}
-            </p>
-            <div style="margin:16px 0 8px; color:#64748b; font-size:16px; line-height:1.4; font-weight:600;">
-              ${codeLabel}
-            </div>
-            <div style="margin:0 0 18px; border:1px dashed #9ec5ff; border-radius:14px; background:#f8fbff; padding:18px 14px; text-align:center;">
-              <span style="display:inline-block; color:#0f1b34; font-size:44px; line-height:1; letter-spacing:6px; font-weight:800;">${code}</span>
-            </div>
-            ${actionHtml}
-            <p style="margin:18px 0 0; color:#64748b; font-size:14px; line-height:1.5;">
-              ${hint}
-            </p>
-            <p style="margin:14px 0 0; color:#94a3b8; font-size:12px; line-height:1.5;">
-              ${footer}
-            </p>
+    const html = `<!doctype html>
+      <html lang="ru">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>${subject}</title>
+        </head>
+        <body style="margin:0; padding:0; background:#f3f6fb; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+          <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">
+            ${heading}. ${codeLabel} \u2014 ${code}.
           </div>
-        </div>
-      </div>
-    `;
+          <div style="max-width:600px; margin:0 auto; padding:24px 16px;">
+            <div style="background:#ffffff; border:1px solid #e3e8f0; border-radius:18px; padding:28px;">
+              <h1 style="margin:0 0 14px; color:#0f1b34; font-size:32px; line-height:1.15; font-weight:800;">
+                ${heading}
+              </h1>
+              <p style="margin:0 0 16px; color:#33415c; font-size:16px; line-height:1.5;">
+                ${description}
+              </p>
+              <div style="margin:16px 0 8px; color:#64748b; font-size:16px; line-height:1.4; font-weight:600;">
+                ${codeLabel}
+              </div>
+              <div style="margin:0 0 18px; border:1px dashed #9ec5ff; border-radius:14px; background:#f8fbff; padding:18px 14px; text-align:center;">
+                <span style="display:inline-block; color:#0f1b34; font-size:44px; line-height:1; letter-spacing:6px; font-weight:800;">${code}</span>
+              </div>
+              ${actionHtml}
+              <p style="margin:18px 0 0; color:#64748b; font-size:14px; line-height:1.5;">
+                ${hint}
+              </p>
+              <p style="margin:14px 0 0; color:#94a3b8; font-size:12px; line-height:1.5;">
+                ${footer}
+              </p>
+            </div>
+          </div>
+        </body>
+      </html>`;
     const text = `${textPrefix}\n\n${codeLabel}: ${code}${actionText}\n\n${hint}\n\n${footer}`;
 
     const info = await transporter.sendMail({
