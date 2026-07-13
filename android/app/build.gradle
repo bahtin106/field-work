@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
@@ -103,12 +105,28 @@ android {
             }
         }
     }
-    def releaseStoreFile = findProperty('MYAPP_UPLOAD_STORE_FILE') ?: System.getenv('MYAPP_UPLOAD_STORE_FILE')
-    def releaseStorePassword = findProperty('MYAPP_UPLOAD_STORE_PASSWORD') ?: System.getenv('MYAPP_UPLOAD_STORE_PASSWORD')
-    def releaseKeyAlias = findProperty('MYAPP_UPLOAD_KEY_ALIAS') ?: System.getenv('MYAPP_UPLOAD_KEY_ALIAS')
-    def releaseKeyPassword = findProperty('MYAPP_UPLOAD_KEY_PASSWORD') ?: System.getenv('MYAPP_UPLOAD_KEY_PASSWORD')
+    // EAS is the source of truth for the Google Play upload key. The downloaded
+    // credentials file is ignored by git and takes precedence over stale local properties.
+    def easCredentialsFile = new File(projectRoot, 'credentials.json')
+    def easKeystore = null
+    if (easCredentialsFile.exists()) {
+        try {
+            easKeystore = new JsonSlurper().parse(easCredentialsFile)?.android?.keystore
+        } catch (Exception ignored) {
+            logger.warn('credentials.json could not be parsed; release signing fallback will be used')
+        }
+    }
+    def releaseStoreFile = easKeystore?.keystorePath ?: findProperty('MYAPP_UPLOAD_STORE_FILE') ?: System.getenv('MYAPP_UPLOAD_STORE_FILE')
+    def releaseStorePassword = easKeystore?.keystorePassword ?: findProperty('MYAPP_UPLOAD_STORE_PASSWORD') ?: System.getenv('MYAPP_UPLOAD_STORE_PASSWORD')
+    def releaseKeyAlias = easKeystore?.keyAlias ?: findProperty('MYAPP_UPLOAD_KEY_ALIAS') ?: System.getenv('MYAPP_UPLOAD_KEY_ALIAS')
+    def releaseKeyPassword = easKeystore?.keyPassword ?: findProperty('MYAPP_UPLOAD_KEY_PASSWORD') ?: System.getenv('MYAPP_UPLOAD_KEY_PASSWORD')
+    def resolvedReleaseStoreFile = releaseStoreFile
+        ? (new File(releaseStoreFile.toString()).isAbsolute()
+            ? new File(releaseStoreFile.toString())
+            : new File(projectRoot, releaseStoreFile.toString()))
+        : null
     def hasReleaseSigning =
-        releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+        resolvedReleaseStoreFile?.exists() && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
 
     signingConfigs {
         debug {
@@ -119,7 +137,7 @@ android {
         }
         if (hasReleaseSigning) {
             release {
-                storeFile = file(releaseStoreFile)
+                storeFile = resolvedReleaseStoreFile
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
