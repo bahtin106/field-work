@@ -4962,7 +4962,9 @@ function OrderDetailsContent() {
     }
     const locale = resolveDateFnsLocale();
     const endDate = parseOrderDateOnly(order?.time_window_end);
-    const dateLabel = endDate
+    const hasDistinctEndDate =
+      endDate && endDate.getTime() !== departureCalendarDate.getTime();
+    const dateLabel = hasDistinctEndDate
       ? `${format(departureCalendarDate, 'd MMMM yyyy', { locale })} — ${format(endDate, 'd MMMM yyyy', { locale })}`
       : format(departureCalendarDate, 'd MMMM yyyy', { locale });
     return departureTimeLabel ? `${dateLabel}, ${departureTimeLabel}` : dateLabel;
