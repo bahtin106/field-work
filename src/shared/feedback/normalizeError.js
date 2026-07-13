@@ -2,7 +2,9 @@
 import { FEEDBACK_CODES, getMessageByCode } from './messages';
 
 const isNetworkError = (msg = '') =>
-  /network|timeout|timed?out|failed to fetch|network request failed|ECONN|EHOSTUNREACH/i.test(msg);
+  /network|timeout|timed?out|failed to fetch|network request failed|failed to send a request to the edge function|functionsfetcherror|ECONN|EHOSTUNREACH|ENETUNREACH|DNS/i.test(
+    msg,
+  );
 
 const isEmailTaken = (msg = '') =>
   /already exists|email.*taken|user.*exists|duplicate|email.*exists/i.test(msg);

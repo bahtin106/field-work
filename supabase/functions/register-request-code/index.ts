@@ -235,7 +235,26 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
     if (!sendRes.ok || sendPayload?.ok !== true) {
       const code = String(sendPayload?.code || 'SEND_FAILED').trim() || 'SEND_FAILED';
       const status = Number(sendRes.status || 500) || 500;
-      return json({ ok: false, code, message: 'Failed to send verification code' }, status);
+      if (status === 429 && code === 'RATE_LIMITED') {
+        const retryAfterSeconds = Number(sendPayload?.retry_after_seconds || 60);
+        const expiresInSeconds = Number(
+          sendPayload?.expires_in_seconds || REGISTER_CODE_TTL_FALLBACK_SECONDS,
+        );
+        return json({
+          ok: true,
+          code: 'CODE_ALREADY_SENT',
+          cooldown_seconds: Number.isFinite(retryAfterSeconds) ? Math.max(1, retryAfterSeconds) : 60,
+          expires_in_seconds: Number.isFinite(expiresInSeconds)
+            ? Math.max(1, expiresInSeconds)
+            : REGISTER_CODE_TTL_FALLBACK_SECONDS,
+        });
+      }
+      return json({
+        ok: false,
+        code,
+        message: 'Failed to send verification code',
+        retry_after_seconds: Number(sendPayload?.retry_after_seconds || 0) || undefined,
+      }, status);
     }
 
     return json({

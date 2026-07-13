@@ -9,6 +9,10 @@ import Button from '../../components/ui/Button';
 import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { FUNCTIONS } from '../../lib/constants';
 import { logClientError } from '../../lib/errorLogsClient';
+import {
+  EDGE_FUNCTION_TRANSPORT_ERROR,
+  invokeEdgeFunctionWithRetry,
+} from '../../lib/edgeFunctionClient';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useFeedback } from '../../src/shared/feedback';
@@ -397,7 +401,7 @@ export default function RegisterCodeScreen() {
     clearBanner();
     try {
       const clientFingerprint = await getOrCreateRegisterClientFingerprint();
-      const { data, error } = await supabase.functions.invoke(FUNCTIONS.REGISTER_REQUEST_CODE, {
+      const { data, error } = await invokeEdgeFunctionWithRetry(FUNCTIONS.REGISTER_REQUEST_CODE, {
         body: {
           email,
           account_type: 'solo',
@@ -407,6 +411,9 @@ export default function RegisterCodeScreen() {
         },
       });
       if (error || data?.ok === false) {
+        if (error?.code === EDGE_FUNCTION_TRANSPORT_ERROR) {
+          throw new Error(t('errors_network'));
+        }
         const responseCode = String(data?.code || '').trim();
         if (responseCode === 'RATE_LIMITED') throw new Error(t('err_invite_rate_limit'));
         if (responseCode === 'BOT_CHALLENGE_REQUIRED') throw new Error(t('register_code_verify_required'));

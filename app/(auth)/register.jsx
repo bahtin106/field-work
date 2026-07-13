@@ -36,7 +36,10 @@ import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { FUNCTIONS } from '../../lib/constants';
 import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { logClientError } from '../../lib/errorLogsClient';
-import { supabase } from '../../lib/supabase';
+import {
+  EDGE_FUNCTION_TRANSPORT_ERROR,
+  invokeEdgeFunctionWithRetry,
+} from '../../lib/edgeFunctionClient';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import TurnstileWidget from '../../src/shared/security/TurnstileWidget';
 import { useTheme } from '../../theme';
@@ -524,7 +527,7 @@ export default function RegisterScreen() {
           setCompanyCheckStatus(null);
         }
 
-        const { data, error } = await supabase.functions.invoke(FUNCTIONS.REGISTER_USER, {
+        const { data, error } = await invokeEdgeFunctionWithRetry(FUNCTIONS.REGISTER_USER, {
           body: {
             check_only: true,
             email: String(emailToCheck).trim().toLowerCase(),
@@ -704,7 +707,7 @@ export default function RegisterScreen() {
         throw new Error(t('register_code_verify_required'));
       }
 
-      const { data: requestCodeData, error: requestCodeError } = await supabase.functions.invoke(
+      const { data: requestCodeData, error: requestCodeError } = await invokeEdgeFunctionWithRetry(
         FUNCTIONS.REGISTER_REQUEST_CODE,
         {
           body: {
@@ -718,6 +721,9 @@ export default function RegisterScreen() {
       );
 
       if (requestCodeError || requestCodeData?.ok === false) {
+        if (requestCodeError?.code === EDGE_FUNCTION_TRANSPORT_ERROR) {
+          throw new Error(t('errors_network'));
+        }
         const responseCode = String(requestCodeData?.code || '').trim();
         if (responseCode === 'EMAIL_TAKEN') throw new Error(t('error_email_exists'));
         if (responseCode === 'COMPANY_NAME_TAKEN') throw new Error(t('errors_companyName_duplicate'));

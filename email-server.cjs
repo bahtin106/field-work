@@ -841,6 +841,10 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 * 1000), requireServerToken, async (req, res) => {
+  let pendingCodeKey = '';
+  let pendingEmail = '';
+  let pendingPurpose = '';
+  let pendingCodeCreated = false;
   try {
     await cleanupPersistentRegistrationStores();
     cleanupRegistrationStores();
@@ -858,7 +862,13 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
     const existing = (await loadPersistentRegistrationCode(email, purpose)) || registrationCodeStore.get(codeKey);
     if (existing && Number(existing.cooldownUntil || 0) > now) {
       const retryAfter = Math.max(1, Math.ceil((existing.cooldownUntil - now) / 1000));
-      return res.status(429).json({ ok: false, code: 'RATE_LIMITED', retry_after_seconds: retryAfter });
+      const expiresInSeconds = Math.max(1, Math.ceil((Number(existing.expiresAt || now) - now) / 1000));
+      return res.status(429).json({
+        ok: false,
+        code: 'RATE_LIMITED',
+        retry_after_seconds: retryAfter,
+        expires_in_seconds: expiresInSeconds,
+      });
     }
 
     const code = generateSixDigitCode();
@@ -874,6 +884,10 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
       attempts: 0,
       verifiedAt: null,
     };
+    pendingCodeKey = codeKey;
+    pendingEmail = email;
+    pendingPurpose = purpose;
+    pendingCodeCreated = true;
     registrationCodeStore.set(codeKey, entry);
     await savePersistentRegistrationCode(entry);
 
@@ -973,6 +987,7 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
       headers: buildTransactionalHeaders(emailType),
     });
 
+    pendingCodeCreated = false;
     console.log(`[${new Date().toISOString()}] Registration code sent to ${maskEmailForLog(email)}: ${info.messageId}`);
     return res.status(200).json({
       ok: true,
@@ -980,6 +995,10 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
       expires_in_seconds: Math.floor(REG_CODE_TTL_MS / 1000),
     });
   } catch (error) {
+    if (pendingCodeCreated) {
+      registrationCodeStore.delete(pendingCodeKey);
+      await deletePersistentRegistrationCode(pendingEmail, pendingPurpose).catch(() => {});
+    }
     console.error('[/registration/send-code] Error:', error);
     return res.status(500).json({ ok: false, code: 'SEND_FAILED', message: 'Failed to send verification code' });
   }
