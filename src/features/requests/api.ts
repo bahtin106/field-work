@@ -22,7 +22,9 @@ import { getMyCompanyId } from '../profile/api';
 
 const DEFAULT_PAGE_SIZE = 20;
 const SECURE_ORDER_SELECT_COLUMNS = '*';
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// PostgreSQL accepts canonical UUID strings regardless of their version bits.
+// Do not reject imported or legacy identifiers solely because their version is unusual.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function warmExecutorNames(rows: any[] = []) {
   seedExecutorNames(rows);

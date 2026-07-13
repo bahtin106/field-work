@@ -390,7 +390,7 @@ export function extractConflictingClientId(error: any) {
   ];
   for (const candidate of candidates) {
     const match = candidate.match(
-      /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i,
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
     );
     if (match?.[0]) return String(match[0]);
   }

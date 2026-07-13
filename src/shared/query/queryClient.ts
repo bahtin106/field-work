@@ -24,6 +24,7 @@ const PERSIST_THROTTLE_MS = 12_000;
 const PERSIST_TARGET_SERIALIZED_CHARS = 3 * 1024 * 1024;
 const PERSIST_HARD_SERIALIZED_CHARS = 4 * 1024 * 1024;
 const PERSISTED_QUERY_OVERHEAD_CHARS = 512;
+const CANONICAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function getErrorStatus(error: any): number | null {
   const status = Number(error?.status || error?.statusCode || error?.response?.status);
@@ -268,6 +269,7 @@ function isDurableOfflineQuery(queryKey: any): boolean {
     (key0 === 'profile' &&
       (key1 === 'me' ||
         key1 === 'company-id' ||
+        CANONICAL_UUID_RE.test(String(key1 || '')) ||
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(String(key1 || ''))))
   ) {
     return true;
@@ -555,6 +557,7 @@ export const persistOptions = {
         key0 === 'profile' &&
         key1 !== 'me' &&
         key1 !== 'company-id' &&
+        !CANONICAL_UUID_RE.test(String(key1 || '')) &&
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(String(key1 || ''))
       ) {
         return false;

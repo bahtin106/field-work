@@ -223,7 +223,7 @@ function looksLikeUuid(s) {
   if (typeof s !== 'string') return false;
   const str = s.trim();
   if (!str) return false;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str))
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str))
     return true;
   return false;
 }
