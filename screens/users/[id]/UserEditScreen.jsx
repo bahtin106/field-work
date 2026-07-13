@@ -43,6 +43,7 @@ import {
 } from '../../../src/shared/validation/fields';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
+import { ensureImageLibraryPermission } from '../../../src/shared/media/imagePipeline';
 import { getEmailChangeRedirectUrl } from '../../../lib/authRedirects';
 import { useClearResolvedFieldErrors } from '../../../src/shared/forms/useClearResolvedFieldErrors';
 import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../../../lib/personName';
@@ -1023,8 +1024,7 @@ export default function EditUser() {
     return status === 'granted';
   };
   const ensureLibraryPerms = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    return status === 'granted';
+    return ensureImageLibraryPermission();
   };
   const uploadAvatar = async (uri) => {
     try {

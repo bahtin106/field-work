@@ -30,6 +30,7 @@ import { resolveTagErrorMessage } from '../../src/features/tags/errors';
 import { uploadClientAvatar } from '../../src/features/clients/avatar';
 import { CLIENT_COMMENT_MAX_LENGTH } from '../../src/features/clients/constants';
 import { FEEDBACK_CODES, FieldErrorText, getMessageByCode } from '../../src/shared/feedback';
+import { ensureImageLibraryPermission } from '../../src/shared/media/imagePipeline';
 import { useClearResolvedFieldErrors } from '../../src/shared/forms/useClearResolvedFieldErrors';
 import {
   buildClientAdditionalPhonesPatch,
@@ -490,8 +491,8 @@ export default function NewClientScreen() {
 
   const pickFromLibrary = React.useCallback(async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
+      const hasLibraryAccess = await ensureImageLibraryPermission();
+      if (!hasLibraryAccess) {
         toast.warning(t('error_library_denied'));
         return;
       }

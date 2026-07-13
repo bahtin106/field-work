@@ -40,6 +40,7 @@ import {
 import { createEntityFieldPresentation } from '../../src/features/fieldSettings/presentation';
 import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { uploadProfileMedia } from '../../src/features/profileMedia/api';
+import { ensureImageLibraryPermission } from '../../src/shared/media/imagePipeline';
 import {
   hasMobilePhoneValue,
   isValidOptionalMobilePhone,
@@ -835,8 +836,7 @@ export default function NewUserScreen() {
     return status === 'granted';
   };
   const ensureLibraryPerms = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    return status === 'granted';
+    return ensureImageLibraryPermission();
   };
   const _uploadAvatar = async (userId, uri) => {
     try {

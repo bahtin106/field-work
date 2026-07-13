@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { FileSystemUploadType, uploadAsync as uploadFileAsync } from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 
 export const DEFAULT_MEDIA_MIME = 'image/jpeg';
 export const DEFAULT_MEDIA_MAX_WIDTH = 1280;
@@ -18,6 +19,11 @@ export function getImagePickerMediaTypesImages() {
 }
 
 export async function ensureImageLibraryPermission() {
+  // Android's system photo picker grants access only to the files selected by the
+  // user. Requesting broad media-library access here breaks clean installs where
+  // READ_MEDIA_IMAGES is intentionally excluded from the app manifest.
+  if (Platform.OS !== 'ios') return true;
+
   let permission = await ImagePicker.getMediaLibraryPermissionsAsync();
   if (!permission?.granted) {
     permission = await ImagePicker.requestMediaLibraryPermissionsAsync();

@@ -25,6 +25,7 @@ import { TAG_TYPE } from '../../../components/tags/tagConfig';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { usePermissions } from '../../../lib/permissions';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
+import { ensureImageLibraryPermission } from '../../../src/shared/media/imagePipeline';
 import {
   extractConflictingClientId,
   findClientByPrimaryPhone,
@@ -912,8 +913,7 @@ export default function EditClientScreen() {
   }, []);
 
   const ensureLibraryPerms = React.useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    return status === 'granted';
+    return ensureImageLibraryPermission();
   }, []);
 
   const mediaTypesOpt = React.useMemo(() => getImagePickerMediaTypesImages(), []);

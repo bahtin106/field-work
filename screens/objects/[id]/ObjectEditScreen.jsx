@@ -78,7 +78,12 @@ import { openCoordinatesInYandex } from '../../../components/ui/map';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 import MediaUploadModal from '../../../components/media/MediaUploadModal';
 import FullscreenImageViewer from '../../../app/orders/components/FullscreenImageViewer';
-import { getImagePickerMediaTypesImages, prepareImageForUpload, runMediaUploadQueue } from '../../../src/shared/media/imagePipeline';
+import {
+  ensureImageLibraryPermission,
+  getImagePickerMediaTypesImages,
+  prepareImageForUpload,
+  runMediaUploadQueue,
+} from '../../../src/shared/media/imagePipeline';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
 const OBJECT_MEDIA_FIELD_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'];
@@ -796,8 +801,7 @@ export default function EditObjectScreen() {
   }, []);
 
   const ensureLibraryPerms = React.useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    return status === 'granted';
+    return ensureImageLibraryPermission();
   }, []);
 
   const pickFromCamera = React.useCallback(async () => {
