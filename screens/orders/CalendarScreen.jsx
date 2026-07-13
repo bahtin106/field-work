@@ -857,7 +857,7 @@ function CalendarScreenContent() {
     visibleMonthIndex.value = targetIndex;
     setVisibleMonthRenderIndex(targetIndex);
     settledMonthOffsetX.value = layoutMetrics.cardWidth * targetIndex;
-    if (monthPagerRef.current && !isCollapsed) {
+    if (monthPagerRef.current && !collapsedRef.current) {
       try {
         monthPagerRef.current.scrollToIndex({ index: targetIndex, animated: false });
       } catch {}
@@ -865,7 +865,6 @@ function CalendarScreenContent() {
   }, [
     currentMonth,
     dynamicMonths,
-    isCollapsed,
     layoutMetrics.cardWidth,
     monthPagerRef,
     settledMonthOffsetX,
@@ -2548,7 +2547,6 @@ function CalendarScreenContent() {
                             selectedDate={selectedDate}
                             todayKey={todayKey}
                             eventCountsByDate={calendarIndex.countByDate}
-                            isCollapsed={isCollapsed}
                             dayCellSize={layoutMetrics.dayCellSize}
                             onDatePress={setSelectedDate}
                             styles={styles}
