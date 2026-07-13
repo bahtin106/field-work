@@ -106,10 +106,11 @@ function BottomNavInner() {
     tabNavInFlightRef.current = true;
 
     try {
-      if (target === PATHS.home && typeof router.dismissTo === 'function') {
-        // Pop precisely to the home route. Unlike dismissAll(), this cannot
-        // restore a previously mounted child route such as Calendar.
-        router.dismissTo(PATHS.home);
+      if (target === PATHS.home) {
+        // Calendar can be the first route of the nested orders stack after a
+        // restored session or a direct link. In that case POP_TO/dismissTo has
+        // nothing to pop to and may leave the visible screen unchanged.
+        router.replace(PATHS.home);
       } else {
         router.navigate(target);
       }
