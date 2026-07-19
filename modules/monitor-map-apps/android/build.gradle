@@ -6,6 +6,14 @@ plugins {
 group = 'com.monitorapp'
 version = '1.0.0'
 
+expoModule {
+  canBePublished false
+}
+
 android {
   namespace "expo.modules.monitormapapps"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
 }

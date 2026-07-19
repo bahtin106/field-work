@@ -27,6 +27,7 @@ const mapQueriesPlugin = read('plugins/withMapAppQueries.js');
 const mapAppsNativeModule = read(
   'modules/monitor-map-apps/android/src/main/java/expo/modules/monitormapapps/MonitorMapAppsModule.kt',
 );
+const mapAppsNativeBuild = read('modules/monitor-map-apps/android/build.gradle');
 const mapAppsModuleConfig = json('modules/monitor-map-apps/expo-module.config.json');
 const clientPrefill = read('src/features/clients/prefillFromSearch.js');
 const orderSort = read('src/features/orders/orderSort.js');
@@ -369,6 +370,8 @@ check(
     mapAppsNativeModule.includes('MATCH_DEFAULT_ONLY') &&
     mapAppsNativeModule.includes('loadLabel(packageManager)') &&
     mapAppsNativeModule.includes('setPackage(normalizedPackage)') &&
+    mapAppsNativeBuild.includes('canBePublished false') &&
+    mapAppsNativeBuild.includes('versionName "1.0.0"') &&
     mapAppsModuleConfig.android?.modules?.includes(
       'expo.modules.monitormapapps.MonitorMapAppsModule',
     ) &&
