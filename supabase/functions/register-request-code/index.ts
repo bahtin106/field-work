@@ -59,6 +59,75 @@ async function isProfileEmailOwnedByAuthUser(
   return normalizeEmail(data.user.email) === email;
 }
 
+async function listAuthUsersByEmail(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  email: string,
+) {
+  const matches: any[] = [];
+  let page = 1;
+  const perPage = 200;
+
+  for (let i = 0; i < 50; i += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error) throw new Error('EMAIL_CHECK_FAILED');
+
+    const users = Array.isArray(data?.users) ? data.users : [];
+    for (const user of users) {
+      if (normalizeEmail(user?.email) === email) matches.push(user);
+    }
+
+    const total = Number(data?.total || 0);
+    if (users.length < perPage || (total > 0 && page * perPage >= total)) break;
+    page += 1;
+  }
+
+  return matches;
+}
+
+async function getAuthEmailState(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  email: string,
+) {
+  const authUsers = await listAuthUsersByEmail(supabaseAdmin, email);
+  const authUserIds = authUsers.map((user) => text(user?.id)).filter(Boolean);
+  const profileIds = new Set<string>();
+
+  if (authUserIds.length) {
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .in('id', authUserIds);
+    if (error) throw new Error('EMAIL_CHECK_FAILED');
+    for (const row of Array.isArray(data) ? data : []) {
+      const profileId = text(row?.id);
+      if (profileId) profileIds.add(profileId);
+    }
+  }
+
+  // Resume only this flow (including legacy self-registration), never invitations.
+  const recoverableUsers = authUsers.filter((user) => {
+    const userId = text(user?.id);
+    const registrationSource = text(user?.user_metadata?.registration_source);
+    const legacyAccountType = text(user?.user_metadata?.account_type);
+    const isLegacyIncompleteRegistration =
+      !registrationSource &&
+      !user?.invited_at &&
+      !user?.email_confirmed_at &&
+      !user?.confirmed_at &&
+      ACCOUNT_TYPES.has(legacyAccountType);
+    return (
+      !!userId &&
+      !profileIds.has(userId) &&
+      !user?.last_sign_in_at &&
+      (registrationSource === 'edge_register_user' || isLegacyIncompleteRegistration)
+    );
+  });
+  const recoverableIds = new Set(recoverableUsers.map((user) => text(user?.id)));
+  const blockingUsers = authUsers.filter((user) => !recoverableIds.has(text(user?.id)));
+
+  return { blockingUsers, recoverableUsers };
+}
+
 function normalizeCompanyName(value: unknown) {
   return text(value).replace(/\s+/g, ' ');
 }
@@ -222,6 +291,16 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
         return json({ ok: false, code: 'EMAIL_TAKEN', message: 'User with this email already exists' }, 409);
       }
       existingProfile = null;
+    }
+
+    let authEmailState;
+    try {
+      authEmailState = await getAuthEmailState(admin, email);
+    } catch {
+      return json({ ok: false, code: 'EMAIL_CHECK_FAILED', message: 'Email availability check failed' }, 400);
+    }
+    if (authEmailState.blockingUsers.length || authEmailState.recoverableUsers.length > 1) {
+      return json({ ok: false, code: 'EMAIL_TAKEN', message: 'User with this email already exists' }, 409);
     }
 
     const emailServiceUrl = getEmailServiceUrl();

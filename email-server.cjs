@@ -477,7 +477,11 @@ const POSTMASTER_MESSAGE_TYPES = Object.freeze({
 });
 
 function getRegistrationFromAddress() {
-  return String(process.env.REGISTRATION_SMTP_FROM || DEFAULT_TRANSACTIONAL_FROM).trim();
+  return String(
+    process.env.REGISTRATION_SMTP_FROM ||
+      process.env.SMTP_FROM ||
+      DEFAULT_TRANSACTIONAL_FROM,
+  ).trim();
 }
 
 function getRegistrationEnvelopeFrom() {
@@ -1002,8 +1006,20 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
       headers: buildTransactionalHeaders(emailType),
     });
 
+    const acceptedRecipients = (Array.isArray(info.accepted) ? info.accepted : []).map(normalizeEmail);
+    const rejectedRecipients = (Array.isArray(info.rejected) ? info.rejected : []).map(normalizeEmail);
+    if (
+      rejectedRecipients.includes(email) ||
+      (acceptedRecipients.length > 0 && !acceptedRecipients.includes(email))
+    ) {
+      throw new Error('SMTP did not accept the verification email recipient');
+    }
+
     pendingCodeCreated = false;
-    console.log(`[${new Date().toISOString()}] Registration code sent to ${maskEmailForLog(email)}: ${info.messageId}`);
+    console.log(
+      `[${new Date().toISOString()}] Verification code accepted for ${maskEmailForLog(email)}`,
+      JSON.stringify({ purpose, messageId: info.messageId, response: info.response || null }),
+    );
     return res.status(200).json({
       ok: true,
       cooldown_seconds: Math.floor(REG_CODE_RESEND_COOLDOWN_MS / 1000),

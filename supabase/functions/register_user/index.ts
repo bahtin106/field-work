@@ -59,6 +59,75 @@ async function isProfileEmailOwnedByAuthUser(
   return normalizeEmail(data.user.email) === email;
 }
 
+async function listAuthUsersByEmail(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  email: string,
+) {
+  const matches: any[] = [];
+  let page = 1;
+  const perPage = 200;
+
+  for (let i = 0; i < 50; i += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error) throw new Error('EMAIL_CHECK_FAILED');
+
+    const users = Array.isArray(data?.users) ? data.users : [];
+    for (const user of users) {
+      if (normalizeEmail(user?.email) === email) matches.push(user);
+    }
+
+    const total = Number(data?.total || 0);
+    if (users.length < perPage || (total > 0 && page * perPage >= total)) break;
+    page += 1;
+  }
+
+  return matches;
+}
+
+async function getAuthEmailState(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  email: string,
+) {
+  const authUsers = await listAuthUsersByEmail(supabaseAdmin, email);
+  const authUserIds = authUsers.map((user) => text(user?.id)).filter(Boolean);
+  const profileIds = new Set<string>();
+
+  if (authUserIds.length) {
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .in('id', authUserIds);
+    if (error) throw new Error('EMAIL_CHECK_FAILED');
+    for (const row of Array.isArray(data) ? data : []) {
+      const profileId = text(row?.id);
+      if (profileId) profileIds.add(profileId);
+    }
+  }
+
+  // Resume only this flow (including legacy self-registration), never invitations.
+  const recoverableUsers = authUsers.filter((user) => {
+    const userId = text(user?.id);
+    const registrationSource = text(user?.user_metadata?.registration_source);
+    const legacyAccountType = text(user?.user_metadata?.account_type);
+    const isLegacyIncompleteRegistration =
+      !registrationSource &&
+      !user?.invited_at &&
+      !user?.email_confirmed_at &&
+      !user?.confirmed_at &&
+      ACCOUNT_TYPES.has(legacyAccountType);
+    return (
+      !!userId &&
+      !profileIds.has(userId) &&
+      !user?.last_sign_in_at &&
+      (registrationSource === 'edge_register_user' || isLegacyIncompleteRegistration)
+    );
+  });
+  const recoverableIds = new Set(recoverableUsers.map((user) => text(user?.id)));
+  const blockingUsers = authUsers.filter((user) => !recoverableIds.has(text(user?.id)));
+
+  return { blockingUsers, recoverableUsers };
+}
+
 function clipText(value: unknown, maxLen = 2000) {
   const raw = String(value ?? '');
   return raw.length > maxLen ? raw.slice(0, maxLen) : raw;
@@ -300,10 +369,28 @@ export async function handleRegisterUserRequest(req: Request) {
       existingUser = null;
     }
 
+    let authEmailState;
+    try {
+      authEmailState = await getAuthEmailState(supabaseAdmin, email);
+    } catch (authLookupError) {
+      await logServerIssue(supabaseAdmin, {
+        name: 'RegisterEmailCheckError',
+        message: String((authLookupError as { message?: string })?.message || authLookupError),
+        extra: { email, source: 'auth' },
+      });
+      return errorResponse(req, allowedOrigins, 'Email availability check failed', 400, 'EMAIL_CHECK_FAILED');
+    }
+    const hasBlockingAuthUser =
+      authEmailState.blockingUsers.length > 0 || authEmailState.recoverableUsers.length > 1;
+    const recoverableAuthUser =
+      !hasBlockingAuthUser && authEmailState.recoverableUsers.length === 1
+        ? authEmailState.recoverableUsers[0]
+        : null;
+
     if (isCheckOnly) {
       return jsonResponse(req, allowedOrigins, {
         success: true,
-        email_available: !existingUser,
+        email_available: !existingUser && !hasBlockingAuthUser,
         company_available: true,
       });
     }
@@ -314,6 +401,10 @@ export async function handleRegisterUserRequest(req: Request) {
 
     if (!EMAIL_SERVICE_URL) {
       return errorResponse(req, allowedOrigins, 'email verification service is not configured', 500, 'SERVER_MISCONFIGURED');
+    }
+
+    if (existingUser || hasBlockingAuthUser) {
+      return errorResponse(req, allowedOrigins, 'User with this email already exists', 400, 'EMAIL_TAKEN');
     }
 
     const verifyTokenRes = await fetch(`${EMAIL_SERVICE_URL}/registration/consume-token`, {
@@ -331,10 +422,6 @@ export async function handleRegisterUserRequest(req: Request) {
       return errorResponse(req, allowedOrigins, 'Email verification failed', 409, 'EMAIL_VERIFICATION_FAILED');
     }
 
-    if (existingUser) {
-      return errorResponse(req, allowedOrigins, 'User with this email already exists', 400, 'EMAIL_TAKEN');
-    }
-
     const metadataCompanyName = accountType === 'company' ? companyNameInput : SOLO_DEFAULT_COMPANY_NAME;
     const metadata: Record<string, unknown> = {
       first_name: firstName,
@@ -347,29 +434,51 @@ export async function handleRegisterUserRequest(req: Request) {
       registration_source: 'edge_register_user',
     };
 
-    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: metadata,
-    });
-
-    if (createErr) {
-      const createMessage = String(createErr?.message || 'unknown');
-      await logServerIssue(supabaseAdmin, {
-        name: 'RegisterAuthCreateError',
-        message: createMessage,
-        extra: { code: createErr?.code || null, email },
-      });
-      if (/already|exists/i.test(createMessage)) {
-        return errorResponse(req, allowedOrigins, 'User with this email already exists', 400, 'EMAIL_TAKEN');
+    let userId = '';
+    if (recoverableAuthUser) {
+      const recoverableUserId = text(recoverableAuthUser?.id);
+      const { data: recovered, error: recoverErr } = await supabaseAdmin.auth.admin.updateUserById(
+        recoverableUserId,
+        {
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: metadata,
+        },
+      );
+      if (recoverErr || !recovered?.user?.id) {
+        await logServerIssue(supabaseAdmin, {
+          name: 'RegisterAuthRecoverError',
+          message: String(recoverErr?.message || 'Incomplete auth user recovery failed'),
+          extra: { code: recoverErr?.code || null, email, recoverableUserId },
+        });
+        return errorResponse(req, allowedOrigins, 'User recovery failed', 400, 'AUTH_RECOVERY_FAILED');
       }
-      return errorResponse(req, allowedOrigins, 'User creation failed', 400, 'AUTH_CREATE_FAILED');
-    }
+      userId = recovered.user.id;
+    } else {
+      const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: metadata,
+      });
 
-    const userId = created?.user?.id;
-    if (!userId) {
-      return errorResponse(req, allowedOrigins, 'User creation failed', 400, 'AUTH_CREATE_FAILED');
+      if (createErr) {
+        const createMessage = String(createErr?.message || 'unknown');
+        await logServerIssue(supabaseAdmin, {
+          name: 'RegisterAuthCreateError',
+          message: createMessage,
+          extra: { code: createErr?.code || null, email },
+        });
+        if (/already|exists/i.test(createMessage)) {
+          return errorResponse(req, allowedOrigins, 'User with this email already exists', 400, 'EMAIL_TAKEN');
+        }
+        return errorResponse(req, allowedOrigins, 'User creation failed', 400, 'AUTH_CREATE_FAILED');
+      }
+      userId = text(created?.user?.id);
+      if (!userId) {
+        return errorResponse(req, allowedOrigins, 'User creation failed', 400, 'AUTH_CREATE_FAILED');
+      }
     }
     createdUserId = userId;
 

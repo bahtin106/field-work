@@ -231,6 +231,9 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       })
       .select('id')
       .single();
+    if (logInsertError) {
+      console.error('[request-password-reset] Failed to write request audit:', logInsertError.message);
+    }
     if (!logInsertError && logRow?.id != null) requestLogId = Number(logRow.id);
     inMemoryCooldownMap.set(email, Date.now() + PASSWORD_RESET_COOLDOWN_SECONDS * 1000);
 
@@ -239,10 +242,9 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
         await admin.from('password_reset_requests').update({ status: 'user_not_found' }).eq('id', requestLogId);
       }
       return json({
-        ok: true,
-        cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
-        expires_in_seconds: PASSWORD_RESET_CODE_TTL_SECONDS,
-        message: 'Код отправлен на email',
+        ok: false,
+        code: 'USER_NOT_FOUND',
+        message: 'Пользователь с таким email не найден',
       });
     }
 

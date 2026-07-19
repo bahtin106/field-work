@@ -545,17 +545,46 @@ export default function RegisterCodeScreen() {
         },
       );
 
+      let signedInAfterAmbiguousFailure = false;
       if (registerError || !body?.user_id) {
+        const errorDetails = registerError
+          ? await parseInvokeErrorDetails(registerError)
+          : {
+              statusCode: 0,
+              code: String(body?.code || '').trim(),
+              message: String(body?.error || body?.message || '').trim(),
+            };
         const rawMessage = registerError
           ? await parseInvokeErrorMessage(registerError, t('error_profile_not_updated'))
           : String(body?.error || body?.message || t('error_profile_not_updated')).trim();
-        throw new Error(rawMessage || t('error_profile_not_updated'));
+        const isAmbiguousFailure =
+          Boolean(registerError) &&
+          !errorDetails.code &&
+          (
+            !errorDetails.statusCode ||
+            errorDetails.statusCode >= 500 ||
+            /network|fetch|edge function returned/i.test(errorDetails.message)
+          );
+
+        if (isAmbiguousFailure) {
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: normalizedEmail,
+            password: String(draft.password),
+          });
+          signedInAfterAmbiguousFailure = !signInError && Boolean(signInData?.user?.id);
+        }
+
+        if (!signedInAfterAmbiguousFailure) {
+          throw new Error(rawMessage || t('error_profile_not_updated'));
+        }
       }
 
-      await supabase.auth.signInWithPassword({
-        email: normalizedEmail,
-        password: String(draft.password),
-      });
+      if (!signedInAfterAmbiguousFailure) {
+        await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password: String(draft.password),
+        });
+      }
 
       await AsyncStorage.removeItem(REGISTER_PENDING_KEY);
       await AsyncStorage.removeItem(`${REGISTER_CODE_COOLDOWN_PREFIX}${normalizedEmail}`);
