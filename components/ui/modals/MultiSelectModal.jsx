@@ -158,6 +158,7 @@ export default function MultiSelectModal({
       onClose={onClose}
       title={T(title) || title}
       maxHeightRatio={maxHeightRatio}
+      presentation="sheet"
       footer={footer}
     >
       {searchable ? (

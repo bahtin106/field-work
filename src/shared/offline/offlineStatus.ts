@@ -2,12 +2,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { onlineManager, type QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
+import { APP_RUNTIME_CONFIG } from '../../../config/appRuntime';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../query/queryKeys';
 
 const OUTBOX_KEY = 'offline.outbox.v1';
 const MAX_ATTEMPTS = 8;
 const OFFLINE_CONFIRMATION_MS = 2500;
+const QUALITY_PROBE_INTERVAL_MS = 45_000;
+const QUALITY_CONFIRMATION_DELAY_MS = 5_000;
+const QUALITY_PROBE_TIMEOUT_MS = 6_000;
+const QUALITY_SLOW_RTT_MS = 2_500;
+const QUALITY_RECOVERED_RTT_MS = 1_500;
+const QUALITY_REQUIRED_SAMPLES = 2;
 
 export type OfflineOutboxItem = {
   id: string;
@@ -37,6 +44,14 @@ type Listener = () => void;
 let lastNetState: NetInfoState | null = null;
 let pendingOfflineState: NetInfoState | null = null;
 let offlineConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
+let qualityMonitoringStarted = false;
+let qualityMonitoringActive = true;
+let qualityProbeTimer: ReturnType<typeof setTimeout> | null = null;
+let qualityProbeAbortController: AbortController | null = null;
+let qualityProbeInFlight = false;
+let confirmedPoorConnection = false;
+let consecutiveSlowSamples = 0;
+let consecutiveGoodSamples = 0;
 let isSyncing = false;
 let syncInFlight: Promise<ReturnType<typeof summarizeOutbox>> | null = null;
 let syncRerunRequested = false;
@@ -50,15 +65,19 @@ let cachedOfflineSnapshot: {
 } | null = null;
 const listeners = new Set<Listener>();
 
-function isPoorConnectionState(state: NetInfoState | null, isConnected: boolean, isInternetReachable: boolean) {
-  if (!isConnected || !isInternetReachable) return false;
-
+function hasPoorTransportHint(state: NetInfoState | null) {
   const connectionType = String(state?.type || '').toLowerCase();
   const cellularGeneration = String((state?.details as any)?.cellularGeneration || '').toLowerCase();
 
-  // NetInfo's `isConnectionExpensive` means metered/battery-expensive, not slow.
-  // Treat only a confirmed 2G cellular connection as poor to avoid noisy false positives.
+  // NetInfo documents cellular generation as an indication, not a speed guarantee.
+  // It is only one sample in the confirmation algorithm below.
   return connectionType === 'cellular' && cellularGeneration === '2g';
+}
+
+function getConnectionIdentity(state: NetInfoState | null) {
+  const type = String(state?.type || 'unknown').toLowerCase();
+  const cellularGeneration = String((state?.details as any)?.cellularGeneration || '').toLowerCase();
+  return `${type}:${cellularGeneration}`;
 }
 
 function emit() {
@@ -110,12 +129,12 @@ export function getOfflineSnapshot() {
   const isConnected = lastNetState?.isConnected === true;
   const reachable = lastNetState?.isInternetReachable;
   const isInternetReachable = reachable === true || (reachable == null && isConnected);
-  const isPoorConnection = isPoorConnectionState(lastNetState, isConnected, isInternetReachable);
+  const isOnline = isNetworkKnown && isConnected && isInternetReachable;
 
   cachedOfflineSnapshot = {
     isNetworkKnown,
-    isOnline: isNetworkKnown && isConnected && isInternetReachable,
-    isPoorConnection,
+    isOnline,
+    isPoorConnection: isOnline && confirmedPoorConnection,
     isSyncing,
   };
   return cachedOfflineSnapshot;
@@ -123,10 +142,21 @@ export function getOfflineSnapshot() {
 
 export function setOfflineNetState(state: NetInfoState | null) {
   if (isOnlineNetState(state)) {
+    const connectionChanged = getConnectionIdentity(lastNetState) !== getConnectionIdentity(state);
+    if (connectionChanged) resetNetworkQualityState();
     clearOfflineConfirmation();
     applyNetState(state);
+    if (connectionChanged) {
+      scheduleNetworkQualityProbe(1_200);
+    } else if (!qualityProbeTimer && !qualityProbeInFlight) {
+      scheduleNetworkQualityProbe(QUALITY_PROBE_INTERVAL_MS);
+    }
     return;
   }
+
+  clearNetworkQualityProbeTimer();
+  qualityProbeAbortController?.abort();
+  qualityProbeAbortController = null;
 
   // Mobile OSes can briefly report a disconnected network while switching
   // Wi-Fi/cellular routes. Keep the last confirmed online state until the
@@ -143,8 +173,157 @@ export function setOfflineNetState(state: NetInfoState | null) {
     offlineConfirmationTimer = null;
     const confirmedState = pendingOfflineState;
     pendingOfflineState = null;
+    resetNetworkQualityState();
     applyNetState(confirmedState);
   }, OFFLINE_CONFIRMATION_MS);
+}
+
+function clearNetworkQualityProbeTimer() {
+  if (qualityProbeTimer) {
+    clearTimeout(qualityProbeTimer);
+    qualityProbeTimer = null;
+  }
+}
+
+function resetNetworkQualityState() {
+  clearNetworkQualityProbeTimer();
+  consecutiveSlowSamples = 0;
+  consecutiveGoodSamples = 0;
+  if (confirmedPoorConnection) {
+    confirmedPoorConnection = false;
+    emit();
+  }
+}
+
+function setConfirmedPoorConnection(nextValue: boolean) {
+  if (confirmedPoorConnection === nextValue) return;
+  confirmedPoorConnection = nextValue;
+  emit();
+}
+
+function scheduleNetworkQualityProbe(delayMs: number) {
+  if (!qualityMonitoringStarted || !qualityMonitoringActive || !isOnlineNetState(lastNetState)) return;
+  clearNetworkQualityProbeTimer();
+  qualityProbeTimer = setTimeout(() => {
+    qualityProbeTimer = null;
+    runNetworkQualityProbe().catch(() => {});
+  }, Math.max(0, delayMs));
+}
+
+function recordNetworkQualitySample(sample: 'slow' | 'good' | 'neutral') {
+  if (sample === 'slow') {
+    consecutiveSlowSamples += 1;
+    consecutiveGoodSamples = 0;
+    if (consecutiveSlowSamples >= QUALITY_REQUIRED_SAMPLES) {
+      setConfirmedPoorConnection(true);
+    }
+  } else if (sample === 'good') {
+    consecutiveGoodSamples += 1;
+    consecutiveSlowSamples = 0;
+    if (consecutiveGoodSamples >= QUALITY_REQUIRED_SAMPLES) {
+      setConfirmedPoorConnection(false);
+    }
+  } else {
+    consecutiveSlowSamples = 0;
+    consecutiveGoodSamples = 0;
+  }
+
+  const needsConfirmation =
+    (!confirmedPoorConnection && consecutiveSlowSamples === 1) ||
+    (confirmedPoorConnection && consecutiveGoodSamples === 1);
+  scheduleNetworkQualityProbe(
+    needsConfirmation ? QUALITY_CONFIRMATION_DELAY_MS : QUALITY_PROBE_INTERVAL_MS,
+  );
+}
+
+async function runNetworkQualityProbe() {
+  if (qualityProbeInFlight) {
+    scheduleNetworkQualityProbe(QUALITY_CONFIRMATION_DELAY_MS);
+    return;
+  }
+  if (
+    !qualityMonitoringStarted ||
+    !qualityMonitoringActive ||
+    !isOnlineNetState(lastNetState)
+  ) {
+    return;
+  }
+
+  const baseUrl = String(APP_RUNTIME_CONFIG.supabaseUrl || '').replace(/\/+$/, '');
+  if (!baseUrl) return;
+
+  const connectionIdentity = getConnectionIdentity(lastNetState);
+  const transportHintWasPoor = hasPoorTransportHint(lastNetState);
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  qualityProbeAbortController = controller;
+  qualityProbeInFlight = true;
+  let probeTimedOut = false;
+  const timeoutId = setTimeout(() => {
+    probeTimedOut = true;
+    controller.abort();
+  }, QUALITY_PROBE_TIMEOUT_MS);
+
+  let requestSucceeded = false;
+  try {
+    const response = await fetch(`${baseUrl}/auth/v1/health`, {
+      method: 'GET',
+      headers: APP_RUNTIME_CONFIG.supabaseAnonKey
+        ? { apikey: APP_RUNTIME_CONFIG.supabaseAnonKey }
+        : undefined,
+      signal: controller.signal,
+    });
+    await response.text();
+    requestSucceeded = true;
+  } catch {
+    requestSucceeded = false;
+  } finally {
+    clearTimeout(timeoutId);
+    if (qualityProbeAbortController === controller) qualityProbeAbortController = null;
+    qualityProbeInFlight = false;
+  }
+
+  // Aborts caused by backgrounding or a route switch are lifecycle events,
+  // not evidence of a slow connection. A timeout remains a valid slow sample.
+  if (controller.signal.aborted && !probeTimedOut) {
+    if (qualityMonitoringActive && isOnlineNetState(lastNetState)) {
+      scheduleNetworkQualityProbe(1_200);
+    }
+    return;
+  }
+
+  if (
+    !qualityMonitoringActive ||
+    !isOnlineNetState(lastNetState) ||
+    connectionIdentity !== getConnectionIdentity(lastNetState)
+  ) {
+    return;
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  const sample =
+    !requestSucceeded || transportHintWasPoor || elapsedMs >= QUALITY_SLOW_RTT_MS
+      ? 'slow'
+      : elapsedMs <= QUALITY_RECOVERED_RTT_MS
+        ? 'good'
+        : 'neutral';
+  recordNetworkQualitySample(sample);
+}
+
+export function startNetworkQualityMonitoring(isActive = true) {
+  qualityMonitoringStarted = true;
+  setNetworkQualityMonitoringActive(isActive);
+}
+
+export function setNetworkQualityMonitoringActive(isActive: boolean) {
+  qualityMonitoringActive = isActive;
+  if (!isActive) {
+    clearNetworkQualityProbeTimer();
+    qualityProbeAbortController?.abort();
+    qualityProbeAbortController = null;
+    return;
+  }
+  scheduleNetworkQualityProbe(1_200);
 }
 
 export function useOfflineSnapshot() {

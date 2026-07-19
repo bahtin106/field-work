@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Image as RNImage,
   Modal,
   Pressable,
@@ -22,8 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme';
 import { withAlpha } from '../../../theme/colors';
 import { useTranslation } from '../../../src/i18n/useTranslation';
-import { BaseModal } from '../../../components/ui/modals';
-import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
+import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
 import ListSeparator from '../../../components/ui/ListSeparator';
 import SeparatedList from '../../../components/ui/SeparatedList';
 import ToastProvider, { useToast } from '../../../components/ui/ToastProvider';
@@ -37,6 +37,10 @@ const DATA_IMAGE_URI_RE = /^data:image\//i;
 const REMOTE_URI_RE = /^https?:\/\//i;
 const GALLERY_WINDOW_SIZE = 3;
 const GALLERY_SNAP_TIMING = { duration: 220 };
+const IMAGE_LOAD_TIMEOUT_MS = 15_000;
+const MAX_IMAGE_RETRY_ATTEMPTS = 2;
+const MIN_PLAUSIBLE_PHOTO_DATE_MS = Date.UTC(2000, 0, 1);
+const MAX_PHOTO_DATE_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
 
 const haptic = (style = 'Light') =>
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(() => {});
@@ -45,6 +49,39 @@ const normalizeImages = (images) =>
   (Array.isArray(images) ? images : [])
     .map((value) => String(value || '').trim())
     .filter(Boolean);
+
+const normalizeFallbackImages = (images, count) =>
+  Array.from({ length: count }, (_, index) => String(images?.[index] || '').trim());
+
+const normalizeImageMetadata = (metadata, count) =>
+  Array.from({ length: count }, (_, index) => {
+    const value = metadata?.[index];
+    return value && typeof value === 'object'
+      ? {
+          capturedAt: value.capturedAt || value.captured_at || null,
+          uploadedAt: value.uploadedAt || value.uploaded_at || null,
+          origin: value.origin || value.mediaOrigin || value.media_origin || null,
+        }
+      : null;
+  });
+
+const formatImageDateTime = (value, locale) => {
+  const date = new Date(value);
+  const timestamp = date.getTime();
+  if (
+    !Number.isFinite(timestamp) ||
+    timestamp < MIN_PLAUSIBLE_PHOTO_DATE_MS ||
+    timestamp > Date.now() + MAX_PHOTO_DATE_FUTURE_SKEW_MS
+  ) return null;
+  try {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'ru-RU', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(date);
+  } catch {
+    return date.toLocaleString();
+  }
+};
 
 const clampIndex = (index, count) => {
   if (!count) return 0;
@@ -75,10 +112,96 @@ const getImageExtension = (uri) => {
 
 const GalleryPhoto = memo(function GalleryPhoto({
   uri,
+  fallbackUri,
   viewportWidth,
   viewportHeight,
+  loadingLabel,
+  onFallbackActivated,
+  onLoadStateChange,
 }) {
-  const { resolution } = useImageResolution({ uri });
+  const [activeUri, setActiveUri] = useState(uri);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [loadState, setLoadState] = useState('loading');
+  const retryTimerRef = useRef(null);
+  const loadTimeoutRef = useRef(null);
+  const retryScheduledRef = useRef(false);
+  const { resolution } = useImageResolution({ uri: activeUri });
+
+  const clearLoadTimeout = useCallback(() => {
+    if (!loadTimeoutRef.current) return;
+    clearTimeout(loadTimeoutRef.current);
+    loadTimeoutRef.current = null;
+  }, []);
+
+  const handleLoadFailure = useCallback(() => {
+    if (loadState === 'ready' || retryScheduledRef.current) return;
+    clearLoadTimeout();
+    const safeFallback = String(fallbackUri || '').trim();
+    if (safeFallback && safeFallback !== activeUri) {
+      setActiveUri(safeFallback);
+      setRetryAttempt(0);
+      setLoadState('loading');
+      onFallbackActivated?.(safeFallback);
+      return;
+    }
+    if (/^https?:\/\//i.test(String(activeUri || '')) && retryAttempt < MAX_IMAGE_RETRY_ATTEMPTS) {
+      retryScheduledRef.current = true;
+      const nextAttempt = retryAttempt + 1;
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        retryScheduledRef.current = false;
+        setLoadState('loading');
+        setRetryAttempt(nextAttempt);
+      }, 450 * nextAttempt);
+      return;
+    }
+    setLoadState('error');
+  }, [activeUri, clearLoadTimeout, fallbackUri, loadState, onFallbackActivated, retryAttempt]);
+
+  const handleDisplayed = useCallback(() => {
+    retryScheduledRef.current = false;
+    clearLoadTimeout();
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    setLoadState('ready');
+  }, [clearLoadTimeout]);
+
+  const restartLoadTimeout = useCallback(() => {
+    clearLoadTimeout();
+    if (loadState !== 'loading') return;
+    loadTimeoutRef.current = setTimeout(handleLoadFailure, IMAGE_LOAD_TIMEOUT_MS);
+  }, [clearLoadTimeout, handleLoadFailure, loadState]);
+
+  useEffect(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    retryScheduledRef.current = false;
+    setActiveUri(uri);
+    setRetryAttempt(0);
+    setLoadState('loading');
+  }, [uri]);
+
+  useEffect(() => {
+    restartLoadTimeout();
+    return clearLoadTimeout;
+  }, [activeUri, clearLoadTimeout, restartLoadTimeout, retryAttempt]);
+
+  useEffect(() => {
+    onLoadStateChange?.(uri, loadState);
+  }, [loadState, onLoadStateChange, uri]);
+
+  useEffect(
+    () => () => {
+      clearLoadTimeout();
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    },
+    [clearLoadTimeout],
+  );
+
   const fittedSize = useMemo(() => {
     const width = Number(resolution?.width) || 0;
     const height = Number(resolution?.height) || 0;
@@ -92,17 +215,31 @@ const GalleryPhoto = memo(function GalleryPhoto({
   }, [resolution?.height, resolution?.width, viewportHeight, viewportWidth]);
 
   return (
-    <ExpoImage
-      source={{ uri }}
-      contentFit="contain"
-      cachePolicy="memory-disk"
-      transition={0}
-      recyclingKey={uri}
-      style={[
-        styles.galleryPhoto,
-        fittedSize,
-      ]}
-    />
+    <View style={[styles.galleryPhoto, fittedSize]}>
+      <ExpoImage
+        key={`${activeUri}:${retryAttempt}`}
+        source={{ uri: activeUri }}
+        contentFit="contain"
+        cachePolicy={retryAttempt > 0 ? 'none' : 'memory-disk'}
+        priority="high"
+        transition={0}
+        recyclingKey={`${activeUri}:${retryAttempt}`}
+        onDisplay={handleDisplayed}
+        onError={handleLoadFailure}
+        onProgress={restartLoadTimeout}
+        style={StyleSheet.absoluteFill}
+      />
+      {loadState === 'loading' ? (
+        <View
+          pointerEvents="none"
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={loadingLabel}
+          style={styles.imageStateOverlay}
+        >
+          <ActivityIndicator size="large" color={VIEWER_FG} />
+        </View>
+      ) : null}
+    </View>
   );
 });
 
@@ -147,11 +284,47 @@ const styles = StyleSheet.create({
   galleryPhoto: {
     backgroundColor: VIEWER_BG,
   },
+  imageStateOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    backgroundColor: VIEWER_BG,
+  },
+  imageErrorText: {
+    marginTop: 12,
+    color: VIEWER_FG,
+    fontSize: 15,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  imageRetryButton: {
+    marginTop: 18,
+    minHeight: 44,
+    paddingHorizontal: 18,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.7)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageRetryButtonPressed: {
+    opacity: 0.7,
+  },
+  imageRetryText: {
+    marginLeft: 8,
+    color: VIEWER_FG,
+    fontSize: 14,
+    fontWeight: '600',
+  },
 });
 
 const ImageViewingGallery = memo(function ImageViewingGallery({
   visible,
   images,
+  fallbackImages,
+  imageMetadata,
   initialIndex = 0,
   onClose,
   onDelete,
@@ -162,7 +335,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   embedded = false,
 }) {
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
@@ -173,8 +346,17 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const dismissTimerRef = useRef(null);
   const dismissNotifiedRef = useRef(false);
   const modalOverlayOpenRef = useRef(false);
+  const infoRequestRef = useRef(0);
 
   const initialImages = useMemo(() => normalizeImages(images), [images]);
+  const initialFallbackImages = useMemo(
+    () => normalizeFallbackImages(fallbackImages, initialImages.length),
+    [fallbackImages, initialImages.length],
+  );
+  const initialImageMetadata = useMemo(
+    () => normalizeImageMetadata(imageMetadata, initialImages.length),
+    [imageMetadata, initialImages.length],
+  );
   const imageSignature = useMemo(() => initialImages.join('\u001f'), [initialImages]);
   const initialSafeIndex = clampIndex(initialIndex, initialImages.length);
   const currentIndexRef = useRef(initialSafeIndex);
@@ -182,6 +364,8 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const visibleRef = useRef(visible);
 
   const [localImages, setLocalImages] = useState(initialImages);
+  const [localFallbackImages, setLocalFallbackImages] = useState(initialFallbackImages);
+  const [localImageMetadata, setLocalImageMetadata] = useState(initialImageMetadata);
   const [currentIndex, setCurrentIndex] = useState(initialSafeIndex);
   const [viewerIndex, setViewerIndex] = useState(initialSafeIndex);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -191,10 +375,12 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const [busy, setBusy] = useState(false);
   const [rotations, setRotations] = useState({});
   const [toolbarVisible, setToolbarVisible] = useState(true);
+  const [imageLoadStates, setImageLoadStates] = useState({});
+  const [manualRetryNonce, setManualRetryNonce] = useState(0);
 
   const overlayBg = useMemo(() => withAlpha(VIEWER_BG, VIEWER_OVERLAY_ALPHA), []);
   const currentUri = localImages[currentIndex] || '';
-  const galleryKey = `${imageSignature}:${viewerIndex}`;
+  const galleryKey = `${imageSignature}:${viewerIndex}:${manualRetryNonce}`;
 
   const ds = useMemo(() => {
     const { spacing, radii, typography, colors } = theme;
@@ -268,10 +454,15 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         paddingVertical: spacing.sm + spacing.xs / 2,
       },
       infoLabel: {
+        flex: 1,
+        marginRight: spacing.md,
         fontSize: typography.sizes.sm,
         color: colors.textSecondary,
       },
       infoValue: {
+        flexShrink: 1,
+        maxWidth: '62%',
+        textAlign: 'right',
         fontSize: typography.sizes.sm,
         fontWeight: typography.weight.semibold,
         color: colors.text,
@@ -297,6 +488,17 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         right: 0,
         bottom: 0,
         zIndex: 20,
+      },
+      imageErrorOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: spacing.xxl,
+        backgroundColor: VIEWER_BG,
+      },
+      infoLoading: {
+        paddingVertical: spacing.lg,
       },
     });
   }, [insets.bottom, insets.top, theme]);
@@ -327,26 +529,35 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       dismissNotifiedRef.current = false;
     }
     setLocalImages(nextImages);
+    setLocalFallbackImages(initialFallbackImages);
+    setLocalImageMetadata(initialImageMetadata);
     currentIndexRef.current = nextIndex;
     setCurrentIndex(nextIndex);
     setViewerIndex(nextIndex);
     setMenuOpen(false);
+    infoRequestRef.current += 1;
     setInfoOpen(false);
     setConfirmDelete(false);
     setDeleting(false);
     setBusy(false);
     setToolbarVisible(true);
+    setImageLoadStates({});
+    setManualRetryNonce(0);
     if (becameVisible) {
       setRotations({});
       rotationsRef.current = {};
       rotationsFlushedRef.current = false;
     }
     closeInFlightRef.current = false;
-  }, [currentIndex, imageSignature, initialImages, initialIndex, localImages, visible]);
+  }, [currentIndex, imageSignature, initialFallbackImages, initialImageMetadata, initialImages, initialIndex, localImages, visible]);
 
   useEffect(() => {
     rotationsRef.current = rotations;
   }, [rotations]);
+
+  useEffect(() => {
+    setLocalImageMetadata(initialImageMetadata);
+  }, [initialImageMetadata]);
 
   useEffect(() => {
     modalOverlayOpenRef.current = Boolean(menuOpen || infoOpen || confirmDelete);
@@ -358,6 +569,9 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       localImages[currentIndex],
       localImages[currentIndex + 1],
       localImages[currentIndex - 1],
+      localFallbackImages[currentIndex],
+      localFallbackImages[currentIndex + 1],
+      localFallbackImages[currentIndex - 1],
     ].filter(Boolean);
     const uniqueCandidates = [...new Set(candidates)];
 
@@ -371,7 +585,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     return () => {
       active = false;
     };
-  }, [currentIndex, localImages]);
+  }, [currentIndex, localFallbackImages, localImages]);
 
   const flushRotations = useCallback(() => {
     if (rotationsFlushedRef.current) return;
@@ -399,6 +613,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     closeInFlightRef.current = true;
     flushRotations();
     setMenuOpen(false);
+    infoRequestRef.current += 1;
     setInfoOpen(false);
     setConfirmDelete(false);
     onClose?.();
@@ -446,6 +661,11 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }, []);
+
+  const closeInfo = useCallback(() => {
+    infoRequestRef.current += 1;
+    setInfoOpen(false);
   }, []);
 
   const handleShare = useCallback(async () => {
@@ -516,30 +736,44 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     }
   }, [busy, capturePreviewMode, currentIndex, currentUri, deleting, downloadToCache]);
 
-  const handleShowInfo = useCallback(async () => {
+  const handleShowInfo = useCallback(() => {
     if (capturePreviewMode) return;
     haptic();
     setMenuOpen(false);
     if (!currentUri) return;
-
-    const [dims, localUri] = await Promise.all([
-      measureImage(currentUri),
-      downloadToCache(currentUri).catch(() => null),
-    ]);
-
-    let fileSize = null;
-    try {
-      if (localUri) {
-        const file = await getInfoAsync(localUri, { size: true });
-        fileSize = file?.size || null;
-      }
-    } catch {}
-
+    const metadata = localImageMetadata[currentIndex] || {};
+    const requestId = infoRequestRef.current + 1;
+    infoRequestRef.current = requestId;
     setInfoOpen({
-      resolution: dims ? `${dims.width} x ${dims.height}` : null,
-      size: formatBytes(fileSize),
+      capturedAt: formatImageDateTime(metadata.capturedAt, locale),
+      uploadedAt: formatImageDateTime(metadata.uploadedAt, locale),
+      origin: String(metadata.origin || '').trim() || null,
+      resolution: null,
+      size: null,
+      loading: true,
     });
-  }, [capturePreviewMode, currentUri, downloadToCache, formatBytes]);
+
+    void (async () => {
+      const [dims, localUri] = await Promise.all([
+        measureImage(currentUri),
+        downloadToCache(currentUri).catch(() => null),
+      ]);
+      let fileSize = null;
+      try {
+        if (localUri) {
+          const file = await getInfoAsync(localUri, { size: true });
+          fileSize = file?.size || null;
+        }
+      } catch {}
+      if (infoRequestRef.current !== requestId) return;
+      setInfoOpen((previous) => previous && ({
+        ...previous,
+        resolution: dims ? `${dims.width} x ${dims.height}` : null,
+        size: formatBytes(fileSize),
+        loading: false,
+      }));
+    })();
+  }, [capturePreviewMode, currentIndex, currentUri, downloadToCache, formatBytes, localImageMetadata, locale]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (deleting) return;
@@ -554,6 +788,8 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     }
 
     const remaining = localImages.filter((_, imageIndex) => imageIndex !== idx);
+    setLocalFallbackImages((prev) => prev.filter((_, imageIndex) => imageIndex !== idx));
+    setLocalImageMetadata((prev) => prev.filter((_, imageIndex) => imageIndex !== idx));
     if (!remaining.length) {
       setDeleting(false);
       setConfirmDelete(false);
@@ -585,17 +821,33 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     if (busy || deleting) return;
     haptic('Medium');
     setMenuOpen(false);
-    setInfoOpen(false);
+    closeInfo();
     if (capturePreviewMode) {
       handleDeleteConfirm();
       return;
     }
     setConfirmDelete(true);
-  }, [busy, capturePreviewMode, deleting, handleDeleteConfirm, onDelete]);
+  }, [busy, capturePreviewMode, closeInfo, deleting, handleDeleteConfirm, onDelete]);
 
   const infoRows = useMemo(() => {
     if (!infoOpen) return [];
     return [
+      infoOpen.capturedAt && {
+        label: t('viewer_info_captured_at'),
+        value: infoOpen.capturedAt,
+      },
+      infoOpen.origin === 'app_camera' && {
+        label: t('viewer_info_source'),
+        value: t('viewer_info_source_app_camera'),
+      },
+      infoOpen.origin === 'device_library' && {
+        label: t('viewer_info_source'),
+        value: t('viewer_info_source_upload'),
+      },
+      infoOpen.origin !== 'app_camera' && infoOpen.uploadedAt && {
+        label: t('viewer_info_uploaded_at'),
+        value: infoOpen.uploadedAt,
+      },
       infoOpen.resolution && {
         label: t('viewer_info_resolution'),
         value: infoOpen.resolution,
@@ -640,22 +892,48 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const handleGalleryTap = useCallback(() => {
     if (modalOverlayOpenRef.current) {
       setMenuOpen(false);
-      setInfoOpen(false);
+      closeInfo();
       setConfirmDelete(false);
       return;
     }
     setToolbarVisible((value) => !value);
+  }, [closeInfo]);
+
+  const handleFallbackActivated = useCallback((index, nextUri) => {
+    const fallback = String(nextUri || '').trim();
+    if (!fallback) return;
+    setLocalImages((prev) => prev.map((value, imageIndex) => (imageIndex === index ? fallback : value)));
+    setLocalFallbackImages((prev) => prev.map((value, imageIndex) => (imageIndex === index ? '' : value)));
   }, []);
 
+  const handleImageLoadStateChange = useCallback((uri, state) => {
+    const key = String(uri || '').trim();
+    if (!key) return;
+    setImageLoadStates((previous) => (
+      previous[key] === state ? previous : { ...previous, [key]: state }
+    ));
+  }, []);
+
+  const handleManualImageRetry = useCallback(() => {
+    if (!currentUri) return;
+    haptic();
+    setImageLoadStates((previous) => ({ ...previous, [currentUri]: 'loading' }));
+    setManualRetryNonce((value) => value + 1);
+  }, [currentUri]);
+
   const renderGalleryItem = useCallback(
-    (uri) => (
+    (uri, index) => (
       <GalleryPhoto
         uri={uri}
+        fallbackUri={localFallbackImages[index]}
         viewportWidth={viewportWidth}
         viewportHeight={viewportHeight}
+        loadingLabel={t('viewer_image_loading')}
+        onFallbackActivated={(nextUri) => handleFallbackActivated(index, nextUri)}
+        onLoadStateChange={handleImageLoadStateChange}
       />
     ),
-    [viewportHeight, viewportWidth],
+    [handleFallbackActivated, handleImageLoadStateChange, localFallbackImages, t, viewportHeight, viewportWidth],
   );
 
   const galleryKeyExtractor = useCallback((uri, index) => `${index}:${uri}`, []);
@@ -697,6 +975,23 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                 onPanEnd={handleGalleryPanEnd}
               />
             </View>
+
+            {imageLoadStates[currentUri] === 'error' ? (
+              <View pointerEvents="box-none" style={ds.imageErrorOverlay}>
+                <Feather name="image" size={34} color={VIEWER_FG} />
+                <Text pointerEvents="none" style={styles.imageErrorText}>{t('viewer_image_load_error')}</Text>
+                <Pressable
+                  onPress={handleManualImageRetry}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('btn_retry')}
+                  hitSlop={theme.spacing.sm}
+                  style={({ pressed }) => [styles.imageRetryButton, pressed && styles.imageRetryButtonPressed]}
+                >
+                  <Feather name="refresh-cw" size={18} color={VIEWER_FG} />
+                  <Text style={styles.imageRetryText}>{t('btn_retry')}</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {toolbarVisible ? (
               <View pointerEvents="box-none" style={ds.overlayHeader}>
@@ -755,7 +1050,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                       <Pressable
                         onPress={() => {
                           haptic();
-                          setInfoOpen(false);
+                          closeInfo();
                           setMenuOpen((visibleState) => !visibleState);
                         }}
                         hitSlop={theme.spacing.sm}
@@ -786,173 +1081,66 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         </GestureHandlerRootView>
       </ViewerContainer>
 
-      {embedded && !capturePreviewMode && (menuOpen || infoOpen || confirmDelete) ? (
-        <View
-          style={[
-            StyleSheet.absoluteFill,
-            { justifyContent: 'flex-end', zIndex: 100, elevation: 100 },
-          ]}
+      {!capturePreviewMode ? (
+        <BaseModal
+          embedded={embedded}
+          visible={Boolean(menuOpen || infoOpen)}
+          presentation="sheet"
+          onClose={() => {
+            setMenuOpen(false);
+            closeInfo();
+          }}
+          title={infoOpen ? t('viewer_info_title') : t('viewer_more')}
+          maxHeightRatio={infoOpen ? 0.45 : 0.35}
         >
-          <Pressable
-            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.56)' }]}
-            onPress={() => {
-              setMenuOpen(false);
-              setInfoOpen(false);
-              setConfirmDelete(false);
-            }}
-          />
-          <View
-            style={{
-              backgroundColor: theme.colors.surface,
-              borderTopLeftRadius: theme.radii.xl,
-              borderTopRightRadius: theme.radii.xl,
-              paddingBottom: (insets.bottom || 0) + theme.spacing.md,
-            }}
-          >
-            {menuOpen ? (
-              <>
-                <View style={ds.header}>
-                  <Text style={[ds.menuRowLabel, { marginLeft: 0 }]}>{t('viewer_more')}</Text>
-                </View>
-                <Pressable
-                  onPress={handleSave}
-                  disabled={busy || deleting}
-                  style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}
-                >
-                  <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
-                  <Text style={ds.menuRowLabel}>{t('viewer_save_to_device')}</Text>
-                </Pressable>
-                <ListSeparator />
-                <Pressable onPress={handleShowInfo} style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}>
-                  <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
-                  <Text style={ds.menuRowLabel}>{t('viewer_info_title')}</Text>
-                </Pressable>
-              </>
-            ) : null}
-            {infoOpen ? (
-              <>
-                <View style={ds.header}>
-                  <Pressable onPress={() => setInfoOpen(false)} style={ds.iconBtn}>
-                    <Feather name="chevron-left" size={theme.icons.md} color={theme.colors.text} />
-                  </Pressable>
-                  <Text style={[ds.menuRowLabel, { marginLeft: 0 }]}>{t('viewer_info_title')}</Text>
-                  <View style={ds.iconBtn} />
-                </View>
-                <SeparatedList>
-                  {infoRows.map((row, index) => (
-                    <View key={index} style={ds.infoRow}>
-                      <Text style={ds.infoLabel}>{row.label}</Text>
-                      <Text style={ds.infoValue}>{row.value}</Text>
-                    </View>
-                  ))}
-                </SeparatedList>
-              </>
-            ) : null}
-            {confirmDelete ? (
-              <>
-                <View style={ds.header}>
-                  <Text style={[ds.menuRowLabel, { marginLeft: 0 }]}>{t('order_photos_delete_single_title')}</Text>
-                </View>
-                <Text style={[ds.infoLabel, { paddingHorizontal: theme.spacing.xl, paddingBottom: theme.spacing.lg }]}>
-                  {t('order_photos_delete_single_message')}
-                </Text>
-                <View style={{ flexDirection: 'row', gap: theme.spacing.md, paddingHorizontal: theme.spacing.xl }}>
-                  <Pressable
-                    onPress={() => setConfirmDelete(false)}
-                    style={{ flex: 1, alignItems: 'center', paddingVertical: theme.spacing.md }}
-                  >
-                    <Text style={ds.menuRowLabel}>{t('order_photos_delete_single_cancel')}</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={handleDeleteConfirm}
-                    disabled={deleting}
-                    style={{ flex: 1, alignItems: 'center', paddingVertical: theme.spacing.md }}
-                  >
-                    <Text style={[ds.menuRowLabel, { color: theme.colors.danger }]}>
-                      {t('order_photos_delete_single_confirm')}
-                    </Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : null}
-          </View>
-        </View>
+          {menuOpen ? (
+            <>
+              <Pressable
+                onPress={handleSave}
+                disabled={busy || deleting}
+                style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}
+              >
+                <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
+                <Text style={ds.menuRowLabel}>{t('viewer_save_to_device')}</Text>
+              </Pressable>
+              <ListSeparator />
+              <Pressable
+                onPress={handleShowInfo}
+                style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}
+              >
+                <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
+                <Text style={ds.menuRowLabel}>{t('viewer_info_title')}</Text>
+              </Pressable>
+            </>
+          ) : null}
+          {infoOpen ? (
+            <>
+              <SeparatedList>
+                {infoRows.map((row, index) => (
+                  <View key={index} style={ds.infoRow}>
+                    <Text style={ds.infoLabel}>{row.label}</Text>
+                    <Text style={ds.infoValue}>{row.value}</Text>
+                  </View>
+                ))}
+              </SeparatedList>
+              {infoOpen.loading ? (
+                <ActivityIndicator style={ds.infoLoading} color={theme.colors.primary} />
+              ) : null}
+            </>
+          ) : null}
+        </BaseModal>
       ) : null}
-
-      {!capturePreviewMode && !embedded ? (
-        <>
-          <BaseModal
-            visible={menuOpen}
-            onClose={() => setMenuOpen(false)}
-            title={t('viewer_more')}
-            maxHeightRatio={0.35}
-          >
-            <Pressable
-              onPress={handleSave}
-              disabled={busy || deleting}
-              style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}
-            >
-              <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
-              <Text style={ds.menuRowLabel}>{t('viewer_save_to_device')}</Text>
-            </Pressable>
-            <ListSeparator />
-            <Pressable onPress={handleShowInfo} style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}>
-              <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
-              <Text style={ds.menuRowLabel}>{t('viewer_info_title')}</Text>
-            </Pressable>
-          </BaseModal>
-
-          <BaseModal
-            visible={!!infoOpen}
-            onClose={() => setInfoOpen(false)}
-            title={t('viewer_info_title')}
-            maxHeightRatio={0.3}
-          >
-            <SeparatedList>
-              {infoRows.map((row, index) => (
-                <View key={index} style={ds.infoRow}>
-                  <Text style={ds.infoLabel}>{row.label}</Text>
-                  <Text style={ds.infoValue}>{row.value}</Text>
-                </View>
-              ))}
-            </SeparatedList>
-          </BaseModal>
-
-          <BaseModal
-            visible={confirmDelete}
-            onClose={() => {
-              setDeleting(false);
-              setConfirmDelete(false);
-            }}
-            title={t('order_photos_delete_single_title')}
-            maxHeightRatio={0.42}
-            footer={
-              <ModalActionsRow
-                actions={[
-                  {
-                    key: 'cancel',
-                    title: t('order_photos_delete_single_cancel'),
-                    variant: 'secondary',
-                    disabled: deleting,
-                    onPress: () => {
-                      setDeleting(false);
-                      setConfirmDelete(false);
-                    },
-                  },
-                  {
-                    key: 'confirm',
-                    title: t('order_photos_delete_single_confirm'),
-                    variant: 'destructive',
-                    loading: deleting,
-                    onPress: handleDeleteConfirm,
-                  },
-                ]}
-              />
-            }
-          >
-            <Text style={ds.infoLabel}>{t('order_photos_delete_single_message')}</Text>
-          </BaseModal>
-        </>
+      {!capturePreviewMode ? (
+        <ConfirmModal
+          visible={confirmDelete}
+          title={t('order_photos_delete_single_title')}
+          message={t('order_photos_delete_single_message')}
+          cancelLabel={t('order_photos_delete_single_cancel')}
+          confirmLabel={t('order_photos_delete_single_confirm')}
+          confirmVariant="destructive"
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={handleDeleteConfirm}
+        />
       ) : null}
     </>
   );
@@ -961,6 +1149,8 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
 function FullscreenImageViewer({
   visible,
   images,
+  fallbackImages,
+  imageMetadata,
   initialIndex = 0,
   onClose,
   onDelete,
@@ -977,6 +1167,8 @@ function FullscreenImageViewer({
       <ImageViewingGallery
         visible={visible}
         images={images}
+        fallbackImages={fallbackImages}
+        imageMetadata={imageMetadata}
         initialIndex={initialIndex}
         onClose={onClose}
         onDelete={onDelete}

@@ -13,12 +13,12 @@ import {
   buildOrderAddressNavigatorQuery,
   buildOrderAddressShort,
   extractOrderAddress,
-  extractOrderAddressFromObject,
   normalizeOrderAddressMode,
 } from './addressing';
 import { applyOrderRelationFilters } from './relationFilters';
 import { resolveRequestTitle } from './title';
 import { getMyCompanyId } from '../profile/api';
+import { buildClientObjectLocationSummary } from '../objects/addressing';
 
 const DEFAULT_PAGE_SIZE = 20;
 const SECURE_ORDER_SELECT_COLUMNS = '*';
@@ -161,7 +161,7 @@ function normalizeOrder(row) {
     fio: customerName || null,
     customer_name: customerName || null,
     object_name: objectItem?.name || String(row.object_name || '').trim() || null,
-    object_summary: buildOrderAddressShort(extractOrderAddressFromObject(objectItem)) || null,
+    object_summary: buildClientObjectLocationSummary(objectItem, { compact: true }) || null,
     object_location_mode: String(objectItem?.location_mode || '').trim() || null,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,

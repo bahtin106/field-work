@@ -1,13 +1,24 @@
 ﻿import { encode as encodeBase64 } from 'base64-arraybuffer';
 import { Platform } from 'react-native';
 import { objectMediaStorage } from '../../../lib/objectMediaStorage';
-import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../../shared/media/assets';
+import {
+  buildMediaAssetDisplayMap,
+  buildMediaAssetInfoMap,
+  buildMediaAssetThumbMap,
+  listMediaAssets,
+} from '../../shared/media/assets';
 import { uploadPreparedImageFile } from '../../shared/media/imagePipeline';
 import { t as T } from '../../i18n';
 
 const LOCAL_RENDERABLE_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
 const DATA_IMAGE_URI_RE = /^data:image\//i;
 const HTTP_URI_RE = /^https?:\/\//i;
+type ObjectMediaInfo = { capturedAt: string | null, uploadedAt: string | null };
+type ObjectMediaAssetMaps = {
+  displayUrls: Record<string, string>,
+  thumbnailUrls: Record<string, string>,
+  mediaInfoBySource: Record<string, ObjectMediaInfo>,
+};
 
 export function normalizeObjectMediaUrls(urls: unknown): string[] {
   return (Array.isArray(urls) ? urls : [urls])
@@ -97,27 +108,28 @@ export async function resolveObjectMediaUrls({
   objectId: string,
   categories: string[],
   mediaByCategory?: Record<string, unknown>,
-}): Promise<{ displayUrls: Record<string, string>, thumbnailUrls: Record<string, string> }> {
+}): Promise<ObjectMediaAssetMaps> {
   const id = String(objectId || '').trim();
   const safeCategories = Array.isArray(categories)
     ? categories.map((value) => String(value || '').trim()).filter(Boolean)
     : [];
   if (!id || !safeCategories.length) {
-    return { displayUrls: {}, thumbnailUrls: {} };
+    return { displayUrls: {}, thumbnailUrls: {}, mediaInfoBySource: {} };
   }
 
-  const assetsPromise = listMediaAssets({
+  const assetsPromise: Promise<ObjectMediaAssetMaps> = listMediaAssets({
     entityType: 'object',
     entityId: id,
     categories: safeCategories,
   })
-    .then((assets: unknown[]) => {
+    .then((assets: unknown[]): ObjectMediaAssetMaps => {
       return {
         displayUrls: normalizeObjectMediaUrlMap(buildMediaAssetDisplayMap(assets)),
         thumbnailUrls: normalizeObjectMediaUrlMap(buildMediaAssetThumbMap(assets)),
+        mediaInfoBySource: buildMediaAssetInfoMap(assets) as Record<string, ObjectMediaInfo>,
       };
     })
-    .catch(() => ({ displayUrls: {}, thumbnailUrls: {} }));
+    .catch((): ObjectMediaAssetMaps => ({ displayUrls: {}, thumbnailUrls: {}, mediaInfoBySource: {} }));
 
   const inspectPromises = safeCategories.map(async (category) => {
     const urls = normalizeObjectMediaUrls(mediaByCategory?.[category]);
@@ -142,6 +154,7 @@ export async function resolveObjectMediaUrls({
   return {
     displayUrls,
     thumbnailUrls: assetMaps.thumbnailUrls,
+    mediaInfoBySource: assetMaps.mediaInfoBySource,
   };
 }
 

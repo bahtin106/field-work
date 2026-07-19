@@ -50,7 +50,7 @@ export function normalizeClientObjectLocationMode(value, { fallback = 'address' 
 }
 
 export function normalizeCoordinateValue(input) {
-  const raw = String(input || '').trim().replace(',', '.');
+  const raw = String(input ?? '').trim().replace(',', '.');
   if (!raw) return '';
   const value = Number(raw);
   if (!Number.isFinite(value)) return '';
@@ -61,6 +61,20 @@ export function hasClientObjectMapPoint(objectLike) {
   const lat = normalizeCoordinateValue(objectLike?.geo_lat);
   const lng = normalizeCoordinateValue(objectLike?.geo_lng);
   return !!lat && !!lng;
+}
+
+export function getClientObjectLocationMode(objectLike) {
+  return normalizeClientObjectLocationMode(objectLike?.location_mode, {
+    fallback: hasClientObjectMapPoint(objectLike) ? 'map' : 'address',
+  });
+}
+
+export function buildClientObjectMapPointSummary(objectLike, { mapLabel = null } = {}) {
+  if (getClientObjectLocationMode(objectLike) !== 'map') return '';
+  const label = String(mapLabel || T('objects_location_mode_map')).trim();
+  const lat = normalizeCoordinateValue(objectLike?.geo_lat);
+  const lng = normalizeCoordinateValue(objectLike?.geo_lng);
+  return lat && lng ? `${label}: ${lat}, ${lng}` : label;
 }
 
 export function createEmptyClientObjectDraft(overrides = {}) {
@@ -143,6 +157,19 @@ export function buildClientObjectShortAddress(objectLike) {
   return parts.join(', ').trim();
 }
 
+export function buildClientObjectLocationSummary(
+  objectLike,
+  { addressLike = objectLike, compact = false, mapLabel = null } = {},
+) {
+  if (!objectLike || typeof objectLike !== 'object') return '';
+  if (getClientObjectLocationMode(objectLike) === 'map') {
+    return buildClientObjectMapPointSummary(objectLike, { mapLabel });
+  }
+  return compact
+    ? buildClientObjectShortAddress(addressLike)
+    : buildClientObjectAddressSummary(addressLike);
+}
+
 export function normalizeClientObject(row) {
   if (!row || typeof row !== 'object') return null;
   const tags = Array.isArray(row?.object_tag_links)
@@ -196,7 +223,7 @@ export function normalizeClientObject(row) {
   normalized.location_mode = normalizeClientObjectLocationMode(row?.location_mode, {
     fallback: normalized.geo_lat && normalized.geo_lng ? 'map' : 'address',
   });
-  normalized.summary = buildClientObjectAddressSummary(normalized) || null;
+  normalized.summary = buildClientObjectLocationSummary(normalized) || null;
   return normalized;
 }
 

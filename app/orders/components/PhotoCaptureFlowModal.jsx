@@ -16,7 +16,7 @@
 // Props:
 //   visible  – boolean controlling fullscreen modal
 //   onClose  – called when user discards / exits
-//   onSave   – called with array of URIs when user confirms
+//   onSave   – called with photo descriptors when user confirms
 // ────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -157,9 +157,15 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
       const result = await cameraRef.current.takePictureAsync({
         quality: theme.media?.quality ?? 0.85,
         shutterSound: false,
+        exif: true,
       });
       if (result?.uri) {
-        setPhotos((prev) => [...prev, { id: uid(), uri: result.uri }]);
+        setPhotos((prev) => [...prev, {
+          id: uid(),
+          uri: result.uri,
+          capturedAt: new Date().toISOString(),
+          mediaOrigin: 'app_camera',
+        }]);
       }
     } catch (e) {
       console.warn('[PhotoCapture] takePicture error', e);
@@ -173,8 +179,12 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     if (!photos.length || confirmInFlightRef.current) return;
     confirmInFlightRef.current = true;
     hapticLight();
-    const uris = photos.map((p) => p.uri);
-    onSave?.(uris);
+    const capturedPhotos = photos.map((photo) => ({
+      uri: photo.uri,
+      capturedAt: photo.capturedAt,
+      mediaOrigin: photo.mediaOrigin,
+    }));
+    onSave?.(capturedPhotos);
     onClose?.();
   }, [photos, onSave, onClose]);
 

@@ -44,6 +44,7 @@ import {
 } from '../../../src/features/objects/additionalPhones';
 import {
   CLIENT_OBJECT_ADDRESS_FIELDS,
+  buildClientObjectLocationSummary,
   createEmptyClientObjectDraft,
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
@@ -53,7 +54,6 @@ import {
 import {
   ORDER_ADDRESS_MODE,
   buildOrderAddressDisplay,
-  buildOrderAddressShort,
   extractOrderAddress,
   extractOrderAddressFromObject,
   filterOrderAddressByObjectFieldSettings,
@@ -74,7 +74,10 @@ import EditScreenTemplate, { useEditFormStyles } from '../../../components/layou
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
-import MapAppChooser from '../../../components/ui/MapAppChooser';
+import {
+  openCoordinatesInPreferredMap,
+  openPreferredMap,
+} from '../../../components/ui/map';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import QuickPreviewModal from '../../../components/ui/modals/QuickPreviewModal';
 import ClientObjectEditorModal from '../../../components/objects/ClientObjectEditorModal';
@@ -274,7 +277,6 @@ function EditOrderContent() {
   const { t: translate } = useTranslation();
   const navigation = useNavigation();
   const router = useRouter();
-  const mapAppChooserRef = useRef(null);
   const {
     id: rawId,
     companyId: rawCompanyId,
@@ -759,10 +761,13 @@ function EditOrderContent() {
   const getObjectShortDescriptor = useCallback(
     (objectItem) => {
       if (!objectItem) return '';
-      if (isObjectPointOnMap(objectItem)) return T('objects_location_mode_map');
-      return buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || '';
+      return buildClientObjectLocationSummary(objectItem, {
+        addressLike: getVisibleObjectAddressDraft(objectItem),
+        compact: true,
+        mapLabel: T('objects_location_mode_map'),
+      });
     },
-    [getVisibleObjectAddressDraft, isObjectPointOnMap],
+    [getVisibleObjectAddressDraft],
   );
   const selectedObjectSummary = useMemo(() => {
     if (selectedObject) {
@@ -2145,12 +2150,11 @@ function EditOrderContent() {
   }, [addressModalHasMapPoint]);
 
   const openAddressModalMap = useCallback(async () => {
-    if (addressModalHasMapPoint) {
-      await mapAppChooserRef.current?.openCoordinates(addressModalMapLat, addressModalMapLng);
-      return;
-    }
-    await mapAppChooserRef.current?.openMap();
-  }, [addressModalHasMapPoint, addressModalMapLat, addressModalMapLng]);
+    const result = addressModalHasMapPoint
+      ? await openCoordinatesInPreferredMap(addressModalMapLat, addressModalMapLng)
+      : await openPreferredMap();
+    if (!result.opened) toastError(translate('map_app_open_error'));
+  }, [addressModalHasMapPoint, addressModalMapLat, addressModalMapLng, toastError, translate]);
 
   const pasteAddressModalCoordinatesFromClipboard = useCallback(async () => {
     if (!addressModalClipboardHasCoordinates) return;
@@ -3167,7 +3171,6 @@ function EditOrderContent() {
         confirmVariant="destructive"
         onConfirm={confirmCancel}
       />
-      <MapAppChooser ref={mapAppChooserRef} />
     </>
   );
 }

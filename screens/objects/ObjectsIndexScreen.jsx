@@ -50,6 +50,7 @@ import {
   matchesSelectedTags,
 } from '../../src/features/tags/filtering';
 import { useCompanyTags } from '../../src/features/tags/queries';
+import { getClientObjectLocationMode } from '../../src/features/objects/addressing';
 
 const OBJECT_FILTER_DEFAULTS = {
   cities: [],
@@ -66,12 +67,13 @@ function applyObjectFilters(items, values) {
   const selectedObjectTags = Array.isArray(values?.objectTags) ? values.objectTags.map(String) : [];
 
   return list.filter((item) => {
+    const usesManualAddress = getClientObjectLocationMode(item) === 'address';
     if (selectedCities.length > 0) {
-      const city = String(item?.city || '').trim();
+      const city = usesManualAddress ? String(item?.city || '').trim() : '';
       if (!city || !selectedCities.includes(city)) return false;
     }
     if (selectedStreets.length > 0) {
-      const street = String(item?.street || '').trim();
+      const street = usesManualAddress ? String(item?.street || '').trim() : '';
       if (!street || !selectedStreets.includes(street)) return false;
     }
     if (selectedClientIds.length > 0) {
@@ -192,6 +194,7 @@ export default function ObjectsIndex() {
   const cityOptions = useMemo(() => {
     const set = new Set();
     enrichedObjects.forEach((item) => {
+      if (getClientObjectLocationMode(item) !== 'address') return;
       const city = String(item?.city || '').trim();
       if (city) set.add(city);
     });
@@ -203,6 +206,7 @@ export default function ObjectsIndex() {
   const streetOptions = useMemo(() => {
     const set = new Set();
     enrichedObjects.forEach((item) => {
+      if (getClientObjectLocationMode(item) !== 'address') return;
       const street = String(item?.street || '').trim();
       if (street) set.add(street);
     });
@@ -250,17 +254,15 @@ export default function ObjectsIndex() {
       if (!tagMatch) return false;
       if (!debouncedQ) return true;
       const client = item?.client || null;
+      const usesManualAddress = getClientObjectLocationMode(item) === 'address';
       return matchesSearch(
         buildSearchIndex({
           texts: [
             item?.name,
             item?.summary,
-            item?.city,
-            item?.street,
-            item?.house,
-            item?.region,
-            item?.district,
-            item?.country,
+            ...(usesManualAddress
+              ? [item?.city, item?.street, item?.house, item?.region, item?.district, item?.country]
+              : []),
             item?.client_name,
             client?.email,
             ...(Array.isArray(item?.tags) ? item.tags.map((tag) => tag?.value) : []),
@@ -279,7 +281,7 @@ export default function ObjectsIndex() {
       sortObjects(filtered, {
         sortKey,
         getName: (item) => item?.name || '',
-        getCity: (item) => item?.city || '',
+        getCity: (item) => getClientObjectLocationMode(item) === 'address' ? item?.city || '' : '',
         getClientName: (item) => item?.client_name || '',
       }),
     [filtered, sortKey],

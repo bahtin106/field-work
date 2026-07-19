@@ -581,6 +581,7 @@ function LoginScreenContent() {
         onClose={closeRecoverModal}
         title={t('login_recover_modal_title')}
         maxHeightRatio={0.64}
+        presentation="sheet"
         feedback={recoverFeedback}
         footer={
           <View style={styles.modalFooter}>
@@ -638,6 +639,7 @@ function LoginScreenContent() {
         }}
         title={t('support_request_modal_title')}
         maxHeightRatio={0.72}
+        presentation="sheet"
         feedback={supportFeedback}
         footer={
           <View style={styles.modalFooter}>

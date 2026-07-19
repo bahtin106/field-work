@@ -223,6 +223,7 @@ function PhotoGrid({
   onRetryPending,
   getDisplayUrl,
   getThumbnailUrl,
+  getFallbackUrl,
   getIssue,
   onOpenViewer,
   onRemove,
@@ -263,6 +264,7 @@ function PhotoGrid({
       const thumbUri = getThumbnailUrl ? getThumbnailUrl(url) : '';
       const displayUri = getDisplayUrl ? getDisplayUrl(url) : url;
       const visibleUri = thumbUri || displayUri;
+      const fallbackUri = getFallbackUrl ? getFallbackUrl(url) : displayUri;
       const keySource = normalizePhotoKeySource(url) || normalizePhotoKeySource(visibleUri);
       const occurrenceIndex = Number(occurrenceBySource.get(keySource) || 0);
       if (keySource) occurrenceBySource.set(keySource, occurrenceIndex + 1);
@@ -270,7 +272,7 @@ function PhotoGrid({
         key: buildPhotoKey(url, visibleUri, i, occurrenceIndex),
         uri: url,
         displayUri: visibleUri,
-        fallbackUri: displayUri && displayUri !== thumbUri ? displayUri : '',
+        fallbackUri: fallbackUri && fallbackUri !== visibleUri ? fallbackUri : '',
         issueMessage: getIssue ? getIssue(url) : '',
         isPending: false,
         isFailed: false,
@@ -279,7 +281,7 @@ function PhotoGrid({
       });
     }
     return mapped;
-  }, [getDisplayUrl, getIssue, getThumbnailUrl, pending, photos]);
+  }, [getDisplayUrl, getFallbackUrl, getIssue, getThumbnailUrl, pending, photos]);
 
   useEffect(() => {
     const displayUrls = data

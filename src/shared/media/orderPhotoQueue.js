@@ -74,7 +74,15 @@ async function requireOwner() {
   return owner;
 }
 
-export async function enqueueOrderPhotoUpload({ orderId, category, localUrl, mediaProvider, status = 'pending' }) {
+export async function enqueueOrderPhotoUpload({
+  orderId,
+  category,
+  localUrl,
+  mediaProvider,
+  mediaOrigin = null,
+  capturedAt = null,
+  status = 'pending',
+}) {
   const normalizedOrderId = String(orderId || '').trim();
   const normalizedCategory = String(category || '').trim();
   const normalizedLocalUrl = String(localUrl || '').trim();
@@ -92,14 +100,18 @@ export async function enqueueOrderPhotoUpload({ orderId, category, localUrl, med
     );
     if (existingIndex >= 0) {
       const existing = items[existingIndex];
-      if (status === 'foreground') {
-        items[existingIndex] = {
-          ...existing,
-          status: 'foreground',
-          leaseUntil: Date.now() + FOREGROUND_UPLOAD_LEASE_MS,
-          updatedAt: nowIso(),
-        };
-      }
+      items[existingIndex] = {
+        ...existing,
+        mediaOrigin: existing.mediaOrigin || String(mediaOrigin || '').trim() || null,
+        capturedAt: existing.capturedAt || String(capturedAt || '').trim() || null,
+        ...(status === 'foreground'
+          ? {
+              status: 'foreground',
+              leaseUntil: Date.now() + FOREGROUND_UPLOAD_LEASE_MS,
+              updatedAt: nowIso(),
+            }
+          : {}),
+      };
       return { items, value: String(existing.id) };
     }
 
@@ -113,6 +125,8 @@ export async function enqueueOrderPhotoUpload({ orderId, category, localUrl, med
           category: normalizedCategory,
           localUrl: normalizedLocalUrl,
           mediaProvider: normalizeProvider(mediaProvider),
+          mediaOrigin: String(mediaOrigin || '').trim() || null,
+          capturedAt: String(capturedAt || '').trim() || null,
           operation: 'upload',
           status: status === 'foreground' ? 'foreground' : 'pending',
           leaseUntil: status === 'foreground' ? Date.now() + FOREGROUND_UPLOAD_LEASE_MS : null,
@@ -127,19 +141,30 @@ export async function enqueueOrderPhotoUpload({ orderId, category, localUrl, med
   });
 }
 
-export async function enqueueOrderPhotoUploads({ orderId, category, localUrls, mediaProvider, status = 'pending' }) {
+export async function enqueueOrderPhotoUploads({ orderId, category, uploads, localUrls, mediaProvider, status = 'pending' }) {
   const normalizedOrderId = String(orderId || '').trim();
   const normalizedCategory = String(category || '').trim();
-  const normalizedLocalUrls = Array.from(
-    new Set((Array.isArray(localUrls) ? localUrls : []).map((value) => String(value || '').trim()).filter(Boolean)),
+  const normalizedUploads = Array.from(
+    (Array.isArray(uploads) ? uploads : Array.isArray(localUrls) ? localUrls : []).reduce((unique, value) => {
+      const input = value && typeof value === 'object' ? value : { uri: value };
+      const localUrl = String(input?.uri || '').trim();
+      if (!localUrl || unique.has(localUrl)) return unique;
+      unique.set(localUrl, {
+        localUrl,
+        mediaOrigin: String(input?.mediaOrigin || input?.media_origin || '').trim() || null,
+        capturedAt: String(input?.capturedAt || input?.captured_at || '').trim() || null,
+      });
+      return unique;
+    }, new Map()).values(),
   );
-  if (!normalizedOrderId || !normalizedCategory || !normalizedLocalUrls.length) return [];
+  if (!normalizedOrderId || !normalizedCategory || !normalizedUploads.length) return [];
   const owner = await requireOwner();
 
   return mutateQueue((items) => {
     const nextItems = [...items];
     const ids = [];
-    for (const localUrl of normalizedLocalUrls) {
+    for (const upload of normalizedUploads) {
+      const { localUrl, mediaOrigin, capturedAt } = upload;
       const existingIndex = nextItems.findIndex(
         (item) =>
           isOfflineItemOwnedBy(item, owner) &&
@@ -150,14 +175,18 @@ export async function enqueueOrderPhotoUploads({ orderId, category, localUrls, m
       );
       if (existingIndex >= 0) {
         const existing = nextItems[existingIndex];
-        if (status === 'foreground') {
-          nextItems[existingIndex] = {
-            ...existing,
-            status: 'foreground',
-            leaseUntil: Date.now() + FOREGROUND_UPLOAD_LEASE_MS,
-            updatedAt: nowIso(),
-          };
-        }
+        nextItems[existingIndex] = {
+          ...existing,
+          mediaOrigin: existing.mediaOrigin || mediaOrigin,
+          capturedAt: existing.capturedAt || capturedAt,
+          ...(status === 'foreground'
+            ? {
+                status: 'foreground',
+                leaseUntil: Date.now() + FOREGROUND_UPLOAD_LEASE_MS,
+                updatedAt: nowIso(),
+              }
+            : {}),
+        };
         ids.push(String(existing.id));
         continue;
       }
@@ -168,6 +197,8 @@ export async function enqueueOrderPhotoUploads({ orderId, category, localUrls, m
         category: normalizedCategory,
         localUrl,
         mediaProvider: normalizeProvider(mediaProvider),
+        mediaOrigin,
+        capturedAt,
         operation: 'upload',
         status: status === 'foreground' ? 'foreground' : 'pending',
         leaseUntil: status === 'foreground' ? Date.now() + FOREGROUND_UPLOAD_LEASE_MS : null,
@@ -325,6 +356,8 @@ async function commitPreparedUpload(item, preparedImage, provider) {
       order_id: item.orderId,
       category: item.category,
       external_path: prepared?.external_path || null,
+      media_origin: item.mediaOrigin || null,
+      captured_at: item.capturedAt || null,
     });
   }
   return storage('commit_upload', {
@@ -332,6 +365,8 @@ async function commitPreparedUpload(item, preparedImage, provider) {
     category: item.category,
     object_key: prepared?.object_key || null,
     public_url: prepared?.public_url || null,
+    media_origin: item.mediaOrigin || null,
+    captured_at: item.capturedAt || null,
   });
 }
 

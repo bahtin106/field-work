@@ -4,10 +4,10 @@ import { formatPersonName } from '../../lib/personName';
 import TagList from '../tags/TagList';
 import { useTheme } from '../../theme/ThemeProvider';
 import {
-  buildOrderAddressShort,
   extractOrderAddressFromObject,
   filterOrderAddressByObjectFieldSettings,
 } from '../../src/features/requests/addressing';
+import { buildClientObjectLocationSummary } from '../../src/features/objects/addressing';
 import { withAlpha } from '../../theme/colors';
 import { getCardSurfaceStyle } from '../../theme/surfaceStyles';
 
@@ -44,7 +44,9 @@ function ObjectCard({ item, onPress, canViewClients = false, objectFieldsByKey }
     () => filterOrderAddressByObjectFieldSettings(extractOrderAddressFromObject(item), objectFieldsByKey),
     [item, objectFieldsByKey],
   );
-  const address = String(buildOrderAddressShort(visibleAddress) || '').trim() || '';
+  const address = String(
+    buildClientObjectLocationSummary(item, { addressLike: visibleAddress, compact: true }) || '',
+  ).trim();
 
   return (
       <Pressable

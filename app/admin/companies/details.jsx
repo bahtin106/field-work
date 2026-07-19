@@ -727,6 +727,7 @@ export default function AdminCompanyDetailsScreen() {
         visible={addDaysVisible}
         onClose={() => setAddDaysVisible(false)}
         title={t('admin_company_add_days_modal_title')}
+        presentation="sheet"
         footer={
           <View style={styles(theme).modalFooter}>
             <UIButton
@@ -793,6 +794,7 @@ export default function AdminCompanyDetailsScreen() {
         visible={paidSeatsVisible}
         onClose={() => setPaidSeatsVisible(false)}
         title={t('admin_company_paid_seats_modal_title')}
+        presentation="sheet"
         footer={
           <View style={styles(theme).modalFooter}>
             <UIButton

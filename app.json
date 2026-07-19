@@ -2,7 +2,7 @@
   "expo": {
     "name": "Монитор",
     "slug": "work-orders-app",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "scheme": "workorders",
     "icon": "./assets/icon.png",
     "splash": {
@@ -18,22 +18,24 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.monitorapp.monitor",
-      "versionCode": 7,
+      "versionCode": 8,
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.READ_CONTACTS",
         "android.permission.POST_NOTIFICATIONS"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.WRITE_CONTACTS"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F2F2F7"
       },
-      "runtimeVersion": "1.0.2"
+      "runtimeVersion": "1.0.3"
     },
     "jsEngine": "hermes",
     "assetBundlePatterns": [
@@ -84,6 +86,12 @@
           "cameraPermission": "Разрешите приложению доступ к камере для съёмки фото заказов"
         }
       ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Разрешите приложению «Монитор» доступ к контактам для выбора номера телефона"
+        }
+      ],
       "expo-background-task"
     ],
     "updates": {
@@ -91,7 +99,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.monitorapp.monitor",
-      "runtimeVersion": "1.0.2",
+      "runtimeVersion": "1.0.3",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "yandexmaps",

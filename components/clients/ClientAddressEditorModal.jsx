@@ -83,6 +83,7 @@ export default function ClientAddressEditorModal({
       title={title}
       footer={footer}
       maxHeightRatio={0.86}
+      presentation="sheet"
     >
       <KeyboardAwareScrollView
         style={styles.scroll}

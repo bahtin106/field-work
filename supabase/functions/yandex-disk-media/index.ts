@@ -26,6 +26,23 @@ const json = (status: number, body: Record<string, Json>) =>
 
 const DEFAULT_YANDEX_ROOT = '/\u041c\u043e\u043d\u0438\u0442\u043e\u0440';
 const ALLOWED_CATEGORIES = new Set(['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5']);
+const ALLOWED_MEDIA_ORIGINS = new Set(['app_camera', 'device_library']);
+const MIN_CAPTURE_DATE_MS = Date.UTC(2000, 0, 1);
+const MAX_CAPTURE_DATE_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
+
+function normalizeClientMediaMetadata(mediaOrigin: unknown, capturedAt: unknown): Record<string, Json> {
+  const origin = String(mediaOrigin || '').trim();
+  const metadata: Record<string, Json> = {};
+  if (ALLOWED_MEDIA_ORIGINS.has(origin)) metadata.media_origin = origin;
+  if (origin !== 'app_camera') return metadata;
+  const timestamp = new Date(String(capturedAt || '')).getTime();
+  if (
+    Number.isFinite(timestamp) &&
+    timestamp >= MIN_CAPTURE_DATE_MS &&
+    timestamp <= Date.now() + MAX_CAPTURE_DATE_FUTURE_SKEW_MS
+  ) metadata.captured_at = new Date(timestamp).toISOString();
+  return metadata;
+}
 const ORDERS_ROOT_DIR = '\u0417\u0430\u044f\u0432\u043a\u0438';
 const INTERNAL_URL_PREFIX = 'yadisk://';
 const CATEGORY_DIR: Record<string, string> = {
@@ -677,8 +694,11 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       url?: string;
       urls?: string[];
       external_path?: string;
+      media_origin?: string;
+      captured_at?: string;
     };
     const action = String(body.action || '').trim();
+    const clientMediaMetadata = normalizeClientMediaMetadata(body.media_origin, body.captured_at);
     const orderId = String(body.order_id || '').trim();
 
     if (!action || !orderId) {
@@ -779,6 +799,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
           display_url: displayUrl,
           display_url_updated_at: new Date().toISOString(),
           created_by: ctx.userId,
+          media_metadata: clientMediaMetadata,
         },
         { onConflict: 'order_id,category,source_url' },
       );
@@ -859,6 +880,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
           display_url: displayUrl,
           display_url_updated_at: new Date().toISOString(),
           created_by: ctx.userId,
+          media_metadata: clientMediaMetadata,
         },
         { onConflict: 'order_id,category,source_url' },
       );

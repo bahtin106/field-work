@@ -8,8 +8,14 @@ import { cacheDirectory, deleteAsync, downloadAsync, getInfoAsync } from 'expo-f
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
 import { orderMediaStorage } from '../lib/orderMediaStorage';
 import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
-import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../src/shared/media/assets';
+import {
+  buildMediaAssetDisplayMap,
+  buildMediaAssetInfoMap,
+  buildMediaAssetThumbMap,
+  listMediaAssets,
+} from '../src/shared/media/assets';
 import { prefetchMediaUrls } from '../src/shared/media/imagePipeline';
+import { isSignedMediaUrlStale } from '../src/shared/media/signedUrl';
 
 const MEDIA_CATEGORIES = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
 
@@ -17,6 +23,7 @@ const MEDIA_CATEGORIES = ['media_file_1', 'media_file_2', 'media_file_3', 'media
 const _globalResolvedCache = new Map();  // key → display URL
 const _globalIssuesCache   = new Map();  // key → issue object
 const _globalThumbCache = new Map();
+const _globalMediaInfoCache = new Map();
 const GLOBAL_MEDIA_CACHE_MAX_ENTRIES = 1200;
 const ORDER_MEDIA_LOCAL_CACHE_KEY = 'offline.orderMedia.localCache.v1';
 const ORDER_MEDIA_LOCAL_CACHE_MAX_ENTRIES = 220;
@@ -27,6 +34,7 @@ export async function clearOrderMediaCaches() {
   _globalResolvedCache.clear();
   _globalThumbCache.clear();
   _globalIssuesCache.clear();
+  _globalMediaInfoCache.clear();
   try {
     await AsyncStorage.removeItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
   } catch {}
@@ -164,6 +172,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const [resolvedUrls, setResolvedUrls] = useState(() => Object.fromEntries(_globalResolvedCache));
   const [thumbUrls, setThumbUrls] = useState(() => Object.fromEntries(_globalThumbCache));
   const [issues, setIssues] = useState(() => Object.fromEntries(_globalIssuesCache));
+  const [mediaInfoBySource, setMediaInfoBySource] = useState(() => Object.fromEntries(_globalMediaInfoCache));
   const [localCacheVersion, setLocalCacheVersion] = useState(0);
   const [probeRetryTick, setProbeRetryTick] = useState(0);
   const probeInFlight = useRef(new Set());
@@ -258,14 +267,26 @@ export function useOrderMedia({ order, mediaProvider, t }) {
           '',
       ).trim();
       if (existing) {
-        const info = await getInfoAsync(existing);
-        if (info?.exists) return;
+        const info = await getInfoAsync(existing, { size: true });
+        if (info?.exists && Number(info?.size || 0) > 0) return;
+        if (info?.exists) await deleteAsync(existing, { idempotent: true }).catch(() => {});
+        const nextLocalCache = Object.fromEntries(
+          Object.entries(localCacheRef.current || {}).filter(([, value]) => value !== existing),
+        );
+        localCacheRef.current = nextLocalCache;
+        markLocalCacheChanged();
+        await persistLocalCache();
       }
       const path = `${cacheDirectory}${makeLocalFileName(src)}`;
       const result = await downloadAsync(remote, path);
       const status = Number(result?.status);
       if (Number.isFinite(status) && status >= 400) {
         await deleteAsync(path, { idempotent: true }).catch(() => {});
+        return;
+      }
+      const downloadedInfo = await getInfoAsync(result?.uri || path, { size: true });
+      if (!downloadedInfo?.exists || Number(downloadedInfo?.size || 0) <= 0) {
+        await deleteAsync(result?.uri || path, { idempotent: true }).catch(() => {});
         return;
       }
       if (result?.uri) {
@@ -297,10 +318,11 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       const localCache = localCacheVersion >= 0 ? localCacheRef.current || {} : {};
       const normalizedSource = normalizeUrlCacheKey(source);
       const resolved = String(resolvedUrls[source] || '').trim();
-      const normalizedResolved = normalizeUrlCacheKey(resolved);
+      const usableResolved = isSignedMediaUrlStale(resolved) ? '' : resolved;
+      const normalizedResolved = normalizeUrlCacheKey(usableResolved);
       const localForResolved = String(
-        resolved
-          ? localCache?.[resolved] ||
+        usableResolved
+          ? localCache?.[usableResolved] ||
             localCache?.[normalizedResolved] ||
             ''
           : '',
@@ -312,11 +334,11 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       ).trim();
 
       if (!getOfflineSnapshot().isOnline) {
-        return localForSource || localForResolved || resolved || (isRenderableSourceUrl(source) ? source : '');
+        return localForSource || localForResolved || usableResolved || (isRenderableSourceUrl(source) ? source : '');
       }
       if (localForSource) return localForSource;
       if (localForResolved) return localForResolved;
-      if (resolved) return resolved;
+      if (usableResolved) return usableResolved;
       return isRenderableSourceUrl(source) ? source : '';
     },
     [localCacheVersion, resolvedUrls],
@@ -330,6 +352,22 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       return thumbUrls[sourceUrl] || displayUrl;
     },
     [getDisplayUrl, thumbUrls],
+  );
+
+  const getRemoteDisplayUrl = useCallback(
+    (sourceUrl) => {
+      const source = String(sourceUrl || '').trim();
+      if (!source) return '';
+      const resolved = String(resolvedUrls[source] || '').trim();
+      if (resolved && !isLocalFileUri(resolved) && !isSignedMediaUrlStale(resolved)) return resolved;
+      return isRenderableSourceUrl(source) ? source : '';
+    },
+    [resolvedUrls],
+  );
+
+  const getMediaInfo = useCallback(
+    (sourceUrl) => mediaInfoBySource[String(sourceUrl || '').trim()] || null,
+    [mediaInfoBySource],
   );
 
   const getIssue = useCallback(
@@ -504,6 +542,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         if (cancelled || !isMounted.current) return;
         const displayMap = buildMediaAssetDisplayMap(assets);
         const thumbMap = buildMediaAssetThumbMap(assets);
+        const infoMap = buildMediaAssetInfoMap(assets);
         if (Object.keys(displayMap).length) {
           for (const [key, value] of Object.entries(displayMap)) setResolvedCacheEntry(key, value);
           setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, displayMap));
@@ -517,6 +556,14 @@ export function useOrderMedia({ order, mediaProvider, t }) {
           }
           setThumbUrls((prev) => ({ ...prev, ...thumbMap }));
           prefetchMediaUrls(Object.values(thumbMap), { batchSize: 6 }).catch(() => {});
+        }
+        if (Object.keys(infoMap).length) {
+          for (const [key, value] of Object.entries(infoMap)) {
+            if (_globalMediaInfoCache.has(key)) _globalMediaInfoCache.delete(key);
+            _globalMediaInfoCache.set(key, value);
+            pruneMapCache(_globalMediaInfoCache);
+          }
+          setMediaInfoBySource((prev) => ({ ...prev, ...infoMap }));
         }
       })
       .catch(() => {});
@@ -533,7 +580,13 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       const urls = Array.isArray(order[cat]) ? order[cat].filter(Boolean) : [];
       for (const url of urls) {
         const source = String(url || '').trim();
-        if (!currentResolved[source] && !probedUrlsRef.current.has(source) && isResolvableRemoteUrl(source)) {
+        const currentDisplay = String(currentResolved[source] || '').trim();
+        const needsRefresh = !currentDisplay || isSignedMediaUrlStale(currentDisplay);
+        if (needsRefresh && isSignedMediaUrlStale(currentDisplay)) {
+          probedUrlsRef.current.delete(source);
+          _globalResolvedCache.delete(source);
+        }
+        if (needsRefresh && !probedUrlsRef.current.has(source) && isResolvableRemoteUrl(source)) {
           probedUrlsRef.current.add(source);
           attempts.push({ url: source, promise: inspectSingle(cat, source) });
         }
@@ -590,6 +643,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     setResolvedUrls({});
     setThumbUrls({});
     setIssues({});
+    setMediaInfoBySource({});
     probedUrlsRef.current.clear();
     probeRetryCountsRef.current.clear();
     if (probeRetryTimerRef.current) {
@@ -599,6 +653,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     _globalResolvedCache.clear();
     _globalThumbCache.clear();
     _globalIssuesCache.clear();
+    _globalMediaInfoCache.clear();
   }, []);
 
   // ─── Remove URL from resolved/issues caches ─────────────────────
@@ -608,6 +663,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     _globalResolvedCache.delete(url);
     _globalThumbCache.delete(url);
     _globalIssuesCache.delete(url);
+    _globalMediaInfoCache.delete(url);
     probedUrlsRef.current.delete(url);
     probeRetryCountsRef.current.delete(url);
     if (source) {
@@ -636,6 +692,12 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       return next;
     });
     setThumbUrls((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
+      const next = { ...prev };
+      delete next[url];
+      return next;
+    });
+    setMediaInfoBySource((prev) => {
       if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
       const next = { ...prev };
       delete next[url];
@@ -677,6 +739,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     resolvedUrls,
     issues,
     getDisplayUrl,
+    getRemoteDisplayUrl,
+    getMediaInfo,
     getThumbnailUrl,
     getIssue,
     resolveOrder,

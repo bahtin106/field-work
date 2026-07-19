@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { financeEntryMediaStorage, financeEntryYandexMedia } from '../lib/financeEntryMedia';
-import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../src/shared/media/assets';
+import {
+  buildMediaAssetDisplayMap,
+  buildMediaAssetInfoMap,
+  buildMediaAssetThumbMap,
+  listMediaAssets,
+} from '../src/shared/media/assets';
 import { prefetchMediaUrls } from '../src/shared/media/imagePipeline';
 
 function isLikelyYandexLink(url) {
@@ -12,6 +17,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
   const [resolvedUrls, setResolvedUrls] = useState({});
   const [thumbUrls, setThumbUrls] = useState({});
   const [issues, setIssues] = useState({});
+  const [mediaInfoBySource, setMediaInfoBySource] = useState({});
   const isMounted = useRef(true);
   const photoSignature = useMemo(
     () => (Array.isArray(photoUrls) ? photoUrls.map((value) => String(value || '')).join('|') : ''),
@@ -39,6 +45,11 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       return thumbUrls[sourceUrl] || getDisplayUrl(sourceUrl);
     },
     [getDisplayUrl, thumbUrls],
+  );
+
+  const getMediaInfo = useCallback(
+    (sourceUrl) => mediaInfoBySource[String(sourceUrl || '').trim()] || null,
+    [mediaInfoBySource],
   );
 
   const getIssue = useCallback(
@@ -123,6 +134,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
         if (cancelled || !isMounted.current) return;
         const displayMap = buildMediaAssetDisplayMap(assets);
         const thumbMap = buildMediaAssetThumbMap(assets);
+        const infoMap = buildMediaAssetInfoMap(assets);
         if (Object.keys(displayMap).length) {
           setResolvedUrls((prev) => ({ ...displayMap, ...prev }));
           prefetchMediaUrls(Object.values(displayMap)).catch(() => {});
@@ -130,6 +142,9 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
         if (Object.keys(thumbMap).length) {
           setThumbUrls((prev) => ({ ...thumbMap, ...prev }));
           prefetchMediaUrls(Object.values(thumbMap)).catch(() => {});
+        }
+        if (Object.keys(infoMap).length) {
+          setMediaInfoBySource((prev) => ({ ...prev, ...infoMap }));
         }
       })
       .catch(() => {});
@@ -145,6 +160,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       setResolvedUrls({});
       setThumbUrls({});
       setIssues({});
+      setMediaInfoBySource({});
       return;
     }
     inspectUrls(urls).catch(() => {});
@@ -164,6 +180,12 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       return next;
     });
     setThumbUrls((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
+      const next = { ...prev };
+      delete next[url];
+      return next;
+    });
+    setMediaInfoBySource((prev) => {
       if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
       const next = { ...prev };
       delete next[url];
@@ -190,6 +212,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
   return {
     getDisplayUrl,
     getThumbnailUrl,
+    getMediaInfo,
     getIssue,
     inspectUrls,
     removeFromCache,

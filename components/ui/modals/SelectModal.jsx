@@ -166,6 +166,7 @@ export default function SelectModal({
       onDismiss={onDismiss}
       title={title}
       maxHeightRatio={maxHeightRatio}
+      presentation="sheet"
       minTopGapFromStatusBar={minTopGapFromStatusBar}
     >
       {searchable ? (

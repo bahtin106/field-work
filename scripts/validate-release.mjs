@@ -14,6 +14,7 @@ function check(condition, message) {
 const packageJson = json('package.json');
 const appJson = json('app.json').expo;
 const manifest = read('android/app/src/main/AndroidManifest.xml');
+const androidStrings = read('android/app/src/main/res/values/strings.xml');
 const gradle = read('android/app/build.gradle');
 const gradleProperties = read('android/gradle.properties');
 const externalUrls = read('config/externalUrls.js');
@@ -23,10 +24,16 @@ const financeApi = read('src/features/finance/api.js');
 const keyboardControllerCompat = read('lib/keyboardControllerCompat.js');
 const mapHelpers = read('components/ui/map.js');
 const mapQueriesPlugin = read('plugins/withMapAppQueries.js');
+const mapAppsNativeModule = read(
+  'modules/monitor-map-apps/android/src/main/java/expo/modules/monitormapapps/MonitorMapAppsModule.kt',
+);
+const mapAppsModuleConfig = json('modules/monitor-map-apps/expo-module.config.json');
 const clientPrefill = read('src/features/clients/prefillFromSearch.js');
 const orderSort = read('src/features/orders/orderSort.js');
 const orderFacetCounts = read('src/features/orders/facetCounts.js');
 const filtersPanel = read('components/filters/FiltersPanel.jsx');
+const appSettingsScreen = read('screens/app_settings/AppSettingsScreen.jsx');
+const objectViewScreen = read('screens/objects/[id]/ObjectViewScreen.jsx');
 const orderDetailsScreen = read('screens/orders/OrderDetailsScreen.jsx');
 const createOrderScreen = read('screens/orders/CreateOrderScreen.jsx');
 const myOrdersRoute = read('app/orders/my-orders.js');
@@ -35,19 +42,39 @@ const orderDetailsRoute = read('app/orders/[id].jsx');
 const bottomNavigation = read('components/navigation/BottomNav.jsx');
 const bottomNavigationGuard = read('src/shared/navigation/bottomNavigationGuard.js');
 const textField = read('components/ui/TextField.jsx');
+const phoneInput = read('components/ui/PhoneInput.jsx');
+const contactPhonePicker = read('components/ui/ContactPhonePickerButton.jsx');
+const expandableTextRow = read('components/ui/ExpandableTextRow.jsx');
 const inputLimits = read('src/shared/input/limits.js');
 const requestSearch = read('src/features/requests/search.js');
 const requestApi = read('src/features/requests/api.ts');
 const tagFiltering = read('src/features/tags/filtering.js');
 const clientsIndexScreen = read('screens/clients/ClientsIndexScreen.jsx');
 const objectsIndexScreen = read('screens/objects/ObjectsIndexScreen.jsx');
+const objectCard = read('components/objects/ObjectCard.jsx');
+const objectAddressing = read('src/features/objects/addressing.js');
+const objectMatching = read('src/features/objects/matching.js');
+const clientsApi = read('src/features/clients/api.ts');
 const myOrdersScreen = read('screens/orders/MyOrdersScreen.js');
 const allOrdersScreen = read('screens/orders/AllOrdersScreen.jsx');
 const authValidation = read('lib/authValidation.js');
 const authProvider = read('providers/SimpleAuthProvider.jsx');
+const supabaseClient = read('lib/supabase.js');
+const offlineStatus = read('src/shared/offline/offlineStatus.ts');
+const queryClient = read('src/shared/query/queryClient.ts');
 const authFlowState = read('lib/authFlowNavigationState.js');
 const rootLayout = read('app/_layout.js');
 const photoQueue = read('src/shared/media/orderPhotoQueue.js');
+const cachedImage = read('components/ui/CachedImage.jsx');
+const fullscreenImageViewer = read('app/orders/components/FullscreenImageViewer.jsx');
+const baseModal = read('components/ui/modals/BaseModal.jsx');
+const confirmAlertModals = read('components/ui/modals/ConfirmAlertModals.jsx');
+const selectModal = read('components/ui/modals/SelectModal.jsx');
+const multiSelectModal = read('components/ui/modals/MultiSelectModal.jsx');
+const dateTimeModal = read('components/ui/modals/DateTimeModal.jsx');
+const mediaUploadModal = read('app/orders/components/OrderPhotosModal.jsx');
+const signedMediaUrl = read('src/shared/media/signedUrl.js');
+const mediaAssets = read('src/shared/media/assets.js');
 const emailServer = read('email-server.cjs');
 const financePersistenceMigrationPath =
   'supabase/migrations/20260719120000_fix_manual_expense_persistence.sql';
@@ -61,9 +88,16 @@ const financeExclusionMigration = read(financeExclusionMigrationPath);
 const functionSearchPathMigrationPath =
   'supabase/migrations/20260719160000_harden_remaining_function_search_paths.sql';
 const functionSearchPathMigration = read(functionSearchPathMigrationPath);
+const mediaUploadTimestampMigrationPath =
+  'supabase/migrations/20260719170000_preserve_media_upload_timestamps.sql';
+const mediaUploadTimestampMigration = read(mediaUploadTimestampMigrationPath);
+const mediaCaptureOriginMigrationPath =
+  'supabase/migrations/20260719171000_preserve_media_capture_origin.sql';
+const mediaCaptureOriginMigration = read(mediaCaptureOriginMigrationPath);
 
 check(!packageJson.dependencies?.['expo-dev-client'], 'expo-dev-client must not be bundled in production dependencies');
 check(packageJson.dependencies?.['expo-background-task'], 'expo-background-task is required for deferred media delivery');
+check(packageJson.dependencies?.['expo-contacts'] === '~15.0.11', 'expo-contacts must match Expo SDK 54');
 check(packageJson.dependencies?.expo === '~54.0.36', 'Expo must stay on the validated SDK 54 patch');
 check(packageJson.dependencies?.['expo-updates'] === '~29.0.19', 'expo-updates must match the validated SDK 54 patch');
 check(packageJson.dependencies?.['@react-native-community/netinfo'] === '11.4.1', 'NetInfo must match Expo SDK 54');
@@ -79,15 +113,56 @@ for (const permission of [
   check(!permissions.has(permission), `${permission} must not be requested in app config`);
   check(blockedPermissions.has(permission), `${permission} must be blocked against transitive manifests`);
 }
+check(permissions.has('android.permission.READ_CONTACTS'), 'Contact picker requires READ_CONTACTS on Android');
+check(blockedPermissions.has('android.permission.WRITE_CONTACTS'), 'Contact picker must not request contact write access');
 
 check(/RECORD_AUDIO"\s+tools:node="remove"/.test(manifest), 'Native manifest must remove RECORD_AUDIO');
 check(/READ_MEDIA_IMAGES"\s+tools:node="remove"/.test(manifest), 'Native manifest must remove READ_MEDIA_IMAGES');
+check(/READ_CONTACTS"\s*\/>/.test(manifest), 'Native manifest must include READ_CONTACTS');
+check(/WRITE_CONTACTS"\s+tools:node="remove"/.test(manifest), 'Native manifest must remove WRITE_CONTACTS');
 check(/android\.enableProguardInReleaseBuilds=true/.test(gradleProperties), 'Release minification must be enabled');
 check(/android\.enableShrinkResourcesInReleaseBuilds=true/.test(gradleProperties), 'Release resource shrinking must be enabled');
+check(
+  appJson.plugins?.some(
+    (plugin) =>
+      Array.isArray(plugin) &&
+      plugin[0] === 'expo-contacts' &&
+      String(plugin[1]?.contactsPermission || '').trim(),
+  ),
+  'iOS contact picker permission description must stay configured',
+);
+check(
+  phoneInput.includes('<ContactPhonePickerButton') &&
+    phoneInput.includes('<ClearButton') &&
+    phoneInput.includes("onPress={() => handleChange('')}") &&
+    contactPhonePicker.includes('Contacts.presentContactPickerAsync()') &&
+    contactPhonePicker.includes("Platform.OS === 'android'") &&
+    contactPhonePicker.includes('Contacts.requestPermissionsAsync()') &&
+    contactPhonePicker.includes('options.length === 1') &&
+    contactPhonePicker.includes('<SelectModal'),
+  'Phone inputs must keep contact picking, safe phone clearing, Android permission handling, and multi-number selection',
+);
+check(
+  expandableTextRow.includes('onTextLayout={handleMeasurementTextLayout}') &&
+    expandableTextRow.includes('const canExpand = hasControlledExpansion || textOverflows') &&
+    expandableTextRow.includes('{canExpand ? (') &&
+    expandableTextRow.includes('paddingLeft: theme.spacing.md'),
+  'Expandable text rows must only expose overflow-driven chevrons and keep readable expanded indentation',
+);
 
 const versionName = gradle.match(/versionName\s*=\s*["']([^"']+)["']/)?.[1];
 const versionCode = Number(gradle.match(/versionCode\s*=\s*(\d+)/)?.[1] || 0);
+const nativeRuntimeVersion = androidStrings.match(/name="expo_runtime_version">([^<]+)</)?.[1];
+check(packageJson.version === appJson.version, 'Package version must match Expo app version');
 check(versionName === appJson.version, `Native versionName (${versionName}) must match app version (${appJson.version})`);
+check(
+  versionCode === Number(appJson.android?.versionCode),
+  `Native versionCode (${versionCode}) must match Expo Android versionCode (${appJson.android?.versionCode})`,
+);
+check(
+  nativeRuntimeVersion === appJson.android?.runtimeVersion,
+  `Native runtime version (${nativeRuntimeVersion}) must match Expo Android runtimeVersion (${appJson.android?.runtimeVersion})`,
+);
 check(appJson.android?.runtimeVersion === appJson.version, 'Android runtimeVersion must match app version');
 check(appJson.ios?.runtimeVersion === appJson.version, 'iOS runtimeVersion must match app version');
 check(Number.isInteger(versionCode) && versionCode > 0, 'Android versionCode must be a positive integer');
@@ -197,6 +272,29 @@ check(
   'Sign-out must have bounded network waits and a local session fallback',
 );
 check(
+  supabaseClient.includes('readPersistedAuthSession') &&
+    supabaseClient.includes('lock: processLock') &&
+    supabaseClient.includes("AppState.addEventListener('change'") &&
+    supabaseClient.includes('supabase.auth.startAutoRefresh()') &&
+    supabaseClient.includes('supabase.auth.stopAutoRefresh()') &&
+    authProvider.includes("event === 'PERSISTED_SESSION'") &&
+    authProvider.includes('commitInitialSession(null)') &&
+    authProvider.includes('readPersistedAuthSession()') &&
+    !authProvider.includes('}, 3000);'),
+  'Cold auth restore must preserve encrypted sessions across transient mobile network failures',
+);
+check(
+  offlineStatus.includes('QUALITY_REQUIRED_SAMPLES = 2') &&
+    offlineStatus.includes('QUALITY_CONFIRMATION_DELAY_MS') &&
+    offlineStatus.includes('QUALITY_SLOW_RTT_MS') &&
+    offlineStatus.includes('/auth/v1/health') &&
+    offlineStatus.includes("recordNetworkQualitySample(sample: 'slow' | 'good' | 'neutral')") &&
+    offlineStatus.includes('qualityProbeAbortController?.abort()') &&
+    queryClient.includes('startNetworkQualityMonitoring') &&
+    queryClient.includes('setNetworkQualityMonitoringActive(isActive)'),
+  'Poor-connection banner must use confirmed backend latency with hysteresis and foreground-only probes',
+);
+check(
   authFlowState.includes('hydratePublicAuthRoute') &&
     authFlowState.includes('PUBLIC_AUTH_ROUTE_STORAGE_KEY') &&
     rootLayout.includes('publicAuthRouteHydrated'),
@@ -256,19 +354,59 @@ check(
   'Shared keyboard-aware forms must deliver the first tap to action buttons',
 );
 check(
-  mapHelpers.includes("id: 'android_system_maps'") &&
+  mapHelpers.includes('MAP_APP_PREFERENCE_KEY') &&
+    mapHelpers.includes('getMapAppPreferenceState') &&
+    mapHelpers.includes('openPreferredMapTarget') &&
+    mapHelpers.includes("probe: Platform.OS === 'android' ? 'google.navigation:q=0,0'") &&
+    mapHelpers.includes('MonitorMapApps.getInstalledMapAppsAsync()') &&
+    mapHelpers.includes('MonitorMapApps.openMapAppAsync(option.packageName, option.url)') &&
+    mapHelpers.includes('ANDROID_MAP_APP_ID_PATTERN') &&
     mapHelpers.includes('buildAndroidGeoUrl') &&
+    !mapHelpers.includes("'android_system_maps'") &&
+    !mapHelpers.includes("'web_maps'") &&
+    mapHelpers.includes('Linking.openURL(buildYandexMapsWebUrl(normalized))') &&
+    mapAppsNativeModule.includes('queryIntentActivities') &&
+    mapAppsNativeModule.includes('MATCH_DEFAULT_ONLY') &&
+    mapAppsNativeModule.includes('loadLabel(packageManager)') &&
+    mapAppsNativeModule.includes('setPackage(normalizedPackage)') &&
+    mapAppsModuleConfig.android?.modules?.includes(
+      'expo.modules.monitormapapps.MonitorMapAppsModule',
+    ) &&
     mapQueriesPlugin.includes('withInfoPlist') &&
+    mapQueriesPlugin.includes("'geo'") &&
+    mapQueriesPlugin.includes("'com.google.android.apps.maps'") &&
+    mapQueriesPlugin.includes("'google.navigation'") &&
     /android:scheme="yandexmaps"/.test(manifest) &&
-    /android:scheme="comgooglemaps"/.test(manifest) &&
-    /android:scheme="geo"/.test(manifest),
-  'Map opening must detect installed apps in native builds and retain an Android system fallback',
+    /android:scheme="google\.navigation"/.test(manifest) &&
+    /android:scheme="geo"/.test(manifest) &&
+    /android:name="com\.google\.android\.apps\.maps"/.test(manifest) &&
+    appJson.ios?.infoPlist?.LSApplicationQueriesSchemes?.includes('comgooglemaps') &&
+    appSettingsScreen.includes("key: 'navigation'") &&
+    appSettingsScreen.includes('setPreferredMapAppId') &&
+    appSettingsScreen.includes('item.label || t(item.labelKey)') &&
+    appSettingsScreen.includes("t('map_app_none_installed')") &&
+    objectViewScreen.includes('openAddressInPreferredMap') &&
+    objectViewScreen.includes('onCollapsedPress={openNavigatorAddress}') &&
+    orderDetailsScreen.includes('openAddressInPreferredMap') &&
+    !fs.existsSync(path.join(root, 'components/ui/MapAppChooser.jsx')),
+  'Map settings must enumerate named Android geo handlers while retaining a non-selectable web fallback',
 );
 check(
   clientPrefill.includes('PATRONYMIC_SUFFIXES') &&
     clientPrefill.includes('patronymicIndex === tokens.length - 1') &&
     clientPrefill.includes('patronymicIndex === 1'),
   'Client prefill must recognize patronymics and international middle names without dropping tokens',
+);
+check(
+  objectAddressing.includes('buildClientObjectLocationSummary') &&
+    objectAddressing.includes("getClientObjectLocationMode(objectLike) === 'map'") &&
+    objectAddressing.includes('normalized.summary = buildClientObjectLocationSummary(normalized)') &&
+    objectCard.includes('buildClientObjectLocationSummary(item') &&
+    clientsApi.includes('geo_lat, geo_lng, location_mode') &&
+    clientsApi.includes('primaryObjectSummary: buildClientObjectLocationSummary(primaryObject)') &&
+    objectsIndexScreen.includes("getClientObjectLocationMode(item) === 'address'") &&
+    objectMatching.includes("getClientObjectLocationMode(candidateRaw) !== 'address'"),
+  'Object lists, client summaries, filters, and matching must honor the active object location mode',
 );
 check(
   orderSort.includes("preferredField.startsWith('createdDate')") &&
@@ -299,8 +437,12 @@ check(
 check(
   bottomNavigation.includes('requestBottomNavigation(target, proceed)') &&
     bottomNavigationGuard.includes('registerBottomNavigationGuard') &&
+    bottomNavigationGuard.includes('const guardEntries = []') &&
+    bottomNavigationGuard.includes('proceed: () => dispatch(nextIndex - 1)') &&
+    filtersPanel.includes('pendingBottomNavigationRef.current = proceed') &&
+    filtersPanel.includes('registerBottomNavigationGuard') &&
     createOrderScreen.includes('pendingBottomNavigationRef.current = proceed'),
-  'Bottom navigation must honor the active create-order data-loss guard',
+  'Bottom navigation must close filter overlays and then honor every remaining data-loss guard',
 );
 check(
   createOrderScreen.includes('create_order_modal_cancel_save_draft') &&
@@ -348,6 +490,75 @@ check(
   'Per-order finance rule exclusions must exist and enforce server-side permissions',
 );
 check(photoQueue.includes('ownerUserId') && photoQueue.includes('flushOrderPhotoQueue'), 'Photo queue must be owner-scoped and globally flushable');
+check(
+  !cachedImage.includes('__img_retry') &&
+    cachedImage.includes('source={{ uri: sourceUri }}') &&
+    cachedImage.includes("retryAttempt > 0 ? 'none' : cachePolicy"),
+  'Image retries must preserve signed URLs exactly and bypass a failed cache entry',
+);
+check(
+  fullscreenImageViewer.includes('onDisplay={handleDisplayed}') &&
+    fullscreenImageViewer.includes("t('viewer_image_load_error')") &&
+    fullscreenImageViewer.includes('fallbackImages={fallbackImages}'),
+  'Fullscreen photos must expose loading failure recovery and a network fallback',
+);
+check(
+  signedMediaUrl.includes("'x-amz-date'") &&
+    signedMediaUrl.includes("'x-amz-expires'") &&
+    orderDetailsScreen.includes('getFallbackUrl={orderMedia.getRemoteDisplayUrl}'),
+  'Expired signed media URLs must refresh instead of being reused by order photos',
+);
+check(
+  mediaAssets.includes('buildMediaAssetInfoMap') &&
+    mediaAssets.includes('asset?.createdAt') &&
+    fullscreenImageViewer.includes("t('viewer_info_captured_at')") &&
+    fullscreenImageViewer.includes("t('viewer_info_uploaded_at')") &&
+    orderDetailsScreen.includes('imageMetadata={viewerPhotoMetadata}'),
+  'Photo info must use catalog upload dates and show capture dates only when metadata provides them',
+);
+check(
+  fs.existsSync(path.join(root, mediaUploadTimestampMigrationPath)) &&
+    mediaUploadTimestampMigration.includes('media_assets_set_upload_timestamp') &&
+    mediaUploadTimestampMigration.includes("jsonb_build_object('uploaded_at', v_uploaded_at)"),
+  'Media catalog resyncs must preserve the authoritative upload timestamp',
+);
+check(
+  fs.existsSync(path.join(root, mediaCaptureOriginMigrationPath)) &&
+    mediaCaptureOriginMigration.includes('media_metadata jsonb') &&
+    mediaCaptureOriginMigration.includes("new.metadata || coalesce(v_media_metadata") &&
+    fullscreenImageViewer.includes('handleManualImageRetry') &&
+    fullscreenImageViewer.includes('infoRequestRef.current !== requestId') &&
+    fullscreenImageViewer.includes('MIN_PLAUSIBLE_PHOTO_DATE_MS') &&
+    fullscreenImageViewer.includes("infoOpen.origin !== 'app_camera' && infoOpen.uploadedAt") &&
+    orderDetailsScreen.includes('media_origin: mediaOrigin') &&
+    orderDetailsScreen.includes('captured_at: capturedAt'),
+  'Photo retry controls, instant info, plausible dates, and capture origin must stay production-safe',
+);
+check(
+  baseModal.includes('embedded = false') &&
+    baseModal.includes("presentation = 'sheet'") &&
+    baseModal.includes("presentation === 'sheet'") &&
+    baseModal.includes("justifyContent: isSheet ? 'flex-end' : 'center'") &&
+    baseModal.includes("const floatingSheet = isSheet && windowW >= 768") &&
+    baseModal.includes("const sheetCornerRadius = Platform.OS === 'ios' ? 24 : 28") &&
+    baseModal.includes('EmbeddedModalHostContext') &&
+    baseModal.includes('registerRequestClose') &&
+    baseModal.includes("BackHandler.addEventListener('hardwareBackPress'") &&
+    confirmAlertModals.includes('Alert.alert(') &&
+    confirmAlertModals.includes("style: 'cancel'") &&
+    selectModal.includes('presentation="sheet"') &&
+    multiSelectModal.includes('presentation="sheet"') &&
+    dateTimeModal.includes('presentation="sheet"') &&
+    mediaUploadModal.includes('embedded={embedded}') &&
+    mediaUploadModal.includes('presentation="sheet"') &&
+    mediaUploadModal.includes('<ConfirmModal') &&
+    !mediaUploadModal.includes('embeddedSheet:') &&
+    fullscreenImageViewer.includes('embedded={embedded}') &&
+    fullscreenImageViewer.includes('presentation="sheet"') &&
+    fullscreenImageViewer.includes('<ConfirmModal') &&
+    !fullscreenImageViewer.includes('embedded && !capturePreviewMode'),
+  'Product modals must preserve adaptive dialog/sheet presentation, native alerts, and Android Back handling',
+);
 check(fs.existsSync(path.join(root, 'supabase/migrations/20260712190000_harden_error_logs.sql')), 'Error log schema migration is required');
 check(
   emailServer.includes("'X-Postmaster-Msgtype': POSTMASTER_MESSAGE_TYPES[type]"),

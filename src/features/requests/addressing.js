@@ -44,9 +44,10 @@ export function extractOrderAddress(source) {
   result.apartment = String(source?.apartment ?? result.apartment ?? '').trim();
   result.comment = String(source?.comment ?? source?.entrance_info ?? result.comment ?? '').trim();
   result.entrance_info = result.comment;
+  const explicitLocationMode = String(source?.[ORDER_LOCATION_MODE_FIELD] || '').trim().toLowerCase();
   result[ORDER_LOCATION_MODE_FIELD] =
-    String(source?.[ORDER_LOCATION_MODE_FIELD] || '').trim().toLowerCase() === 'map'
-      ? 'map'
+    explicitLocationMode === 'map' || explicitLocationMode === 'address'
+      ? explicitLocationMode
       : result.geo_lat && result.geo_lng
         ? 'map'
         : 'address';

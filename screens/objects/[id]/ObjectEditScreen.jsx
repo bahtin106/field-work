@@ -17,7 +17,10 @@ import ClearButton from '../../../components/ui/ClearButton';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
-import MapAppChooser from '../../../components/ui/MapAppChooser';
+import {
+  openCoordinatesInPreferredMap,
+  openPreferredMap,
+} from '../../../components/ui/map';
 import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import TagEditorField from '../../../components/tags/TagEditorField';
@@ -369,7 +372,6 @@ export default function EditObjectScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
-  const mapAppChooserRef = React.useRef(null);
   const { has } = usePermissions();
   const params = useLocalSearchParams();
   const id = params?.id;
@@ -428,8 +430,10 @@ export default function EditObjectScreen() {
   const [localPendingMap, setLocalPendingMap] = React.useState({});
   const [resolvedObjectMediaUrls, setResolvedObjectMediaUrls] = React.useState({});
   const [objectMediaThumbUrls, setObjectMediaThumbUrls] = React.useState({});
+  const [objectMediaInfoBySource, setObjectMediaInfoBySource] = React.useState({});
   const [viewerVisible, setViewerVisible] = React.useState(false);
   const [viewerPhotos, setViewerPhotos] = React.useState([]);
+  const [viewerPhotoMetadata, setViewerPhotoMetadata] = React.useState([]);
   const [viewerIndex, setViewerIndex] = React.useState(0);
   const [viewerCategoryLabel, setViewerCategoryLabel] = React.useState('');
   const [removeMediaSection, setRemoveMediaSection] = React.useState(null);
@@ -666,6 +670,7 @@ export default function EditObjectScreen() {
     if (!objectId) {
       setResolvedObjectMediaUrls({});
       setObjectMediaThumbUrls({});
+      setObjectMediaInfoBySource({});
       return () => {
         cancelled = true;
       };
@@ -678,7 +683,7 @@ export default function EditObjectScreen() {
           ? objectMediaRef.current[category]
           : [];
       });
-      const { displayUrls, thumbnailUrls } = await resolveObjectMediaUrls({
+      const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
         objectId,
         categories: OBJECT_MEDIA_FIELD_KEYS,
         mediaByCategory,
@@ -689,6 +694,9 @@ export default function EditObjectScreen() {
       }
       if (Object.keys(thumbnailUrls).length) {
         setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbnailUrls));
+      }
+      if (Object.keys(mediaInfoBySource).length) {
+        setObjectMediaInfoBySource((prev) => ({ ...prev, ...mediaInfoBySource }));
       }
     };
 
@@ -846,12 +854,11 @@ export default function EditObjectScreen() {
   }, [ensureLibraryPerms, mediaAspect, mediaQuality, mediaTypesOpt, t, toast]);
 
   const openMapForPoint = React.useCallback(async () => {
-    if (hasMapPoint) {
-      await mapAppChooserRef.current?.openCoordinates(mapLat, mapLng);
-      return;
-    }
-    await mapAppChooserRef.current?.openMap();
-  }, [hasMapPoint, mapLat, mapLng]);
+    const result = hasMapPoint
+      ? await openCoordinatesInPreferredMap(mapLat, mapLng)
+      : await openPreferredMap();
+    if (!result.opened) toast.error(t('map_app_open_error'));
+  }, [hasMapPoint, mapLat, mapLng, t, toast]);
 
   const showClipboardEmptyFeedback = React.useCallback(() => {
     const message = t('objects_location_clipboard_empty');
@@ -1245,9 +1252,11 @@ export default function EditObjectScreen() {
     if (!rawPhotos.length) return;
 
     let displayMap = resolvedObjectMediaUrls;
+    let mediaInfoMap = objectMediaInfoBySource;
     const hasMissingDisplay = rawPhotos.some((raw) => !getObjectMediaDisplayUrl(raw));
-    if (hasMissingDisplay && objectId && category) {
-      const { displayUrls, thumbnailUrls } = await resolveObjectMediaUrls({
+    const hasMissingInfo = rawPhotos.some((raw) => !mediaInfoMap[raw]);
+    if ((hasMissingDisplay || hasMissingInfo) && objectId && category) {
+      const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
         objectId,
         categories: [category],
         mediaByCategory: { [category]: rawPhotos },
@@ -1259,6 +1268,10 @@ export default function EditObjectScreen() {
       if (Object.keys(thumbnailUrls).length) {
         setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbnailUrls));
       }
+      if (Object.keys(mediaInfoBySource).length) {
+        mediaInfoMap = { ...mediaInfoMap, ...mediaInfoBySource };
+        setObjectMediaInfoBySource((prev) => ({ ...prev, ...mediaInfoBySource }));
+      }
     }
 
     const pairs = photos
@@ -1269,6 +1282,7 @@ export default function EditObjectScreen() {
           displayMap[String(raw || '').trim()] ||
             (isRenderableObjectMediaUrl(raw) ? String(raw || '').trim() : ''),
         ).trim(),
+        metadata: mediaInfoMap[String(raw || '').trim()] || null,
       }))
       .filter((item) => item.raw && item.display);
     if (!pairs.length) return;
@@ -1277,9 +1291,10 @@ export default function EditObjectScreen() {
     viewerCategoryRef.current = category || null;
     setViewerCategoryLabel(label || '');
     setViewerPhotos(pairs.map((item) => item.display));
+    setViewerPhotoMetadata(pairs.map((item) => item.metadata));
     setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setViewerVisible(true);
-  }, [getObjectMediaDisplayUrl, objectId, resolvedObjectMediaUrls]);
+  }, [getObjectMediaDisplayUrl, objectId, objectMediaInfoBySource, resolvedObjectMediaUrls]);
   const handleViewerDelete = React.useCallback(
     async (viewerIdx) => {
       const category = viewerCategoryRef.current;
@@ -1702,12 +1717,12 @@ export default function EditObjectScreen() {
       <FullscreenImageViewer
         visible={viewerVisible}
         images={viewerPhotos}
+        imageMetadata={viewerPhotoMetadata}
         initialIndex={viewerIndex}
         onClose={() => setViewerVisible(false)}
         onDelete={handleViewerDelete}
         categoryLabel={viewerCategoryLabel}
       />
-      <MapAppChooser ref={mapAppChooserRef} />
 
       <BaseModal
         visible={addressModalVisible}

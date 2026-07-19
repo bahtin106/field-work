@@ -1,7 +1,7 @@
 import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import {
-  buildClientObjectAddressSummary,
+  buildClientObjectLocationSummary,
   normalizeClientObject,
 } from '../objects/addressing';
 import { inspectProfileMedia } from '../profileMedia/api';
@@ -19,7 +19,7 @@ const CLIENT_COLUMNS_WITH_COMMENT = `${CLIENT_COLUMNS_BASE}, comment`;
 const CLIENT_COLUMNS_WITH_ADDITIONAL =
   `${CLIENT_COLUMNS_WITH_COMMENT}, additional_phone_1, additional_phone_1_label, additional_phone_2, additional_phone_2_label, additional_phone_3, additional_phone_3_label`;
 const CLIENT_LIST_OBJECTS_RELATION =
-  'client_objects(id, client_id, company_id, name, is_primary, country, region, city, street, house, apartment, object_tag_links(tag:company_tags(id, value, tag_type)))';
+  'client_objects(id, client_id, company_id, name, is_primary, country, region, city, street, house, apartment, geo_lat, geo_lng, location_mode, object_tag_links(tag:company_tags(id, value, tag_type)))';
 const CLIENT_TAGS_RELATION = 'client_tag_links(tag:company_tags(id, value, tag_type))';
 
 function shouldFallbackWithoutAdditionalFields(error: any) {
@@ -80,7 +80,7 @@ function normalizeClient(row: any) {
     avatarDisplayUrl: row.avatar_display_url || row.avatar_url || null,
     objects: sortedObjects,
     primaryObject,
-    primaryObjectSummary: buildClientObjectAddressSummary(primaryObject) || null,
+    primaryObjectSummary: buildClientObjectLocationSummary(primaryObject) || null,
     tags: extractTagsFromLinks(row.client_tag_links),
   };
 }

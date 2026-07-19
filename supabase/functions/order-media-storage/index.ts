@@ -32,6 +32,23 @@ const json = (status: number, body: Record<string, Json>) =>
   });
 
 const ALLOWED_CATEGORIES = new Set(['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5']);
+const ALLOWED_MEDIA_ORIGINS = new Set(['app_camera', 'device_library']);
+const MIN_CAPTURE_DATE_MS = Date.UTC(2000, 0, 1);
+const MAX_CAPTURE_DATE_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
+
+function normalizeClientMediaMetadata(mediaOrigin: unknown, capturedAt: unknown): Record<string, Json> {
+  const origin = String(mediaOrigin || '').trim();
+  const metadata: Record<string, Json> = {};
+  if (ALLOWED_MEDIA_ORIGINS.has(origin)) metadata.media_origin = origin;
+  if (origin !== 'app_camera') return metadata;
+  const timestamp = new Date(String(capturedAt || '')).getTime();
+  if (
+    Number.isFinite(timestamp) &&
+    timestamp >= MIN_CAPTURE_DATE_MS &&
+    timestamp <= Date.now() + MAX_CAPTURE_DATE_FUTURE_SKEW_MS
+  ) metadata.captured_at = new Date(timestamp).toISOString();
+  return metadata;
+}
 const CATEGORY_DIR: Record<string, string> = {
   media_file_1: 'Media_1',
   media_file_2: 'Media_2',
@@ -469,9 +486,12 @@ export async function handleOrderMediaStorageRequest(req: Request) {
       urls?: string[];
       object_key?: string;
       public_url?: string;
+      media_origin?: string;
+      captured_at?: string;
     };
 
     const action = String(body.action || '').trim();
+    const clientMediaMetadata = normalizeClientMediaMetadata(body.media_origin, body.captured_at);
     const financeEntryId = String(body.finance_entry_id || '').trim();
     const rawCategory = String(body.category || '').trim().toLowerCase();
     const isLegacyFinanceCategory = rawCategory === 'finance_entry_photo' || rawCategory === 'finance_photo';
@@ -731,6 +751,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
             display_url_updated_at: new Date().toISOString(),
             created_by: ctx.userId,
             file_size_bytes: fileSizeBytes,
+            media_metadata: clientMediaMetadata,
           },
           { onConflict: 'order_id,category,source_url' },
         );
@@ -781,6 +802,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
             display_url_updated_at: new Date().toISOString(),
             created_by: ctx.userId,
             file_size_bytes: bytes.length,
+            media_metadata: clientMediaMetadata,
           },
           { onConflict: 'order_id,category,source_url' },
         );

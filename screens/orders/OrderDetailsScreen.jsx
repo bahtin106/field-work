@@ -67,10 +67,13 @@ import MediaUploadModal from '../../components/media/MediaUploadModal';
 import { OrderStatusCapsuleView } from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import AnimatedChevron from '../../components/ui/AnimatedChevron';
-import MapAppChooser from '../../components/ui/MapAppChooser';
 import { BaseModal, ConfirmModal, AlertModal, SelectModal } from '../../components/ui/modals';
 import { listItemStyles } from '../../components/ui/listItemStyles';
-import { buildAddressForNavigator } from '../../components/ui/map';
+import {
+  buildAddressForNavigator,
+  openAddressInPreferredMap,
+  openCoordinatesInPreferredMap,
+} from '../../components/ui/map';
 import { usePermissions } from '../../lib/permissions';
 import { formatClientNameForOrder, getClientByOrderId } from '../../src/features/clients/api';
 import { useClient, useUpdateClientMutation } from '../../src/features/clients/queries';
@@ -221,6 +224,23 @@ const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
 const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
 const DATA_IMAGE_URI_RE = /^data:image\//i;
+const PHOTO_ORIGINS = new Set(['app_camera', 'device_library']);
+
+function normalizePhotoUploadInput(value) {
+  const input = value && typeof value === 'object' ? value : { uri: value };
+  const uri = String(input?.uri || '').trim();
+  const originValue = String(input?.mediaOrigin || input?.media_origin || '').trim();
+  const mediaOrigin = PHOTO_ORIGINS.has(originValue) ? originValue : null;
+  const capturedValue = input?.capturedAt || input?.captured_at || null;
+  const capturedDate = capturedValue ? new Date(capturedValue) : null;
+  const capturedTimestamp = capturedDate?.getTime();
+  const capturedAt = Number.isFinite(capturedTimestamp) &&
+    capturedTimestamp >= Date.UTC(2000, 0, 1) &&
+    capturedTimestamp <= Date.now() + 24 * 60 * 60 * 1000
+    ? capturedDate.toISOString()
+    : null;
+  return { uri, mediaOrigin, capturedAt };
+}
 const REMOVED_ORDER_OBJECT_FIELDS = new Set([
   'country',
   'region',
@@ -589,7 +609,6 @@ function OrderDetailsContent() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
-  const mapAppChooserRef = useRef(null);
 
   const applyNavBar = useCallback(async () => {
     try {
@@ -1002,8 +1021,11 @@ function OrderDetailsContent() {
   const [financeSaving, setFinanceSaving] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
+  const [viewerFallbackPhotos, setViewerFallbackPhotos] = useState([]);
+  const [viewerPhotoMetadata, setViewerPhotoMetadata] = useState([]);
   const [financeViewerVisible, setFinanceViewerVisible] = useState(false);
   const [financeViewerPhotos, setFinanceViewerPhotos] = useState([]);
+  const [financeViewerPhotoMetadata, setFinanceViewerPhotoMetadata] = useState([]);
   const [financeViewerIndex, setFinanceViewerIndex] = useState(0);
   const financeViewerRawPhotosRef = useRef([]);
   const financeEntryInspectSignatureRef = useRef('');
@@ -1079,6 +1101,8 @@ function OrderDetailsContent() {
     t,
     enabled: financeEntryPhotosModalVisible && !!financeEntryDraft.id,
   });
+  const getOrderMediaInfo = orderMedia.getMediaInfo;
+  const getFinanceEntryMediaInfo = financeEntryMedia.getMediaInfo;
 
   // Always-current order ref — prevents stale closures in parallel uploads
   const orderRef = useRef(order);
@@ -2010,7 +2034,12 @@ function OrderDetailsContent() {
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   const uploadLocalUri = useCallback(
-    async (category, uri, opts) => {
+    async (category, uploadInput, opts) => {
+      const normalizedUpload = normalizePhotoUploadInput(uploadInput);
+      const uri = normalizedUpload.uri;
+      const mediaOrigin = normalizedUpload.mediaOrigin;
+      const capturedAt = normalizedUpload.capturedAt;
+      if (!uri) return false;
       const replaceUrl = opts?.replaceUrl || null;
       const replaceIndex = Number.isInteger(opts?.replaceIndex) ? opts.replaceIndex : -1;
       const replaceOnly = opts?.replaceOnly === true;
@@ -2031,6 +2060,8 @@ function OrderDetailsContent() {
               category,
               localUrl: uri,
               mediaProvider: effectiveMediaProvider,
+              mediaOrigin,
+              capturedAt,
               status: isOnlineNow ? 'foreground' : 'pending',
             })
           : null;
@@ -2116,6 +2147,8 @@ function OrderDetailsContent() {
                 category,
                 object_key: prepared?.object_key || null,
                 public_url: prepared?.public_url || null,
+                media_origin: mediaOrigin,
+                captured_at: capturedAt,
               });
             } catch (directError) {
               if (directUploadCompleted) throw directError;
@@ -2126,6 +2159,8 @@ function OrderDetailsContent() {
                 category,
                 file_base64: await encodeBase64(fallbackBuffer),
                 mime: PHOTO_MIME_TYPE,
+                media_origin: mediaOrigin,
+                captured_at: capturedAt,
               });
             }
             return {
@@ -2177,6 +2212,8 @@ function OrderDetailsContent() {
                 order_id: orderId,
                 category,
                 external_path: prepared?.external_path || null,
+                media_origin: mediaOrigin,
+                captured_at: capturedAt,
               });
             } catch (directError) {
               if (directUploadCompleted) throw directError;
@@ -2187,6 +2224,8 @@ function OrderDetailsContent() {
                 category,
                 file_base64: await encodeBase64(fallbackBuffer),
                 mime: PHOTO_MIME_TYPE,
+                media_origin: mediaOrigin,
+                captured_at: capturedAt,
               });
             }
             publicUrl = String(data?.url || '');
@@ -2340,13 +2379,15 @@ function OrderDetailsContent() {
         options && typeof options.onItemUploaded === 'function' ? options.onItemUploaded : null;
       const results = await runMediaUploadQueue(
         uris,
-        async (uri) =>
-          uploadLocalUri(category, uri, {
-            onUploaded: (payload) => onItemUploaded?.(uri, payload),
-          }),
+        async (uploadInput) => {
+          const upload = normalizePhotoUploadInput(uploadInput);
+          return uploadLocalUri(category, upload, {
+            onUploaded: (payload) => onItemUploaded?.(upload.uri, payload),
+          });
+        },
         {
           concurrency: 3,
-          onItemSettled: (uri) => onItemSettled?.(uri),
+          onItemSettled: (uploadInput) => onItemSettled?.(normalizePhotoUploadInput(uploadInput).uri),
         },
       );
       const ok = results.filter((result) => result.status === 'fulfilled' && result.value).length;
@@ -2981,12 +3022,14 @@ function OrderDetailsContent() {
         raw,
         originalIndex,
         display: financeEntryMedia.getDisplayUrl(raw) || raw,
+        metadata: financeEntryMedia.getMediaInfo(raw),
       }))
       .filter((pair) => pair.display);
     if (!pairs.length) return;
     const nextIndex = pairs.findIndex((pair) => pair.originalIndex === index);
     financeViewerRawPhotosRef.current = pairs.map((pair) => pair.raw);
     setFinanceViewerPhotos(pairs.map((pair) => pair.display));
+    setFinanceViewerPhotoMetadata(pairs.map((pair) => pair.metadata));
     setFinanceViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setFinanceViewerCategoryLabel(
       String(financeEntryDraft.title || '').trim() || t('order_finance_entry_modal_title'),
@@ -2997,6 +3040,13 @@ function OrderDetailsContent() {
   const closeFinanceEntryViewer = useCallback(() => {
     setFinanceViewerVisible(false);
   }, []);
+
+  useEffect(() => {
+    if (!financeViewerVisible) return;
+    setFinanceViewerPhotoMetadata(
+      (financeViewerRawPhotosRef.current || []).map((url) => getFinanceEntryMediaInfo(url)),
+    );
+  }, [financeViewerVisible, getFinanceEntryMediaInfo]);
 
   const handleFinanceViewerDelete = useCallback((viewerIdx) => {
     const rawUrl = financeViewerRawPhotosRef.current?.[viewerIdx];
@@ -4372,6 +4422,8 @@ function OrderDetailsContent() {
           raw,
           originalIndex,
           display: orderMedia.getDisplayUrl(raw) || orderMedia.getThumbnailUrl(raw),
+          fallback: orderMedia.getRemoteDisplayUrl(raw),
+          metadata: orderMedia.getMediaInfo(raw),
         }))
         .filter((p) => p.display);
       if (!pairs.length) return false;
@@ -4380,6 +4432,10 @@ function OrderDetailsContent() {
       viewerCategoryRef.current = category || null;
       setViewerCategoryLabel(label || '');
       setViewerPhotos(pairs.map((p) => p.display));
+      setViewerFallbackPhotos(
+        pairs.map((p) => (p.fallback && p.fallback !== p.display ? p.fallback : '')),
+      );
+      setViewerPhotoMetadata(pairs.map((p) => p.metadata));
       setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
       setViewerVisible(true);
       return true;
@@ -4390,6 +4446,13 @@ function OrderDetailsContent() {
   const closeViewer = useCallback(() => {
     setViewerVisible(false);
   }, []);
+
+  useEffect(() => {
+    if (!viewerVisible) return;
+    setViewerPhotoMetadata(
+      (viewerRawPhotosRef.current || []).map((url) => getOrderMediaInfo(url)),
+    );
+  }, [getOrderMediaInfo, viewerVisible]);
 
   const handleViewerDelete = useCallback(
     (viewerIdx) => {
@@ -4588,12 +4651,15 @@ function OrderDetailsContent() {
   ]);
 
   const handleUploadUri = useCallback(
-    async (category, uri) => {
+    async (category, uploadInput) => {
+      const upload = normalizePhotoUploadInput(uploadInput);
+      const uri = upload.uri;
+      if (!uri) return;
       const id = `local:${Date.now()}`;
       let uploadSucceeded = false;
       setLocalPendingMap((p) => ({ ...(p || {}), [category]: [...((p && p[category]) || []), { id, uri, pending: true }] }));
       try {
-        uploadSucceeded = await uploadLocalUri(category, uri, {
+        uploadSucceeded = await uploadLocalUri(category, upload, {
           onUploaded: ({ publicUrl }) => {
             setLocalPendingMap((previous) => ({
               ...(previous || {}),
@@ -4633,17 +4699,22 @@ function OrderDetailsContent() {
   );
 
   const handleUploadMultiple = useCallback(
-    async (category, uris = []) => {
-      const safeUris = Array.from(
-        new Set((Array.isArray(uris) ? uris : []).map((value) => String(value || '').trim()).filter(Boolean)),
+    async (category, uploads = []) => {
+      const safeUploads = Array.from(
+        (Array.isArray(uploads) ? uploads : []).reduce((unique, value) => {
+          const upload = normalizePhotoUploadInput(value);
+          if (upload.uri && !unique.has(upload.uri)) unique.set(upload.uri, upload);
+          return unique;
+        }, new Map()).values(),
       );
+      const safeUris = safeUploads.map((upload) => upload.uri);
       if (!safeUris.length) return;
       const orderId = orderRef.current?.id;
       if (orderId) {
         await enqueueOrderPhotoUploads({
           orderId,
           category,
-          localUrls: safeUris,
+          uploads: safeUploads,
           mediaProvider: effectiveMediaProvider,
           status: getOfflineSnapshot().isOnline ? 'foreground' : 'pending',
         });
@@ -4651,7 +4722,7 @@ function OrderDetailsContent() {
       const ids = safeUris.map((u) => ({ id: `local:${Date.now()}_${Math.random()}`, uri: u, pending: true }));
       setLocalPendingMap((p) => ({ ...(p || {}), [category]: [...((p && p[category]) || []), ...ids] }));
       try {
-        await compressAndUploadMultiple(category, safeUris, {
+        await compressAndUploadMultiple(category, safeUploads, {
           onItemUploaded: (localUri, { publicUrl }) => {
             setLocalPendingMap((previous) => ({
               ...(previous || {}),
@@ -5064,11 +5135,15 @@ function OrderDetailsContent() {
   const orderLocationMode = useMemo(
     () =>
       normalizeClientObjectLocationMode(
-        linkedObject?.location_mode || order?.object_location_mode || order?.object?.location_mode,
+        orderAddress?.location_mode ||
+          linkedObject?.location_mode ||
+          order?.object_location_mode ||
+          order?.object?.location_mode,
         {
-        fallback: 'address',
-      }),
-    [linkedObject?.location_mode, order?.object?.location_mode, order?.object_location_mode],
+          fallback: orderHasMapPoint ? 'map' : 'address',
+        },
+      ),
+    [linkedObject?.location_mode, order?.object?.location_mode, order?.object_location_mode, orderAddress?.location_mode, orderHasMapPoint],
   );
   const useCoordinatesForOrderAddress = orderLocationMode === 'map' && orderHasMapPoint;
   const orderAddressComment = useMemo(() => {
@@ -5427,6 +5502,7 @@ function OrderDetailsContent() {
         embedded
         visible
         images={financeViewerPhotos}
+        imageMetadata={financeViewerPhotoMetadata}
         initialIndex={financeViewerIndex}
         onClose={closeFinanceEntryViewer}
         onDelete={handleFinanceViewerDelete}
@@ -5718,7 +5794,11 @@ function OrderDetailsContent() {
                           <Pressable
                             style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                             accessibilityRole="link"
-                            onPress={() => mapAppChooserRef.current?.openCoordinates(orderMapLat, orderMapLng)}
+                            onPress={() => {
+                              void openCoordinatesInPreferredMap(orderMapLat, orderMapLng).then((result) => {
+                                if (!result.opened) showToast(t('map_app_open_error'));
+                              });
+                            }}
                             onLongPress={copyOrderCoordinates}
                           >
                             <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
@@ -5751,14 +5831,18 @@ function OrderDetailsContent() {
                         onValuePress={
                           orderAddressForNavigator
                             ? () => {
-                                mapAppChooserRef.current?.openAddress(orderAddressForNavigator);
+                                void openAddressInPreferredMap(orderAddressForNavigator).then((result) => {
+                                  if (!result.opened) showToast(t('map_app_open_error'));
+                                });
                               }
                             : null
                         }
                         onCollapsedPress={
                           orderAddressForNavigator
                             ? () => {
-                                mapAppChooserRef.current?.openAddress(orderAddressForNavigator);
+                                void openAddressInPreferredMap(orderAddressForNavigator).then((result) => {
+                                  if (!result.opened) showToast(t('map_app_open_error'));
+                                });
                               }
                             : null
                         }
@@ -6187,9 +6271,11 @@ function OrderDetailsContent() {
             }
             getDisplayUrl={orderMedia.getDisplayUrl}
             getThumbnailUrl={orderMedia.getThumbnailUrl}
+            getFallbackUrl={orderMedia.getRemoteDisplayUrl}
             getIssue={orderMedia.getIssue}
             onUploadUri={handleUploadUri}
             onUploadMultiple={handleUploadMultiple}
+            includeUploadMetadata
             onRemove={removePhoto}
             onRemoveMany={removePhotosBatch}
             canAddFromCamera={canAddOrderPhotosFromCamera}
@@ -6214,6 +6300,8 @@ function OrderDetailsContent() {
                   embedded
                   visible
                   images={viewerPhotos}
+                  fallbackImages={viewerFallbackPhotos}
+                  imageMetadata={viewerPhotoMetadata}
                   initialIndex={viewerIndex}
                   onClose={closeViewer}
                   onDelete={handleViewerDelete}
@@ -6827,7 +6915,6 @@ function OrderDetailsContent() {
         onClose={() => setWarningVisible(false)}
       />
 
-      <MapAppChooser ref={mapAppChooserRef} />
 
       <ConfirmModal
         visible={deleteModalVisible}

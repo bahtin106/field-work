@@ -341,6 +341,7 @@ export default function DateTimeModal({
       onClose={onClose}
       title={header}
       maxHeightRatio={0.65}
+      presentation="sheet"
       footer={footer}
     >
       <View onLayout={(e) => setContentW(e.nativeEvent.layout.width)}>

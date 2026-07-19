@@ -90,6 +90,7 @@ import {
   CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
   CLIENT_OBJECT_ADDRESS_FIELDS,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
+  buildClientObjectLocationSummary,
   createEmptyClientObjectDraft,
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
@@ -1774,10 +1775,13 @@ function CreateOrderContent() {
   const getObjectShortDescriptor = useCallback(
     (objectItem) => {
       if (!objectItem) return '';
-      if (isObjectPointOnMap(objectItem)) return t('objects_location_mode_map');
-      return buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || '';
+      return buildClientObjectLocationSummary(objectItem, {
+        addressLike: getVisibleObjectAddressDraft(objectItem),
+        compact: true,
+        mapLabel: t('objects_location_mode_map'),
+      });
     },
-    [getVisibleObjectAddressDraft, isObjectPointOnMap, t],
+    [getVisibleObjectAddressDraft, t],
   );
   const applyPhoneSource = useCallback(
     (sourceId, options = {}) => {
@@ -2283,9 +2287,13 @@ function CreateOrderContent() {
         .filter((item) => String(item?.objectId || '') !== String(selectedClientObjectId || ''))
         .map((item) => ({
           ...item,
-          shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(item)),
+          shortAddress: buildClientObjectLocationSummary(item, {
+            addressLike: getVisibleObjectAddressDraft(item),
+            compact: true,
+            mapLabel: t('objects_location_mode_map'),
+          }),
         })),
-    [companyObjectSearchResults, getVisibleObjectAddressDraft, selectedClientObjectId],
+    [companyObjectSearchResults, getVisibleObjectAddressDraft, selectedClientObjectId, t],
   );
   const objectSearchHasQuery = useMemo(() => {
     return hasEnoughObjectSearchInput(debouncedObjectSearchParams);
@@ -2649,12 +2657,12 @@ function CreateOrderContent() {
           id: suggestedMatchingObject.raw.objectId,
           name: suggestedMatchingObject.raw.objectName,
           clientName: suggestedMatchingObject.raw.clientName,
-          shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(suggestedMatchingObject.raw)),
+          shortAddress: getObjectShortDescriptor(suggestedMatchingObject.raw),
         }
       : {
           ...(suggestedMatchingObject?.object || {}),
           clientName: suggestedMatchingObject?.clientName || selectedClientName || '',
-          shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(suggestedMatchingObject?.object || {})),
+          shortAddress: getObjectShortDescriptor(suggestedMatchingObject?.object || {}),
         };
     if (!sourceObject?.id) return;
     const pageX = Number(event?.nativeEvent?.pageX);
@@ -2664,7 +2672,7 @@ function CreateOrderContent() {
     }
     setPreviewObject(sourceObject);
     setPreviewObjectVisible(true);
-  }, [getVisibleObjectAddressDraft, has, selectedClientName, suggestedMatchingObject]);
+  }, [getObjectShortDescriptor, has, selectedClientName, suggestedMatchingObject]);
 
   const handleSelectGlobalObjectSuggestion = useCallback((item) => {
     if (!item?.objectId || !item?.clientId) return;
@@ -3306,10 +3314,8 @@ function CreateOrderContent() {
                 {String(suggestedMatchingObject?.object?.name || '').trim() || t('objects_new')}
               </Text>
               <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm }}>
-                {buildOrderAddressShort(
-                  getVisibleObjectAddressDraft(
-                    suggestedMatchingObject?.raw || suggestedMatchingObject?.object || {},
-                  ),
+                {getObjectShortDescriptor(
+                  suggestedMatchingObject?.raw || suggestedMatchingObject?.object || {},
                 ) || t('order_details_address_not_specified')}
               </Text>
               {String(suggestedMatchingObject?.clientName || selectedClientName || '').trim() ? (

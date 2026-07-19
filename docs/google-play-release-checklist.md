@@ -2,7 +2,7 @@
 
 ## Data Safety declaration
 
-Use the production behavior of version 1.0.2 when completing Play Console. The app processes:
+Use the production behavior of version 1.0.3 when completing Play Console. The app processes:
 
 - Account and personal information: name, email, phone number, profile photo, role and company membership.
 - User content: orders, comments, client/object information and uploaded photos.

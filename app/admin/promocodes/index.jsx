@@ -244,6 +244,7 @@ export default function AdminPromoCodesScreen() {
         onClose={requestCloseForm}
         title={form.id ? t('admin_promocode_edit_title') : t('admin_promocode_new_title')}
         maxHeightRatio={0.92}
+        presentation="sheet"
         footer={
           <View style={styles(theme).footer}>
             <View style={styles(theme).footerButton}>
@@ -310,6 +311,7 @@ export default function AdminPromoCodesScreen() {
         onClose={() => setDiscountTypeVisible(false)}
         title={t('admin_promocode_discount_type_label')}
         maxHeightRatio={0.45}
+        presentation="sheet"
       >
         <SeparatedList>
           {discountTypes.map((item) => (

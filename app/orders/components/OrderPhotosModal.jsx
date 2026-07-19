@@ -1,11 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BaseModal } from '../../../components/ui/modals';
-import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
+import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -33,9 +31,11 @@ export default function MediaUploadModal({
   onRetryPending,
   getDisplayUrl,
   getThumbnailUrl,
+  getFallbackUrl,
   getIssue,
   onUploadUri,
   onUploadMultiple,
+  includeUploadMetadata = false,
   onRemove,
   onRemoveMany,
   onOpenViewer,
@@ -51,7 +51,6 @@ export default function MediaUploadModal({
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
-  const insets = useSafeAreaInsets();
 
   const [cameraVisible, setCameraVisible] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -128,21 +127,25 @@ export default function MediaUploadModal({
   );
 
   const handleSaveFromCamera = useCallback(
-    (uris) => {
+    (uploads) => {
       if (!canAddFromCamera) return;
-      if (!uris || !uris.length) return;
+      if (!uploads || !uploads.length) return;
+      const payload = includeUploadMetadata
+        ? uploads
+        : uploads.map((upload) => String(upload?.uri || upload || '').trim()).filter(Boolean);
+      if (!payload.length) return;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      if (uris.length === 1) {
-        onUploadUri(category, uris[0]).catch((e) =>
+      if (payload.length === 1) {
+        onUploadUri(category, payload[0]).catch((e) =>
           console.warn('[MediaUploadModal] camera upload error', e),
         );
       } else {
-        onUploadMultiple(category, uris).catch((e) =>
+        onUploadMultiple(category, payload).catch((e) =>
           console.warn('[MediaUploadModal] camera batch upload error', e),
         );
       }
     },
-    [canAddFromCamera, category, onUploadMultiple, onUploadUri],
+    [canAddFromCamera, category, includeUploadMetadata, onUploadMultiple, onUploadUri],
   );
 
   const handleGallery = useCallback(async () => {
@@ -155,18 +158,21 @@ export default function MediaUploadModal({
         selectionLimit: 20,
         seenIds: pickedSessionIdsRef.current,
       });
-      const next = picked.map((asset) => asset.uri).filter(Boolean);
+      const next = picked
+        .filter((asset) => asset?.uri)
+        .map((asset) => ({ uri: asset.uri, mediaOrigin: 'device_library' }));
       if (!next.length) return;
 
       hapticMedium();
-      onUploadMultiple(category, next).catch((e) =>
+      const payload = includeUploadMetadata ? next : next.map((upload) => upload.uri);
+      onUploadMultiple(category, payload).catch((e) =>
         console.warn('[MediaUploadModal] gallery upload error', e),
       );
     } catch (e) {
       console.warn('[MediaUploadModal] gallery picker error', e);
       toast.error(e?.code === 'media_library_permission_denied' ? t('order_no_gallery_permission') : t('toast_error'));
     }
-  }, [canAddFromGallery, category, onUploadMultiple, pickedSessionIdsRef, t, toast]);
+  }, [canAddFromGallery, category, includeUploadMetadata, onUploadMultiple, pickedSessionIdsRef, t, toast]);
 
   const handleOpenCamera = useCallback(() => {
     if (!canAddFromCamera) return;
@@ -247,7 +253,7 @@ export default function MediaUploadModal({
   );
   const selectedCount = selectedUris.length;
   const deleteDisabled = selectedCount === 0;
-  const s = useMemo(() => buildStyles(theme, insets), [insets, theme]);
+  const s = useMemo(() => buildStyles(theme), [theme]);
   const confirmationMode = confirmRemoveIndex != null || removeManyConfirmVisible;
   const confirmationTitle = removeManyConfirmVisible
     ? t('order_photos_delete_many_title')
@@ -260,28 +266,6 @@ export default function MediaUploadModal({
     : t('order_photos_delete_single_message');
   const closeConfirmation = removeManyConfirmVisible ? closeRemoveManyConfirm : closeRemoveConfirm;
   const confirmDeletion = removeManyConfirmVisible ? confirmRemoveMany : confirmRemove;
-
-  const confirmationFooter = useMemo(
-    () => (
-      <ModalActionsRow
-        actions={[
-          {
-            key: 'cancel',
-            title: t('order_photos_delete_single_cancel'),
-            variant: 'secondary',
-            onPress: closeConfirmation,
-          },
-          {
-            key: 'confirm',
-            title: t('order_photos_delete_single_confirm'),
-            variant: 'destructive',
-            onPress: confirmDeletion,
-          },
-        ]}
-      />
-    ),
-    [closeConfirmation, confirmDeletion, t],
-  );
 
   const footer = useMemo(() => {
     if (selectionMode) {
@@ -405,6 +389,7 @@ export default function MediaUploadModal({
         onRetryPending={onRetryPending}
         getDisplayUrl={getDisplayUrl}
         getThumbnailUrl={getThumbnailUrl}
+        getFallbackUrl={getFallbackUrl}
         getIssue={getIssue}
         onOpenViewer={handleOpenViewer}
         onRemove={canRemovePhotos ? handleRemove : undefined}
@@ -416,56 +401,19 @@ export default function MediaUploadModal({
       />
     </>
   );
-  const modalContent = confirmationMode ? (
-    <View style={s.confirmationContent}>
-      <View style={s.confirmationIcon}>
-        <Feather name="trash-2" size={theme.icons?.lg ?? 28} color={theme.colors.danger} />
-      </View>
-      <Text style={s.confirmationMessage}>{confirmationMessage}</Text>
-    </View>
-  ) : photoContent;
-  const modalFooter = confirmationMode ? confirmationFooter : footer;
-
   return (
     <>
-      {embedded ? (
-        cameraVisible && canAddFromCamera ? (
-          <Suspense fallback={<View style={s.cameraLoading}><ActivityIndicator color={theme.colors.primary} /></View>}>
-            <PhotoCaptureFlowModal visible onClose={handleCloseCamera} onSave={handleSaveFromCamera} />
-          </Suspense>
-        ) : (
-          <View style={s.embeddedRoot}>
-            <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-            <View style={s.embeddedSheet}>
-              <View style={s.embeddedHandleHit}>
-                <View style={s.embeddedHandle} />
-              </View>
-              <View style={s.embeddedHeader}>
-                <View style={s.embeddedClose} />
-                <Text style={s.embeddedTitle}>{confirmationMode ? confirmationTitle : t('order_photos_title')}</Text>
-                <Pressable
-                  onPress={confirmationMode ? closeConfirmation : onClose}
-                  hitSlop={theme.spacing.md}
-                  style={s.embeddedClose}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('btn_close')}
-                >
-                  <Feather name="x" size={theme.icons?.md ?? 22} color={theme.colors.textSecondary} />
-                </Pressable>
-              </View>
-              <View style={s.embeddedContent}>{modalContent}</View>
-              {modalFooter ? <View style={s.embeddedFooter}>{modalFooter}</View> : null}
-            </View>
-          </View>
-        )
-      ) : (
-        <BaseModal
+      <BaseModal
+        embedded={embedded}
         visible={visible && !suspended}
-        onClose={suspended ? undefined : confirmationMode ? closeConfirmation : onClose}
+        onClose={suspended ? undefined : onClose}
         onDismiss={handleBaseDismiss}
-        title={confirmationMode ? confirmationTitle : t('order_photos_title')}
+        title={t('order_photos_title')}
         maxHeightRatio={0.85}
-        footer={modalFooter}
+        presentation="sheet"
+        footer={footer}
+        disableBackdropClose={confirmationMode}
+        disablePanClose={confirmationMode}
         onFullscreenRequestClose={cameraVisible ? handleCloseCamera : onFullscreenRequestClose}
         fullscreenContent={
           cameraVisible && canAddFromCamera ? (
@@ -479,14 +427,23 @@ export default function MediaUploadModal({
           ) : fullscreenContent
         }
       >
-        {modalContent}
+        {photoContent}
       </BaseModal>
-      )}
+      <ConfirmModal
+        visible={visible && !suspended && confirmationMode}
+        title={confirmationTitle}
+        message={confirmationMessage}
+        cancelLabel={t('order_photos_delete_single_cancel')}
+        confirmLabel={t('order_photos_delete_single_confirm')}
+        confirmVariant="destructive"
+        onClose={closeConfirmation}
+        onConfirm={confirmDeletion}
+      />
     </>
   );
 }
 
-function buildStyles(theme, insets) {
+function buildStyles(theme) {
   const sp = theme.spacing;
   const ty = theme.typography;
   const cl = theme.colors;
@@ -499,67 +456,6 @@ function buildStyles(theme, insets) {
       justifyContent: 'center',
       backgroundColor: cl.background,
     },
-    embeddedRoot: {
-      flex: 1,
-      justifyContent: 'flex-end',
-      paddingHorizontal: theme.components?.modal?.edgePadding ?? sp.md,
-      paddingBottom: Math.max(sp.md, Number(insets?.bottom || 0) + sp.md),
-      backgroundColor: cl.overlay,
-    },
-    embeddedSheet: {
-      width: '100%',
-      maxHeight: '85%',
-      minHeight: 0,
-      flexShrink: 1,
-      overflow: 'hidden',
-      borderRadius: theme.components?.modal?.radius ?? theme.radii.xl,
-      borderWidth: theme.components?.card?.borderWidth ?? 1,
-      borderColor: cl.border,
-      backgroundColor: cl.surface,
-      ...(Platform.OS === 'ios'
-        ? (theme.shadows?.card?.ios || {})
-        : (theme.shadows?.card?.android || {})),
-    },
-    embeddedHandleHit: {
-      alignItems: 'center',
-      paddingVertical: sp.md,
-    },
-    embeddedHandle: {
-      width: theme.components?.modal?.handleWidth ?? 48,
-      height: theme.components?.modal?.handleHeight ?? 5,
-      borderRadius: theme.radii.xs,
-      backgroundColor: cl.inputBorder,
-    },
-    embeddedHeader: {
-      minHeight: theme.components?.input?.height ?? 48,
-      paddingHorizontal: sp.md,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    embeddedClose: {
-      width: theme.components?.input?.height ?? 48,
-      height: theme.components?.input?.height ?? 48,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    embeddedTitle: {
-      flex: 1,
-      textAlign: 'center',
-      color: cl.text,
-      fontSize: ty.sizes.lg,
-      fontWeight: ty.weight?.bold || '700',
-    },
-    embeddedContent: {
-      flexShrink: 1,
-      minHeight: 0,
-      paddingHorizontal: sp.lg,
-    },
-    embeddedFooter: {
-      paddingHorizontal: sp.lg,
-      paddingTop: sp.sm,
-      paddingBottom: sp.md,
-    },
     subtitle: {
       fontSize: ty.sizes.sm,
       color: cl.textSecondary,
@@ -569,29 +465,6 @@ function buildStyles(theme, insets) {
       fontSize: ty.sizes.sm,
       color: cl.warning || cl.primary,
       marginBottom: sp.sm,
-    },
-    confirmationContent: {
-      minHeight: sp.xxxl * 2,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: sp.lg,
-      paddingHorizontal: sp.lg,
-      paddingVertical: sp.xl,
-    },
-    confirmationIcon: {
-      width: sp.xxxl,
-      height: sp.xxxl,
-      borderRadius: rd.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: cl.surfaceSecondary || cl.background,
-    },
-    confirmationMessage: {
-      maxWidth: 420,
-      textAlign: 'center',
-      fontSize: ty.sizes.md,
-      lineHeight: Math.round(ty.sizes.md * 1.45),
-      color: cl.textSecondary,
     },
     footerWrap: {
       gap: sp.sm,

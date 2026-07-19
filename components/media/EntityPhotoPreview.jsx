@@ -1,7 +1,7 @@
 import React from 'react';
-import { Image as ExpoImage } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../theme';
+import CachedImage from '../ui/CachedImage';
 import { BaseModal } from '../ui/modals';
 
 export default function EntityPhotoPreview({
@@ -56,11 +56,12 @@ export default function EntityPhotoPreview({
           accessibilityHint={canOpen ? accessibilityHint : undefined}
         >
           {hasImage ? (
-            <ExpoImage
-              source={{ uri: displayUrl }}
+            <CachedImage
+              uri={displayUrl}
               style={imageStyle || styles.image}
               contentFit={contentFit}
               cachePolicy={cachePolicy}
+              transition={180}
             />
           ) : (
             <Text style={fallbackTextStyle || styles.fallbackText}>{fallback}</Text>
@@ -68,14 +69,22 @@ export default function EntityPhotoPreview({
         </Pressable>
       </View>
 
-      <BaseModal visible={visible} onClose={close} title={title} maxHeightRatio={0.9}>
+      <BaseModal
+        visible={visible}
+        onClose={close}
+        title={title}
+        maxHeightRatio={0.9}
+        presentation="sheet"
+      >
         <View style={previewWrapStyle || styles.previewWrap}>
           {fullUrl ? (
-            <ExpoImage
-              source={{ uri: fullUrl }}
+            <CachedImage
+              uri={fullUrl}
               style={previewImageStyle || styles.previewImage}
               contentFit={previewContentFit}
               cachePolicy={cachePolicy}
+              showLoadingIndicator
+              transition={180}
             />
           ) : (
             <Text style={previewEmptyStyle || styles.previewEmpty}>{emptyLabel}</Text>

@@ -25,6 +25,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { getRoleLabel } from '../../constants/roles';
 import { NO_DEPARTMENT_FILTER_ID } from '../../src/features/employees/departments';
 import { normalizeNumericInput } from '../../src/shared/input/numeric';
+import { registerBottomNavigationGuard } from '../../src/shared/navigation/bottomNavigationGuard';
 import Button from '../ui/Button';
 import TextField from '../ui/TextField';
 import { DateTimeModal } from '../ui/modals';
@@ -397,6 +398,23 @@ export default function FiltersPanel({
       });
     };
   }, [navigation, visible]);
+
+  const pendingBottomNavigationRef = useRef(null);
+  useEffect(() => {
+    if (visible) {
+      return registerBottomNavigationGuard(({ proceed }) => {
+        pendingBottomNavigationRef.current = proceed;
+        onCloseRef.current?.();
+      });
+    }
+
+    const proceed = pendingBottomNavigationRef.current;
+    pendingBottomNavigationRef.current = null;
+    if (typeof proceed === 'function') {
+      requestAnimationFrame(() => proceed());
+    }
+    return undefined;
+  }, [visible]);
 
   // Intercept hardware back button and swipe-back when panel is visible
   useEffect(() => {

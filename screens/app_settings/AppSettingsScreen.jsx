@@ -4,10 +4,12 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Linking,
   Platform,
   ScrollView,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -37,6 +39,10 @@ import { availableLocales, getLocale, setLocale, t as T } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useHelpCenter } from '../../src/features/helpCenter/HelpCenterProvider';
 import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
+import {
+  getMapAppPreferenceState,
+  setPreferredMapAppId,
+} from '../../components/ui/map';
 
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
 const TIME_PICKER_MINUTE_STEP = Number(APP_DEFAULTS?.timeStep) || 5;
@@ -112,6 +118,10 @@ const SETTINGS_SECTIONS = Object.freeze([
       { key: 'theme', type: 'select' },
       { key: 'language', type: 'select' },
     ],
+  },
+  {
+    key: 'navigation',
+    items: [{ key: 'map_app', type: 'select' }],
   },
   {
     key: 'notifications',
@@ -303,6 +313,11 @@ export default function AppSettings() {
   const toast = useToast();
   const [themeOpen, setThemeOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
+  const [mapAppOpen, setMapAppOpen] = useState(false);
+  const [mapAppsLoading, setMapAppsLoading] = useState(true);
+  const [availableMapApps, setAvailableMapApps] = useState([]);
+  const [selectedMapAppId, setSelectedMapAppId] = useState(null);
+  const mounted = useRef(false);
   const currentLocale = (() => {
     try {
       return getLocale();
@@ -313,6 +328,25 @@ export default function AppSettings() {
   const currentThemeLabel = t(`settings_theme_${mode || 'system'}`);
   const s = useMemo(() => styles(theme), [theme]);
   const futureFeature = useCallback(() => toast.info(t('feature_future')), [t, toast]);
+  const refreshMapApps = useCallback(async () => {
+    if (mounted.current) setMapAppsLoading(true);
+    try {
+      const state = await getMapAppPreferenceState();
+      if (!mounted.current) return state;
+      setAvailableMapApps(state.options);
+      setSelectedMapAppId(state.selectedId);
+      return state;
+    } catch (error) {
+      __devLog('refreshMapApps failed:', error?.message || error);
+      return null;
+    } finally {
+      if (mounted.current) setMapAppsLoading(false);
+    }
+  }, []);
+  const openMapAppSettings = useCallback(() => {
+    setMapAppOpen(true);
+    void refreshMapApps();
+  }, [refreshMapApps]);
   const [prefs, setPrefs] = useState({
     allow: true,
     new_orders: true,
@@ -327,7 +361,6 @@ export default function AppSettings() {
   const [timeValue, setTimeValue] = useState(new Date());
 
   // Prevent setState on unmounted component
-  const mounted = useRef(false);
   const reopenTimer = useRef(null);
   const quietPickerAppliedRef = useRef(false);
   const lastPrefsErrorMessageRef = useRef(null);
@@ -342,6 +375,14 @@ export default function AppSettings() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    void refreshMapApps();
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') void refreshMapApps();
+    });
+    return () => subscription.remove();
+  }, [refreshMapApps]);
 
   const {
     data: prefsData,
@@ -934,6 +975,7 @@ export default function AppSettings() {
     const resolvePressHandler = (sectionKey, itemKey) => {
       if (sectionKey === 'appearance' && itemKey === 'theme') return () => setThemeOpen(true);
       if (sectionKey === 'appearance' && itemKey === 'language') return () => setLangOpen(true);
+      if (sectionKey === 'navigation' && itemKey === 'map_app') return openMapAppSettings;
       if (sectionKey === 'notifications' && itemKey === 'events') return () => router.push('/app_settings/sections/events');
       if (sectionKey === 'help' && itemKey === 'help_center') return openHelpSettings;
       if (sectionKey === 'quiet' && itemKey === 'quiet_start') return openTimePicker('start');
@@ -964,7 +1006,7 @@ export default function AppSettings() {
         return mapped;
       }),
     }));
-  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openExternalPage, openHelpSettings, openTimePicker, router, t]);
+  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openExternalPage, openHelpSettings, openMapAppSettings, openTimePicker, router, t]);
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
   const visibleSectionBase = useMemo(() => {
@@ -997,6 +1039,17 @@ export default function AppSettings() {
           if (sec.key === 'appearance' && it.key === 'theme') {
             return { ...it, value: currentThemeLabel };
           }
+          if (sec.key === 'navigation' && it.key === 'map_app') {
+            const selected = availableMapApps.find((option) => option.id === selectedMapAppId);
+            return {
+              ...it,
+              value: mapAppsLoading && !selected
+                ? t('map_app_detecting')
+                : selected
+                  ? selected.label || t(selected.labelKey)
+                  : t('map_app_none_installed'),
+            };
+          }
           if (sec.key === 'help' && it.key === 'help_center') {
             const enabledCount = Number(helpPreferences.contextualHelpEnabled !== false) +
               Number(helpPreferences.smartTipsEnabled !== false);
@@ -1015,7 +1068,7 @@ export default function AppSettings() {
           return it;
         }),
       })),
-    [visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, helpPreferences, helpReady, t],
+    [availableMapApps, visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, helpPreferences, helpReady, mapAppsLoading, selectedMapAppId, t],
   );
 
   return (
@@ -1128,6 +1181,35 @@ export default function AppSettings() {
         }}
         onClose={() => setLangOpen(false)}
       />
+
+      <SelectModal
+        visible={mapAppOpen}
+        title={t('map_app_setting_title')}
+        items={availableMapApps.map((item) => ({
+          id: item.id,
+          label: item.label || t(item.labelKey),
+        }))}
+        searchable={false}
+        loading={mapAppsLoading}
+        selectedId={selectedMapAppId}
+        emptyComponent={(
+          <View style={s.mapAppsEmpty}>
+            <Text style={s.mapAppsEmptyText}>{t('map_app_none_installed')}</Text>
+          </View>
+        )}
+        onSelect={async (item) => {
+          const nextId = String(item?.id || '').trim();
+          if (!nextId) return;
+          const saved = await setPreferredMapAppId(nextId);
+          if (!saved) {
+            toast.error(t('errors_saveGeneric'));
+            return;
+          }
+          setSelectedMapAppId(nextId);
+          setMapAppOpen(false);
+        }}
+        onClose={() => setMapAppOpen(false)}
+      />
     </Screen>
   );
 }
@@ -1140,4 +1222,16 @@ const styles = (t) =>
     },
     sectionWrap: { marginBottom: 0 },
     loadingWrap: { paddingVertical: t.spacing.sm },
+    mapAppsEmpty: {
+      minHeight: t.components?.listItem?.height ?? 52,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: t.spacing.lg,
+      paddingHorizontal: t.spacing.md,
+    },
+    mapAppsEmptyText: {
+      color: t.colors.textSecondary,
+      fontSize: t.typography.sizes.sm,
+      textAlign: 'center',
+    },
   });

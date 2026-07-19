@@ -4,7 +4,11 @@ import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { createLogger } from '../lib/logger';
 import { formatPersonNameParts } from '../lib/personName';
 import { readCurrentPushToken } from '../lib/pushAutoSetup';
-import { clearPersistedAuthSession, supabase } from '../lib/supabase';
+import {
+  clearPersistedAuthSession,
+  readPersistedAuthSession,
+  supabase,
+} from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
 import { queryClient } from '../src/shared/query/queryClient';
 import { queryKeys } from '../src/shared/query/queryKeys';
@@ -533,17 +537,20 @@ export function SimpleAuthProvider({ children }) {
       const metadataProfileForCurrentUser = buildProfileFromUser(user, 'metadata-bootstrap');
       const networkSnapshot = getOfflineSnapshot();
       const isConfirmedOffline = networkSnapshot.isNetworkKnown && !networkSnapshot.isOnline;
+      const isPersistedSessionRecovery = event === 'PERSISTED_SESSION';
       // A same-user cache may paint immediately only for a cold session restore,
-      // and only when the device is confirmed offline. Online startup waits for
-      // the authoritative profile, preventing an old persisted snapshot from
-      // flashing even if the app was killed before the cache flush completed.
+      // when the device is confirmed offline, or when auth is being recovered
+      // from encrypted storage while the network refresh is still pending.
       const canUseColdCachedProfile =
-        event === 'INITIAL_SESSION' &&
+        (event === 'INITIAL_SESSION' || isPersistedSessionRecovery) &&
         !!cachedProfileForCurrentUser &&
-        isConfirmedOffline;
+        (isConfirmedOffline || isPersistedSessionRecovery);
+      const canUsePersistedMetadataProfile =
+        isPersistedSessionRecovery && !!metadataProfileForCurrentUser;
       const shouldBlockUi =
         !hasCurrentProfile &&
         !canUseColdCachedProfile &&
+        !canUsePersistedMetadataProfile &&
         (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || userChanged);
       const bootstrapProfile =
         shouldBlockUi
@@ -652,8 +659,40 @@ export function SimpleAuthProvider({ children }) {
       new Promise((resolve) => setTimeout(resolve, 1200)),
     ]);
 
+    const commitInitialSession = async (candidateSession, { allowSignedOut = false } = {}) => {
+      if (!mounted || initialSessionHandledRef.current) return true;
+
+      let session = candidateSession;
+      let recoveredFromStorage = false;
+      if (!session?.user?.id) {
+        try {
+          session = await readPersistedAuthSession();
+          recoveredFromStorage = !!session?.user?.id;
+        } catch (error) {
+          log.warn('persisted session read failed during startup', error);
+        }
+      }
+
+      if (!mounted || initialSessionHandledRef.current) return true;
+      if (!session?.user?.id && !allowSignedOut) return false;
+
+      initialSessionHandledRef.current = true;
+      await initialNetworkStatePromise;
+      if (!mounted) return true;
+      await handleAuthChange(
+        recoveredFromStorage ? 'PERSISTED_SESSION' : 'INITIAL_SESSION',
+        session || null,
+      );
+      return true;
+    };
+
     const loadInitialSession = async () => {
       const MAX_ATTEMPTS = 3;
+
+      // SecureStore is local and encrypted. Restore its user immediately so an
+      // expired access token cannot turn a slow refresh request into a false logout.
+      if (await commitInitialSession(null)) return;
+
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         try {
           const {
@@ -670,18 +709,14 @@ export function SimpleAuthProvider({ children }) {
               return;
             }
             if (attempt === MAX_ATTEMPTS) {
-              setSignedOutState();
+              await commitInitialSession(null, { allowSignedOut: true });
             } else {
               await new Promise((r) => setTimeout(r, 1200));
             }
             continue;
           }
 
-          if (!initialSessionHandledRef.current) {
-            initialSessionHandledRef.current = true;
-            await initialNetworkStatePromise;
-            await handleAuthChange('INITIAL_SESSION', session);
-          }
+          await commitInitialSession(session, { allowSignedOut: true });
           return;
         } catch (error) {
           log.warn(`initial session load error (attempt ${attempt}/${MAX_ATTEMPTS})`, error);
@@ -691,7 +726,7 @@ export function SimpleAuthProvider({ children }) {
             return;
           }
           if (attempt === MAX_ATTEMPTS) {
-            setSignedOutState();
+            await commitInitialSession(null, { allowSignedOut: true });
           } else {
             await new Promise((r) => setTimeout(r, 1200));
           }
@@ -702,29 +737,26 @@ export function SimpleAuthProvider({ children }) {
     loadInitialSession();
 
     const fallbackTimeout = setTimeout(() => {
-      if (mounted) {
-        setState((prev) => ({
-          ...prev,
-          // A fresh authenticated session must not reveal persisted profile data
-          // while its authoritative profile request is still in flight.
-          isInitializing: prev.isAuthenticated && !prev.profile ? prev.isInitializing : false,
-        }));
-      }
-    }, 3000);
+      // Do not route to login merely because SDK initialization/refresh is slow.
+      // Re-check encrypted storage first; only a conclusively empty snapshot may
+      // resolve to the signed-out state.
+      commitInitialSession(null, { allowSignedOut: true }).catch((error) => {
+        log.warn('initial session fallback failed', error);
+      });
+    }, 8000);
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'INITIAL_SESSION') {
         if (initialSessionHandledRef.current) return;
-        initialSessionHandledRef.current = true;
       }
       // Supabase auth callbacks must stay synchronous; deferring async work
       // avoids deadlocks with methods like auth.updateUser() in React Native.
       setTimeout(async () => {
         if (event === 'INITIAL_SESSION') {
-          await initialNetworkStatePromise;
-          if (!mounted) return;
+          await commitInitialSession(session, { allowSignedOut: true });
+          return;
         }
         handleAuthChange(event, session).catch((error) => {
           log.error('onAuthStateChange handler failed:', error);

@@ -225,6 +225,7 @@ export default function SupportRequestModal({ visible, onClose, onSubmitted, pro
         onRequestClose={handleCloseRequest}
         title={t('support_request_modal_title')}
         maxHeightRatio={0.82}
+        presentation="sheet"
         keyboardExtraPadding={theme.spacing?.md || 12}
         disableBackdropClose={confirmDiscardVisible || confirmRemovePhotoVisible}
         disablePanClose={confirmDiscardVisible || confirmRemovePhotoVisible}

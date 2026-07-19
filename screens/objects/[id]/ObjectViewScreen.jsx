@@ -12,7 +12,6 @@ import Card from '../../../components/ui/Card';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
 import IconButton from '../../../components/ui/IconButton';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
-import MapAppChooser from '../../../components/ui/MapAppChooser';
 import EntityPhotoPreview from '../../../components/media/EntityPhotoPreview';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
@@ -41,7 +40,11 @@ import { getObjectAdditionalPhones } from '../../../src/features/objects/additio
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { buildAddressForNavigator } from '../../../components/ui/map';
+import {
+  buildAddressForNavigator,
+  openAddressInPreferredMap,
+  openCoordinatesInPreferredMap,
+} from '../../../components/ui/map';
 import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
@@ -96,7 +99,6 @@ export default function ObjectViewScreen() {
   const { has } = usePermissions();
   const router = useRouter();
   const toast = useToast();
-  const mapAppChooserRef = React.useRef(null);
   const params = useLocalSearchParams();
   const id = params?.id;
   const rawReturnTo = params?.returnTo;
@@ -140,8 +142,10 @@ export default function ObjectViewScreen() {
   const [objectPhotosModal, setObjectPhotosModal] = React.useState({ visible: false, category: null });
   const [viewerVisible, setViewerVisible] = React.useState(false);
   const [viewerPhotos, setViewerPhotos] = React.useState([]);
+  const [viewerPhotoMetadata, setViewerPhotoMetadata] = React.useState([]);
   const [resolvedObjectMediaUrls, setResolvedObjectMediaUrls] = React.useState({});
   const [objectMediaThumbUrls, setObjectMediaThumbUrls] = React.useState({});
+  const [objectMediaInfoBySource, setObjectMediaInfoBySource] = React.useState({});
   const [viewerIndex, setViewerIndex] = React.useState(0);
   const [viewerCategoryLabel, setViewerCategoryLabel] = React.useState('');
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -160,13 +164,14 @@ export default function ObjectViewScreen() {
     if (!objectId) {
       setResolvedObjectMediaUrls({});
       setObjectMediaThumbUrls({});
+      setObjectMediaInfoBySource({});
       return () => {
         cancelled = true;
       };
     }
 
     const run = async () => {
-      const { displayUrls, thumbnailUrls } = await resolveObjectMediaUrls({
+      const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
         objectId,
         categories: OBJECT_MEDIA_FIELD_KEYS,
         mediaByCategory: objectMediaByCategory,
@@ -177,6 +182,9 @@ export default function ObjectViewScreen() {
       }
       if (Object.keys(thumbnailUrls).length) {
         setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbnailUrls));
+      }
+      if (Object.keys(mediaInfoBySource).length) {
+        setObjectMediaInfoBySource((prev) => ({ ...prev, ...mediaInfoBySource }));
       }
     };
 
@@ -304,6 +312,15 @@ export default function ObjectViewScreen() {
       return false;
     }
   }, [fullAddress, shortAddress, t, toast]);
+  const openNavigatorAddress = React.useCallback(() => {
+    if (!navigatorAddress) {
+      toast.warning(t('order_details_address_not_specified'));
+      return;
+    }
+    void openAddressInPreferredMap(navigatorAddress).then((result) => {
+      if (!result.opened) toast.error(t('map_app_open_error'));
+    });
+  }, [navigatorAddress, t, toast]);
 
   const getObjectFieldLabel = React.useCallback(
     (fieldKey, fallbackLabel) => {
@@ -339,9 +356,11 @@ export default function ObjectViewScreen() {
     if (!rawPhotos.length) return;
 
     let displayMap = resolvedObjectMediaUrls;
+    let mediaInfoMap = objectMediaInfoBySource;
     const hasMissingDisplay = rawPhotos.some((raw) => !getObjectMediaDisplayUrl(raw));
-    if (hasMissingDisplay && objectId && category) {
-      const { displayUrls, thumbnailUrls } = await resolveObjectMediaUrls({
+    const hasMissingInfo = rawPhotos.some((raw) => !mediaInfoMap[raw]);
+    if ((hasMissingDisplay || hasMissingInfo) && objectId && category) {
+      const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
         objectId,
         categories: [category],
         mediaByCategory: { [category]: rawPhotos },
@@ -353,6 +372,10 @@ export default function ObjectViewScreen() {
       if (Object.keys(thumbnailUrls).length) {
         setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbnailUrls));
       }
+      if (Object.keys(mediaInfoBySource).length) {
+        mediaInfoMap = { ...mediaInfoMap, ...mediaInfoBySource };
+        setObjectMediaInfoBySource((prev) => ({ ...prev, ...mediaInfoBySource }));
+      }
     }
 
     const pairs = photos
@@ -363,15 +386,17 @@ export default function ObjectViewScreen() {
           displayMap[String(raw || '').trim()] ||
             (isRenderableObjectMediaUrl(raw) ? String(raw || '').trim() : ''),
         ).trim(),
+        metadata: mediaInfoMap[String(raw || '').trim()] || null,
       }))
       .filter((item) => item.raw && item.display);
     if (!pairs.length) return;
     const nextIndex = pairs.findIndex((item) => item.originalIndex === index);
     setViewerCategoryLabel(label || '');
     setViewerPhotos(pairs.map((item) => item.display));
+    setViewerPhotoMetadata(pairs.map((item) => item.metadata));
     setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setViewerVisible(true);
-  }, [getObjectMediaDisplayUrl, objectId, resolvedObjectMediaUrls]);
+  }, [getObjectMediaDisplayUrl, objectId, objectMediaInfoBySource, resolvedObjectMediaUrls]);
 
   const closeViewer = React.useCallback(() => {
     setViewerVisible(false);
@@ -494,7 +519,9 @@ export default function ObjectViewScreen() {
                       toast.warning(t('objects_location_empty'));
                       return;
                     }
-                    mapAppChooserRef.current?.openCoordinates(mapLat, mapLng);
+                    void openCoordinatesInPreferredMap(mapLat, mapLng).then((result) => {
+                      if (!result.opened) toast.error(t('map_app_open_error'));
+                    });
                   }}
                 >
                   <Text style={[base.value, hasMapPoint ? styles.clientLink : null]}>
@@ -509,14 +536,10 @@ export default function ObjectViewScreen() {
               value={fullAddress || t('order_details_address_not_specified')}
               collapsedValue={shortAddress || fullAddress || t('order_details_address_not_specified')}
               expandedKeyValueItems={addressItems}
+              expandedActionText={navigatorAddress ? t('order_address_map') : null}
               expandedLabelBold
-              onValuePress={() => {
-                if (!navigatorAddress) {
-                  toast.warning(t('order_details_address_not_specified'));
-                  return;
-                }
-                mapAppChooserRef.current?.openAddress(navigatorAddress);
-              }}
+              onValuePress={openNavigatorAddress}
+              onCollapsedPress={openNavigatorAddress}
               onCollapsedLongPress={copyShortAddress}
               collapsedValueStyle={navigatorAddress ? styles.clientLink : null}
             />
@@ -644,11 +667,11 @@ export default function ObjectViewScreen() {
       <FullscreenImageViewer
         visible={viewerVisible}
         images={viewerPhotos}
+        imageMetadata={viewerPhotoMetadata}
         initialIndex={viewerIndex}
         onClose={closeViewer}
         categoryLabel={viewerCategoryLabel}
       />
-      <MapAppChooser ref={mapAppChooserRef} />
     </SafeAreaView>
   );
 }

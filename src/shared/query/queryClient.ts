@@ -5,7 +5,11 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { AppState } from 'react-native';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
 import { logClientError } from '../../../lib/errorLogsClient';
-import { setOfflineNetState } from '../offline/offlineStatus';
+import {
+  setNetworkQualityMonitoringActive,
+  setOfflineNetState,
+  startNetworkQualityMonitoring,
+} from '../offline/offlineStatus';
 
 const DEFAULT_REFOCUS_ENABLED = false;
 const QUERY_CACHE_MAX_ENTRIES = 350;
@@ -349,6 +353,7 @@ function stopCacheMaintenance() {
 export function configureQueryEnvironment() {
   if (listenersConfigured) return;
   listenersConfigured = true;
+  startNetworkQualityMonitoring(AppState.currentState === 'active');
 
   onlineManager.setEventListener((_setOnline) =>
     NetInfo.addEventListener((state) => {
@@ -360,6 +365,7 @@ export function configureQueryEnvironment() {
     const sub = AppState.addEventListener('change', (s) => {
       const isActive = s === 'active';
       handleFocus(isActive);
+      setNetworkQualityMonitoringActive(isActive);
       if (isActive) {
         runQueryCacheMaintenance();
         startCacheMaintenance();

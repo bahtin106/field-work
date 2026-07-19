@@ -1,6 +1,7 @@
 import {
   CLIENT_OBJECT_ADDRESS_FIELDS,
-  buildClientObjectShortAddress,
+  buildClientObjectLocationSummary,
+  getClientObjectLocationMode,
 } from './addressing';
 
 const TEXT_FIELDS = ['country', 'region', 'district', 'city', 'street', 'postal_code'];
@@ -101,11 +102,13 @@ function normalizeObjectForMatch(objectLike) {
 
 export function findExactMatchingClientObject(draftObject, clientObjects) {
   if (!draftObject || !Array.isArray(clientObjects) || clientObjects.length === 0) return null;
+  if (getClientObjectLocationMode(draftObject) !== 'address') return null;
 
   const normalizedDraft = normalizeObjectForMatch(draftObject);
 
   return (
     clientObjects.find((candidateRaw) => {
+      if (getClientObjectLocationMode(candidateRaw) !== 'address') return false;
       const normalizedCandidate = normalizeObjectForMatch(candidateRaw);
       if (normalizedDraft.name !== normalizedCandidate.name) return false;
       return (
@@ -166,6 +169,7 @@ function weightedSimilarity(draft, candidate) {
 
 export function findBestMatchingClientObject(draftObject, clientObjects) {
   if (!draftObject || !Array.isArray(clientObjects) || clientObjects.length === 0) return null;
+  if (getClientObjectLocationMode(draftObject) !== 'address') return null;
 
   const normalizedDraft = normalizeObjectForMatch(draftObject);
   if (!normalizedDraft.street || !normalizedDraft.house) return null;
@@ -173,6 +177,7 @@ export function findBestMatchingClientObject(draftObject, clientObjects) {
   let bestMatch = null;
 
   clientObjects.forEach((candidateRaw) => {
+    if (getClientObjectLocationMode(candidateRaw) !== 'address') return;
     const normalizedCandidate = normalizeObjectForMatch(candidateRaw);
     if (!normalizedCandidate.street || !normalizedCandidate.house) return;
     if (hasStrictFieldConflict(normalizedDraft, normalizedCandidate)) return;
@@ -202,7 +207,7 @@ export function findBestMatchingClientObject(draftObject, clientObjects) {
   return {
     object: bestMatch.object,
     score: bestMatch.score,
-    shortAddress: buildClientObjectShortAddress(bestMatch.object),
+    shortAddress: buildClientObjectLocationSummary(bestMatch.object, { compact: true }),
     signature: JSON.stringify({
       clientId: String(bestMatch.object?.client_id || ''),
       objectId: String(bestMatch.object?.id || ''),

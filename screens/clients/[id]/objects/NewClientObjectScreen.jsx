@@ -9,7 +9,10 @@ import AdditionalPhoneInputRow from '../../../../components/clients/AdditionalPh
 import EditScreenTemplate from '../../../../components/layout/EditScreenTemplate';
 import Card from '../../../../components/ui/Card';
 import ClearButton from '../../../../components/ui/ClearButton';
-import MapAppChooser from '../../../../components/ui/MapAppChooser';
+import {
+  openCoordinatesInPreferredMap,
+  openPreferredMap,
+} from '../../../../components/ui/map';
 import SectionHeader from '../../../../components/ui/SectionHeader';
 import TextField from '../../../../components/ui/TextField';
 import { useToast } from '../../../../components/ui/ToastProvider';
@@ -81,7 +84,6 @@ export default function NewClientObjectScreen() {
   const toast = useToast();
   const router = useRouter();
   const navigation = useNavigation();
-  const mapAppChooserRef = React.useRef(null);
   const { has } = usePermissions();
   const { id } = useLocalSearchParams();
   const clientId = Array.isArray(id) ? id[0] : id;
@@ -273,12 +275,11 @@ export default function NewClientObjectScreen() {
   }, []);
 
   const openMapForPoint = React.useCallback(async () => {
-    if (hasMapPoint) {
-      await mapAppChooserRef.current?.openCoordinates(mapLat, mapLng);
-      return;
-    }
-    await mapAppChooserRef.current?.openMap();
-  }, [hasMapPoint, mapLat, mapLng]);
+    const result = hasMapPoint
+      ? await openCoordinatesInPreferredMap(mapLat, mapLng)
+      : await openPreferredMap();
+    if (!result.opened) toast.error(t('map_app_open_error'));
+  }, [hasMapPoint, mapLat, mapLng, t, toast]);
 
   const pasteCoordinatesFromClipboard = React.useCallback(async () => {
     if (!clipboardHasCoordinates) return;
@@ -466,7 +467,6 @@ export default function NewClientObjectScreen() {
         </Card>
       ) : null}
     </EditScreenTemplate>
-    <MapAppChooser ref={mapAppChooserRef} />
     </>
   );
 }

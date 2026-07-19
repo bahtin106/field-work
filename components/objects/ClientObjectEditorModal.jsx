@@ -1,7 +1,6 @@
 import React from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Linking } from 'react-native';
 import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import Feather from '@expo/vector-icons/Feather';
 import AdditionalPhoneInputRow from '../clients/AdditionalPhoneInputRow';
@@ -9,6 +8,8 @@ import Button from '../ui/Button';
 import ClearButton from '../ui/ClearButton';
 import SectionHeader from '../ui/SectionHeader';
 import TextField from '../ui/TextField';
+import { openCoordinatesInPreferredMap, openPreferredMap } from '../ui/map';
+import { useToast } from '../ui/ToastProvider';
 import { BaseModal } from '../ui/modals';
 import ModalActionsRow from '../ui/modals/ModalActionsRow';
 import { FieldErrorText } from '../../src/shared/feedback';
@@ -116,6 +117,7 @@ export default function ClientObjectEditorModal({
   enableAdditionalPhones = false,
 }) {
   const { t } = useTranslation();
+  const toast = useToast();
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const settings = React.useMemo(
@@ -267,19 +269,11 @@ export default function ClientObjectEditorModal({
   }, [onChange]);
 
   const openMapForPoint = React.useCallback(async () => {
-    try {
-      if (hasMapPoint) {
-        const query = `${mapLat}, ${mapLng}`;
-        await Linking.openURL(`yandexnavi://map_search?text=${encodeURIComponent(query)}`);
-      } else {
-        await Linking.openURL('yandexnavi://map_search?text=');
-      }
-    } catch {
-      try {
-        await Linking.openURL('https://yandex.ru/maps/');
-      } catch {}
-    }
-  }, [hasMapPoint, mapLat, mapLng]);
+    const result = hasMapPoint
+      ? await openCoordinatesInPreferredMap(mapLat, mapLng)
+      : await openPreferredMap();
+    if (!result.opened) toast.error(t('map_app_open_error'));
+  }, [hasMapPoint, mapLat, mapLng, t, toast]);
 
   const pasteCoordinatesFromClipboard = React.useCallback(async () => {
     if (!clipboardHasCoordinates) return;
@@ -305,6 +299,7 @@ export default function ClientObjectEditorModal({
       title={title}
       footer={footer}
       maxHeightRatio={0.86}
+      presentation="sheet"
     >
       <KeyboardAwareScrollView
         style={styles.scroll}

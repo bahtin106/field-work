@@ -9,13 +9,7 @@ import { useTheme } from '../../theme';
 
 const BLURHASH_PLACEHOLDER = 'L6PZfSi_.AyE_3t7t7R**0o#DgR4';
 const MAX_IMAGE_RETRY_ATTEMPTS = 2;
-
-function appendImageRetryParam(rawUri, attempt) {
-  const source = String(rawUri || '').trim();
-  if (!attempt || !/^https?:\/\//i.test(source)) return source;
-  const joiner = source.includes('?') ? '&' : '?';
-  return `${source}${joiner}__img_retry=${attempt}`;
-}
+const IMAGE_LOAD_TIMEOUT_MS = 15_000;
 
 /**
  * @param {object} props
@@ -44,8 +38,10 @@ export default function CachedImage({
   transition = 200,
   onLoad,
   onError,
+  onProgress,
   placeholder = BLURHASH_PLACEHOLDER,
   showLoadingIndicator = false,
+  loadTimeoutMs = IMAGE_LOAD_TIMEOUT_MS,
   accessibilityLabel,
   ...rest
 }) {
@@ -55,6 +51,7 @@ export default function CachedImage({
   const [isLoading, setIsLoading] = useState(!!uri);
   const [retryAttempt, setRetryAttempt] = useState(0);
   const retryTimerRef = useRef(null);
+  const loadTimeoutRef = useRef(null);
   const loadedUriRef = useRef('');
   const fallbackUriRef = useRef(String(fallbackUri || '').trim());
 
@@ -64,6 +61,10 @@ export default function CachedImage({
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = null;
     }
     setActiveUri(uri || '');
     setHasError(false);
@@ -75,6 +76,7 @@ export default function CachedImage({
   useEffect(
     () => () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
     },
     [],
   );
@@ -85,6 +87,10 @@ export default function CachedImage({
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = null;
     }
     setActiveUri(fallback);
     setHasError(false);
@@ -103,6 +109,10 @@ export default function CachedImage({
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
     }
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = null;
+    }
     setActiveUri(fallback);
     setHasError(false);
     setIsLoading(true);
@@ -114,6 +124,10 @@ export default function CachedImage({
     (e) => {
       const fallback = String(fallbackUri || '').trim();
       if (fallback && fallback !== activeUri) {
+        if (loadTimeoutRef.current) {
+          clearTimeout(loadTimeoutRef.current);
+          loadTimeoutRef.current = null;
+        }
         if (retryTimerRef.current) {
           clearTimeout(retryTimerRef.current);
           retryTimerRef.current = null;
@@ -126,6 +140,10 @@ export default function CachedImage({
         return;
       }
       if (/^https?:\/\//i.test(String(activeUri || '')) && retryAttempt < MAX_IMAGE_RETRY_ATTEMPTS) {
+        if (loadTimeoutRef.current) {
+          clearTimeout(loadTimeoutRef.current);
+          loadTimeoutRef.current = null;
+        }
         if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
         const nextAttempt = retryAttempt + 1;
         retryTimerRef.current = setTimeout(() => {
@@ -136,6 +154,11 @@ export default function CachedImage({
         }, 350 * nextAttempt);
         return;
       }
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = null;
+      }
+      setIsLoading(false);
       setHasError(true);
       onError?.(e);
     },
@@ -144,6 +167,10 @@ export default function CachedImage({
 
   const handleLoad = useCallback(
     (e) => {
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = null;
+      }
       loadedUriRef.current = activeUri || uri || '';
       setHasError(false);
       setIsLoading(false);
@@ -157,6 +184,44 @@ export default function CachedImage({
     setIsLoading(false);
   }, []);
 
+  const sourceUri = activeUri || uri || '';
+
+  const restartLoadTimeout = useCallback(() => {
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = null;
+    }
+    if (
+      !sourceUri ||
+      hasError ||
+      loadedUriRef.current === sourceUri ||
+      !Number.isFinite(loadTimeoutMs) ||
+      loadTimeoutMs <= 0
+    ) return;
+    loadTimeoutRef.current = setTimeout(() => {
+      loadTimeoutRef.current = null;
+      handleError(new Error('Image load timed out'));
+    }, loadTimeoutMs);
+  }, [handleError, hasError, loadTimeoutMs, sourceUri]);
+
+  const handleProgress = useCallback(
+    (event) => {
+      restartLoadTimeout();
+      onProgress?.(event);
+    },
+    [onProgress, restartLoadTimeout],
+  );
+
+  useEffect(() => {
+    restartLoadTimeout();
+    return () => {
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = null;
+      }
+    };
+  }, [restartLoadTimeout, retryAttempt]);
+
   const sizeStyle = useMemo(
     () => ({
       ...(width != null ? { width } : {}),
@@ -164,9 +229,6 @@ export default function CachedImage({
     }),
     [width, height],
   );
-
-  const sourceUri = activeUri || uri || '';
-  const imageUri = appendImageRetryParam(sourceUri, retryAttempt);
 
   if (!sourceUri || hasError) {
     return (
@@ -186,11 +248,12 @@ export default function CachedImage({
   return (
     <View style={[sizeStyle, style, styles.imageFrame]}>
       <Image
-        source={{ uri: imageUri }}
+        key={`${sourceUri}:${retryAttempt}`}
+        source={{ uri: sourceUri }}
         style={StyleSheet.absoluteFill}
         contentFit={contentFit}
         cachePolicy={retryAttempt > 0 ? 'none' : cachePolicy}
-        recyclingKey={recyclingKey != null ? `${String(recyclingKey)}:${retryAttempt}` : imageUri}
+        recyclingKey={recyclingKey != null ? `${String(recyclingKey)}:${retryAttempt}` : `${sourceUri}:${retryAttempt}`}
         transition={transition}
         placeholder={placeholder ? { blurhash: placeholder } : undefined}
         placeholderContentFit={contentFit}
@@ -198,6 +261,7 @@ export default function CachedImage({
         onLoad={handleLoad}
         onLoadEnd={handleLoadEnd}
         onError={handleError}
+        onProgress={handleProgress}
         accessibilityLabel={accessibilityLabel}
         {...rest}
       />

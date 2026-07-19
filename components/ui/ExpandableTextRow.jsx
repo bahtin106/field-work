@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   FadeIn,
@@ -39,6 +39,10 @@ function ExpandableTextRowComponent({
     [collapsedValue, normalizedValue],
   );
   const [expanded, setExpanded] = useState(Boolean(initiallyExpanded));
+  const [textOverflows, setTextOverflows] = useState(false);
+  const measurementValue = normalizedValue || normalizedCollapsedValue;
+  const hasControlledExpansion = typeof onChevronPress === 'function';
+  const canExpand = hasControlledExpansion || textOverflows;
   const panelToggleMs =
     theme._raw?.timings?.panelToggleMs ?? theme.timings?.panelToggleMs ?? theme.components?.listItem?.height;
   const chevronHitSlop = useMemo(
@@ -56,13 +60,18 @@ function ExpandableTextRowComponent({
     [expandedActionText],
   );
   const hasExpandedItems = Array.isArray(expandedKeyValueItems) && expandedKeyValueItems.length > 0;
-  const showExpandedAction = expanded && !!normalizedExpandedActionText && typeof onValuePress === 'function';
-  const showCollapsedValue = !expanded;
-  if (!forceShow && !normalizedValue && !hasExpandedItems) return null;
+  const showExpandedAction = canExpand && expanded && !!normalizedExpandedActionText && typeof onValuePress === 'function';
+  const showCollapsedValue = !canExpand || !expanded;
 
+  const handleMeasurementTextLayout = useCallback((event) => {
+    const nextOverflows = (event?.nativeEvent?.lines?.length ?? 0) > 1;
+    setTextOverflows((current) => (current === nextOverflows ? current : nextOverflows));
+    if (!nextOverflows) setExpanded(false);
+  }, []);
+  if (!forceShow && !normalizedValue && !hasExpandedItems) return null;
   const toggleExpanded = () => {
-    const next = !expanded;
-    setExpanded(next);
+    if (!canExpand) return;
+    setExpanded((current) => !current);
   };
   const handleRowPress = () => {
     if (toggleOnChevronOnly) {
@@ -76,14 +85,20 @@ function ExpandableTextRowComponent({
     toggleExpanded();
   };
 
+  const rowOnPress = rowPressDisabled || (toggleOnChevronOnly && expanded) || (
+    typeof onValuePress !== 'function' && (toggleOnChevronOnly || !canExpand)
+  )
+    ? undefined
+    : handleRowPress;
+
   return (
     <View>
       <Pressable
         style={base.row}
-        onPress={rowPressDisabled ? undefined : toggleOnChevronOnly && expanded ? undefined : handleRowPress}
+        onPress={rowOnPress}
         hitSlop={theme.components?.interactive?.hitSlop}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
+        accessibilityRole={rowOnPress ? 'button' : undefined}
+        accessibilityState={canExpand ? { expanded } : undefined}
       >
         <Text style={[base.label, expanded && expandedLabelBold ? styles.expandedLabel : null]}>
           {label}
@@ -133,27 +148,40 @@ function ExpandableTextRowComponent({
               </Pressable>
             </View>
           ) : null}
-          <Pressable
-            onPress={() => {
-              if (typeof onChevronPress === 'function') return onChevronPress();
-              return toggleExpanded();
-            }}
-            hitSlop={chevronHitSlop}
-            style={styles.chevronPressable}
-            accessibilityRole="button"
-            accessibilityState={{ expanded }}
-          >
-            <AnimatedChevron
-              expanded={expanded}
-              iconName={chevronName}
-              duration={panelToggleMs}
-              style={styles.chevronWrap}
-            />
-          </Pressable>
+          {!hasControlledExpansion && measurementValue ? (
+            <Text
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              style={[base.value, styles.measurementText, collapsedValueStyle]}
+              onTextLayout={handleMeasurementTextLayout}
+            >
+              {measurementValue}
+            </Text>
+          ) : null}
+          {canExpand ? (
+            <Pressable
+              onPress={() => {
+                if (typeof onChevronPress === 'function') return onChevronPress();
+                return toggleExpanded();
+              }}
+              hitSlop={chevronHitSlop}
+              style={styles.chevronPressable}
+              accessibilityRole="button"
+              accessibilityState={{ expanded }}
+            >
+              <AnimatedChevron
+                expanded={expanded}
+                iconName={chevronName}
+                duration={panelToggleMs}
+                style={styles.chevronWrap}
+              />
+            </Pressable>
+          ) : null}
         </View>
       </Pressable>
 
-      {expanded ? (
+      {canExpand && expanded ? (
         <Animated.View
           entering={FadeIn.duration(panelToggleMs)}
           exiting={FadeOut.duration(panelToggleMs)}
@@ -186,9 +214,11 @@ function createStyles(theme) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
+      flex: 1,
       flexShrink: 1,
       minWidth: 0,
       paddingRight: theme.spacing.xs,
+      position: 'relative',
     },
     valueWrap: {
       flexShrink: 1,
@@ -205,6 +235,13 @@ function createStyles(theme) {
       minWidth: 0,
       alignSelf: 'center',
     },
+    measurementText: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      opacity: 0,
+      textAlign: 'right',
+    },
     chevronWrap: {
       marginLeft: theme.components?.listItem?.chevronGap ?? theme.spacing.sm,
       alignSelf: 'center',
@@ -220,7 +257,7 @@ function createStyles(theme) {
       marginRight: -theme.spacing.xs,
     },
     expandedWrap: {
-      paddingLeft: theme.spacing.xs,
+      paddingLeft: theme.spacing.md,
       paddingRight: theme.spacing.xs,
       paddingBottom: theme.spacing.xs,
     },

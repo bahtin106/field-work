@@ -1,7 +1,7 @@
 import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import {
-  buildClientObjectAddressSummary,
+  buildClientObjectLocationSummary,
   normalizeClientObject,
   sanitizeClientObjectPayload,
 } from './addressing';
@@ -278,7 +278,7 @@ export async function getClientObjectById(objectId: string) {
     return {
       ...normalized,
       client: null,
-      summary: normalized.summary || buildClientObjectAddressSummary(normalized) || null,
+      summary: normalized.summary || buildClientObjectLocationSummary(normalized) || null,
     };
   }).finally(() => {
     objectByIdInFlight.delete(key);
