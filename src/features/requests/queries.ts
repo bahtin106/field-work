@@ -13,6 +13,7 @@ import {
 import {
   getAssigneeDisplayNameById,
   getRequestById,
+  isRequestAuthorizationError,
   listCalendarRequests,
   listRequestExecutors,
   listRequestFilterOptions,
@@ -23,6 +24,10 @@ import { seedExecutorNames } from './executorNameCache';
 
 const PAGE_SIZE = 30;
 const REQUEST_MEDIA_FIELD_KEYS = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
+
+function shouldRetryRequestQuery(count: number, error: any) {
+  return !isOfflineLikeError(error) && !isRequestAuthorizationError(error) && count < 1;
+}
 
 export function isRequestDetailLoaded(row: any) {
   return row?.__detailLoaded === true;
@@ -100,7 +105,7 @@ function useRequestInfiniteQuery(queryKey: any, params: any, options: any = {}) 
       return allPages.length + 1;
     },
     staleTime: 20 * 1000,
-    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
+    retry: shouldRetryRequestQuery,
     ...options,
   });
 
@@ -118,15 +123,18 @@ function invalidateClientDeleteBlockersNamespace(queryClient: any) {
 
 const requestRealtimeSubscriptions = new Map<string, any>();
 
-function acquireRequestRealtimeSubscription(queryClient: any, companyId: any) {
+function acquireRequestRealtimeSubscription(queryClient: any, companyId: any, onRequestsChanged?: any) {
   const scope = String(companyId || 'global');
   const existing = requestRealtimeSubscriptions.get(scope);
   if (existing) {
     existing.refs += 1;
-    return () => releaseRequestRealtimeSubscription(scope);
+    if (typeof onRequestsChanged === 'function') existing.listeners.add(onRequestsChanged);
+    return () => releaseRequestRealtimeSubscription(scope, onRequestsChanged);
   }
 
   const changedIds = new Set<string>();
+  const listeners = new Set<any>();
+  if (typeof onRequestsChanged === 'function') listeners.add(onRequestsChanged);
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   const flushInvalidations = () => {
     flushTimer = null;
@@ -139,6 +147,11 @@ function acquireRequestRealtimeSubscription(queryClient: any, companyId: any) {
     queryClient.invalidateQueries({ queryKey: ['requests', 'my'] });
     queryClient.invalidateQueries({ queryKey: ['requests', 'calendar'] });
     invalidateClientDeleteBlockersNamespace(queryClient);
+    listeners.forEach((listener) => {
+      try {
+        listener(ids);
+      } catch {}
+    });
   };
   const filter = companyId ? `company_id=eq.${companyId}` : undefined;
   const channel = supabase
@@ -156,16 +169,18 @@ function acquireRequestRealtimeSubscription(queryClient: any, companyId: any) {
   requestRealtimeSubscriptions.set(scope, {
     refs: 1,
     channel,
+    listeners,
     cancel: () => {
       if (flushTimer != null) clearTimeout(flushTimer);
     },
   });
-  return () => releaseRequestRealtimeSubscription(scope);
+  return () => releaseRequestRealtimeSubscription(scope, onRequestsChanged);
 }
 
-function releaseRequestRealtimeSubscription(scope: string) {
+function releaseRequestRealtimeSubscription(scope: string, onRequestsChanged?: any) {
   const entry = requestRealtimeSubscriptions.get(scope);
   if (!entry) return;
+  if (typeof onRequestsChanged === 'function') entry.listeners?.delete(onRequestsChanged);
   entry.refs -= 1;
   if (entry.refs > 0) return;
   requestRealtimeSubscriptions.delete(scope);
@@ -412,8 +427,11 @@ export function useRequest(id: any, options: any = {}) {
     },
     enabled: !!id,
     staleTime: 45 * 1000,
-    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
+    retry: shouldRetryRequestQuery,
     ...options,
+    // Detail queries are identity-bound. Reusing the previous key's row can
+    // briefly present one request under another request's route.
+    placeholderData: () => undefined,
   });
 }
 
@@ -461,13 +479,17 @@ export function useCalendarRequests({
   });
 }
 
-export function useRequestRealtimeSync({ enabled = true, companyId = null }: any = {}) {
+export function useRequestRealtimeSync({
+  enabled = true,
+  companyId = null,
+  onRequestsChanged,
+}: any = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!enabled) return undefined;
-    return acquireRequestRealtimeSubscription(queryClient, companyId);
-  }, [companyId, enabled, queryClient]);
+    return acquireRequestRealtimeSubscription(queryClient, companyId, onRequestsChanged);
+  }, [companyId, enabled, onRequestsChanged, queryClient]);
 }
 
 export function useUpdateRequestMutation() {

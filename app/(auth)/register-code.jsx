@@ -6,7 +6,10 @@ import { Keyboard, Pressable, StyleSheet, Text, TextInput, View } from 'react-na
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Button from '../../components/ui/Button';
-import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
+import {
+  persistPublicAuthRoute,
+  resetPublicAuthRoute,
+} from '../../lib/authFlowNavigationState';
 import { FUNCTIONS } from '../../lib/constants';
 import { logClientError } from '../../lib/errorLogsClient';
 import {
@@ -144,6 +147,10 @@ export default function RegisterCodeScreen() {
 
   const inputRefs = useRef([]);
   const submittedCodeRef = useRef('');
+
+  useEffect(() => {
+    void persistPublicAuthRoute({ pathname: '/(auth)/register-code' });
+  }, []);
 
   const styles = useMemo(
     () =>

@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatPersonName } from '../../lib/personName';
+import TagList from '../tags/TagList';
 import { useTheme } from '../../theme/ThemeProvider';
 import {
   buildOrderAddressShort,
@@ -30,6 +31,7 @@ function ObjectCard({ item, onPress, canViewClients = false, objectFieldsByKey }
         title: { fontSize: ty.sizes.md, fontWeight: ty.weight.semibold, color: c.text },
         owner: { fontSize: ty.sizes.sm, fontWeight: ty.weight.regular, color: c.text, marginTop: 2 },
         subtitle: { fontSize: ty.sizes.sm, color: c.textSecondary, marginTop: 2 },
+        tags: { marginTop: sz.sm },
       }),
     [theme, c.text, c.textSecondary, sz, ty],
   );
@@ -67,6 +69,7 @@ function ObjectCard({ item, onPress, canViewClients = false, objectFieldsByKey }
           ) : null}
         </View>
       </View>
+      <TagList tags={item?.tags} compact style={styles.tags} />
     </Pressable>
   );
 }

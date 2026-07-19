@@ -15,9 +15,12 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
+import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
+import { useFilters } from '../../components/hooks/useFilters';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
+import TagList from '../../components/tags/TagList';
 import Card from '../../components/ui/Card';
 import EmptyListState from '../../components/ui/EmptyListState';
 import {
@@ -29,15 +32,39 @@ import { usePermissions } from '../../lib/permissions';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { ensureClientPrefetch, useClients, useClientsRealtimeSync } from '../../src/features/clients/queries';
 import { collectClientPhoneSearchValues } from '../../src/features/clients/additionalPhones';
+import { useCompanyTags } from '../../src/features/tags/queries';
 import { hasDisplayValue } from '../../src/shared/display/value';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { CLIENT_SORT, clientSortOptions, sortClients } from '../../src/shared/sorting/clientSort';
+import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
+import {
+  buildTagFacetCounts,
+  buildTagFilterOptions,
+  matchesSelectedTags,
+} from '../../src/features/tags/filtering';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
 const SAFE_AREA_EDGES = ['left', 'right'];
+const CLIENT_FILTER_DEFAULTS = Object.freeze({
+  clientTags: [],
+  objectTags: [],
+});
+
+function applyClientFilters(items, values) {
+  const clientTags = Array.isArray(values?.clientTags) ? values.clientTags : [];
+  const objectTags = Array.isArray(values?.objectTags) ? values.objectTags : [];
+
+  return (Array.isArray(items) ? items : []).filter((client) => {
+    if (!matchesSelectedTags(client?.tags, clientTags)) return false;
+    const relatedObjectTags = (Array.isArray(client?.objects) ? client.objects : []).flatMap((object) =>
+      Array.isArray(object?.tags) ? object.tags : [],
+    );
+    return matchesSelectedTags(relatedObjectTags, objectTags);
+  });
+}
 
 export default function ClientsIndexScreen() {
   const router = useRouter();
@@ -56,6 +83,7 @@ export default function ClientsIndexScreen() {
   const [debouncedSearch, setDebouncedSearch] = React.useState('');
   const [sortVisible, setSortVisible] = React.useState(false);
   const [sortKey, setSortKey] = React.useState(CLIENT_SORT.NAME_ASC);
+  const filters = useFilters({ screenKey: 'clients', defaults: CLIENT_FILTER_DEFAULTS });
   const selectedTag = React.useMemo(() => {
     const raw = Array.isArray(params?.tag) ? params.tag[0] : params?.tag;
     return String(raw || '').trim();
@@ -81,6 +109,54 @@ export default function ClientsIndexScreen() {
 
   useClientsRealtimeSync({ enabled: !!companyId && canViewClients, companyId });
 
+  const { data: companyClientTags = [] } = useCompanyTags({
+    companyId,
+    tagType: 'client',
+    enabled: !!companyId && canViewClients,
+  });
+  const { data: companyObjectTags = [] } = useCompanyTags({
+    companyId,
+    tagType: 'object',
+    enabled: !!companyId && canViewClients,
+  });
+
+  const clientTagOptions = React.useMemo(
+    () =>
+      buildTagFilterOptions(
+        [companyClientTags, ...allClients.map((client) => client?.tags)],
+        filters.values.clientTags,
+      ),
+    [allClients, companyClientTags, filters.values.clientTags],
+  );
+  const objectTagOptions = React.useMemo(
+    () =>
+      buildTagFilterOptions(
+        [
+          companyObjectTags,
+          ...allClients.flatMap((client) =>
+            (Array.isArray(client?.objects) ? client.objects : []).map((object) => object?.tags || []),
+          ),
+        ],
+        filters.values.objectTags,
+      ),
+    [allClients, companyObjectTags, filters.values.objectTags],
+  );
+  const clientTagFacetCounts = React.useMemo(
+    () => buildTagFacetCounts(allClients, (client) => client?.tags),
+    [allClients],
+  );
+  const objectTagFacetCounts = React.useMemo(
+    () =>
+      buildTagFacetCounts(allClients, (client) =>
+        (Array.isArray(client?.objects) ? client.objects : []).flatMap((object) => object?.tags || []),
+      ),
+    [allClients],
+  );
+  const clientsFilteredByPanel = React.useMemo(
+    () => applyClientFilters(allClients, filters.values),
+    [allClients, filters.values],
+  );
+
   React.useEffect(() => {
     const delayMs = Number(theme?.timings?.backDelayMs ?? 300);
     const timer = setTimeout(() => {
@@ -95,7 +171,7 @@ export default function ClientsIndexScreen() {
   }, [selectedTag]);
 
   const filteredClients = React.useMemo(() => {
-    return allClients.filter((client) => {
+    return clientsFilteredByPanel.filter((client) => {
       const tagMatch =
         !activeTagFilter ||
         (Array.isArray(client?.tags) &&
@@ -117,7 +193,23 @@ export default function ClientsIndexScreen() {
         debouncedSearch,
       );
     });
-  }, [activeTagFilter, allClients, canViewClientPhones, debouncedSearch]);
+  }, [activeTagFilter, canViewClientPhones, clientsFilteredByPanel, debouncedSearch]);
+
+  const filterSummaryData = React.useMemo(() => {
+    const fullParts = [];
+    const compactParts = [];
+    const addPart = (label, values) => {
+      if (!Array.isArray(values) || values.length === 0) return;
+      fullParts.push(summarizeFilterPart({ label, values, countWhenMany: false }));
+      compactParts.push(summarizeFilterPart({ label, values, countWhenMany: true }));
+    };
+    addPart(t('tags_clients_label'), filters.values.clientTags);
+    addPart(t('tags_objects_label'), filters.values.objectTags);
+    return {
+      full: joinFilterSummary(fullParts, t('common_bullet')),
+      compact: joinFilterSummary(compactParts, t('common_bullet')),
+    };
+  }, [filters.values.clientTags, filters.values.objectTags, t]);
 
   const sortOptions = React.useMemo(() => clientSortOptions(t), [t]);
 
@@ -206,7 +298,14 @@ export default function ClientsIndexScreen() {
           onChangeText={setSearch}
           onClear={() => setSearch('')}
           placeholder={t('clients_search_placeholder')}
+          onOpenFilters={filters.open}
           onOpenSort={() => setSortVisible(true)}
+          filterSummary={filterSummaryData.full}
+          filterSummaryCompact={filterSummaryData.compact}
+          onResetFilters={async () => {
+            const reset = filters.reset();
+            await filters.apply(reset);
+          }}
           metaText={`${t('common_total')}: ${clients.length}`}
         />
 
@@ -257,6 +356,7 @@ export default function ClientsIndexScreen() {
                           {objectMeta}
                         </Text>
                       ) : null}
+                      <TagList tags={item?.tags} compact />
                     </View>
                   </Card>
                 </Pressable>
@@ -266,6 +366,28 @@ export default function ClientsIndexScreen() {
           />
         </View>
       </DismissKeyboardArea>
+
+      <FiltersPanel
+        visible={filters.visible}
+        onClose={filters.close}
+        mode="clients"
+        showSearchCategory={false}
+        inlineOptionSearch={{ categoryKeys: ['clients_clientTags', 'clients_objectTags'] }}
+        clientFilters={{
+          clientTags: clientTagOptions,
+          objectTags: objectTagOptions,
+          facetCounts: {
+            total: allClients.length,
+            clientTags: clientTagFacetCounts,
+            objectTags: objectTagFacetCounts,
+          },
+        }}
+        values={filters.values}
+        defaults={CLIENT_FILTER_DEFAULTS}
+        setValue={filters.setValue}
+        onApply={(nextValues) => filters.apply(nextValues)}
+        onReset={() => filters.reset()}
+      />
 
       <SortSelectModal
         visible={sortVisible}

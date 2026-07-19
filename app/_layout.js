@@ -27,6 +27,7 @@ import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
 import {
   getLastPublicAuthRoute,
+  hydratePublicAuthRoute,
   rememberPublicAuthRoute,
   resetPublicAuthRoute,
 } from '../lib/authFlowNavigationState';
@@ -60,6 +61,10 @@ import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 import { KeyboardProvider } from '../lib/keyboardControllerCompat';
 import { HelpCenterProvider } from '../src/features/helpCenter/HelpCenterProvider';
+
+export const unstable_settings = {
+  initialRouteName: 'index',
+};
 
 function getNotificationRecipientUserId(notification) {
   return String(notification?.request?.content?.data?.recipient_user_id || '').trim();
@@ -207,6 +212,7 @@ function RootLayoutInner() {
   globalThis.__activeNotificationUserId = isAuthenticated ? String(user?.id || '') : '';
   const [initialNotificationCheckPending, setInitialNotificationCheckPending] = useState(Platform.OS !== 'web');
   const [pendingNotificationLaunch, setPendingNotificationLaunch] = useState(false);
+  const [publicAuthRouteHydrated, setPublicAuthRouteHydrated] = useState(false);
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
   const normalizedPathname = String(pathname || '').trim().replace(/\/+$/, '') || '/';
@@ -226,6 +232,16 @@ function RootLayoutInner() {
     const target = String(targetPath || '').trim().replace(/\/+$/, '') || '/';
     return current === target;
   }, [pathname]);
+
+  useEffect(() => {
+    let mounted = true;
+    hydratePublicAuthRoute().finally(() => {
+      if (mounted) setPublicAuthRouteHydrated(true);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const isAuthenticatedUserCurrent = useCallback((expectedUserId) => {
     const snapshot = authSnapshotRef.current;
@@ -313,6 +329,7 @@ function RootLayoutInner() {
   }, [inAuthFlow, theme]);
 
   useEffect(() => {
+    if (!publicAuthRouteHydrated) return;
     if (isAuthenticated) {
       resetPublicAuthRoute();
       return;
@@ -320,7 +337,7 @@ function RootLayoutInner() {
     if (inAuthFlow && !isBlockedScreen) {
       rememberPublicAuthRoute({ pathname, segments });
     }
-  }, [inAuthFlow, isAuthenticated, isBlockedScreen, pathname, segments]);
+  }, [inAuthFlow, isAuthenticated, isBlockedScreen, pathname, publicAuthRouteHydrated, segments]);
 
   useEffect(() => {
     if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return undefined;
@@ -340,6 +357,7 @@ function RootLayoutInner() {
 
   const shouldHoldNativeSplash =
     isInitializing ||
+    !publicAuthRouteHydrated ||
     initialNotificationCheckPending ||
     (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen);
 
@@ -358,7 +376,7 @@ function RootLayoutInner() {
   }, [isAuthenticated, isInitializing, pendingNotificationLaunch]);
 
   useEffect(() => {
-    if (isInitializing) return;
+    if (isInitializing || !publicAuthRouteHydrated) return;
     if (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen) return;
     if (isAuthenticated && returnToHomeAfterLogoutRef.current && !isBlockedScreen) {
       if (isSamePath('/orders')) {
@@ -366,13 +384,17 @@ function RootLayoutInner() {
       } else {
         router.replace('/orders');
       }
-    } else if (!isAuthenticated && !inAuthFlow) {
+    } else if (!isAuthenticated) {
       const target = getLastPublicAuthRoute('/(auth)/login');
-      if (!isSamePath(target)) router.replace(target);
+      const isLoginScreen =
+        normalizedPathname === '/login' || normalizedPathname === '/(auth)/login';
+      if ((!inAuthFlow || (isLoginScreen && target !== '/(auth)/login')) && !isSamePath(target)) {
+        router.replace(target);
+      }
     } else if (isAuthenticated && inAuthFlow && !isBlockedScreen && !isSamePath('/orders')) {
       router.replace('/orders');
     }
-  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, pendingNotificationLaunch, router]);
+  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, normalizedPathname, pendingNotificationLaunch, publicAuthRouteHydrated, router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
@@ -1129,7 +1151,7 @@ function RootLayoutInner() {
   ]);
 
   if (
-    (isInitializing && !isSigningOut) ||
+    ((isInitializing || !publicAuthRouteHydrated) && !isSigningOut) ||
     initialNotificationCheckPending ||
     (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen)
   ) {
@@ -1163,7 +1185,7 @@ function RootLayoutInner() {
             {isAuthenticated && !isBlockedScreen ? <OfflineStatusBanner /> : null}
             <View style={{ flex: 1, minHeight: 0 }}>
               <Stack
-                initialRouteName="(auth)"
+                initialRouteName="index"
                 screenOptions={{
                   headerShown: false,
                   animation: 'none',
@@ -1174,6 +1196,7 @@ function RootLayoutInner() {
                   contentStyle: { backgroundColor: theme.colors.background },
                 }}
               >
+                <Stack.Screen name="index" />
                 <Stack.Screen name="(auth)" />
                 <Stack.Screen name="orders" />
                   <Stack.Screen

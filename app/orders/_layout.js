@@ -2,6 +2,10 @@
 import { Stack } from 'expo-router';
 import { useTheme } from '../../theme/ThemeProvider';
 
+export const unstable_settings = {
+  initialRouteName: 'index',
+};
+
 export default function OrdersLayout() {
   const { theme } = useTheme();
 

@@ -36,6 +36,9 @@ export default function DateTimeModal({
 
   const parseInitial = (v) => {
     try {
+      if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) {
+        return new Date();
+      }
       if (v instanceof Date && !isNaN(v)) {
         return new Date(
           v.getFullYear(),

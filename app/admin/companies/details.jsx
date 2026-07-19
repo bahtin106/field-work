@@ -754,14 +754,9 @@ export default function AdminCompanyDetailsScreen() {
         <TextField
           label={t('admin_company_add_days')}
           value={daysInput}
-          onChangeText={(v) => {
-            const raw = String(v || '').replace(/[^\d-]/g, '');
-            const normalized = raw.startsWith('-')
-              ? `-${raw.slice(1).replace(/-/g, '')}`
-              : raw.replace(/-/g, '');
-            setDaysDelta(normalized === '-' ? 0 : normalized || 0);
-          }}
+          onChangeText={setDaysInput}
           keyboardType="numbers-and-punctuation"
+          numericInput={{ allowDecimal: false, allowNegative: true }}
           placeholder={t('admin_company_add_days_placeholder')}
         />
         <View style={styles(theme).quickActions}>
@@ -843,6 +838,7 @@ export default function AdminCompanyDetailsScreen() {
                 setPaidSeatsInput(raw || '1');
               }}
               keyboardType="numeric"
+              numericInput={{ allowDecimal: false, allowNegative: false }}
             />
           </View>
           <Pressable

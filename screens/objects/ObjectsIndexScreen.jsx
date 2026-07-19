@@ -44,11 +44,18 @@ import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { OBJECT_SORT, objectSortOptions, sortObjects } from '../../src/shared/sorting/objectSort';
+import {
+  buildTagFacetCounts,
+  buildTagFilterOptions,
+  matchesSelectedTags,
+} from '../../src/features/tags/filtering';
+import { useCompanyTags } from '../../src/features/tags/queries';
 
 const OBJECT_FILTER_DEFAULTS = {
   cities: [],
   streets: [],
   clientIds: [],
+  objectTags: [],
 };
 
 function applyObjectFilters(items, values) {
@@ -56,6 +63,7 @@ function applyObjectFilters(items, values) {
   const selectedCities = Array.isArray(values?.cities) ? values.cities.map(String) : [];
   const selectedStreets = Array.isArray(values?.streets) ? values.streets.map(String) : [];
   const selectedClientIds = Array.isArray(values?.clientIds) ? values.clientIds.map(String) : [];
+  const selectedObjectTags = Array.isArray(values?.objectTags) ? values.objectTags.map(String) : [];
 
   return list.filter((item) => {
     if (selectedCities.length > 0) {
@@ -70,29 +78,9 @@ function applyObjectFilters(items, values) {
       const clientId = String(item?.client_id || '');
       if (!clientId || !selectedClientIds.includes(clientId)) return false;
     }
+    if (!matchesSelectedTags(item?.tags, selectedObjectTags)) return false;
     return true;
   });
-}
-function isObjectsFilterApplied(values, defaults) {
-  const normalize = (arr) =>
-    Array.isArray(arr) ? arr.map((v) => String(v)).filter(Boolean).sort() : [];
-  const eq = (a, b) => {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i += 1) {
-      if (a[i] !== b[i]) return false;
-    }
-    return true;
-  };
-
-  const cities = normalize(values?.cities);
-  const streets = normalize(values?.streets);
-  const clients = normalize(values?.clientIds);
-
-  const defaultCities = normalize(defaults?.cities);
-  const defaultStreets = normalize(defaults?.streets);
-  const defaultClients = normalize(defaults?.clientIds);
-
-  return !eq(cities, defaultCities) || !eq(streets, defaultStreets) || !eq(clients, defaultClients);
 }
 export default function ObjectsIndex() {
   const { theme } = useTheme();
@@ -147,6 +135,11 @@ export default function ObjectsIndex() {
     companyId,
     { enabled: !!companyId && has('canViewObjects'), keepPreviousData: true, staleTime: 30 * 1000 },
   );
+  const { data: companyObjectTags = [] } = useCompanyTags({
+    companyId,
+    tagType: 'object',
+    enabled: !!companyId && has('canViewObjects'),
+  });
 
   const { data: clients = [] } = useClients(
     { companyId, search: '' },
@@ -230,28 +223,23 @@ export default function ObjectsIndex() {
         .sort((a, b) => a.label.localeCompare(b.label, 'ru', { sensitivity: 'base' })),
     [clients],
   );
+  const objectTagOptions = useMemo(
+    () =>
+      buildTagFilterOptions(
+        [companyObjectTags, ...enrichedObjects.map((item) => item?.tags)],
+        filters.values.objectTags,
+      ),
+    [companyObjectTags, enrichedObjects, filters.values.objectTags],
+  );
+  const objectTagFacetCounts = useMemo(
+    () => buildTagFacetCounts(enrichedObjects, (item) => item?.tags),
+    [enrichedObjects],
+  );
 
   const filteredByPanel = useMemo(() => {
     return applyObjectFilters(enrichedObjects, filters.values);
   }, [enrichedObjects, filters.values]);
 
-  const previewCountResolver = useCallback(
-    (draftValues) => applyObjectFilters(enrichedObjects, draftValues).length,
-    [enrichedObjects],
-  );
-  const previewStatusResolver = useCallback(
-    ({ draft, defaults, count }) => {
-      const applied = isObjectsFilterApplied(draft, defaults);
-      if (!applied) {
-        return { visible: false };
-      }
-      return {
-        visible: true,
-        color: Number(count || 0) > 0 ? theme.colors.success : theme.colors.danger,
-      };
-    },
-    [theme.colors.danger, theme.colors.success],
-  );
 
   const filtered = useMemo(() => {
     return filteredByPanel.filter((item) => {
@@ -354,11 +342,33 @@ export default function ObjectsIndex() {
         );
       }
     }
+    if (filters.values.objectTags?.length) {
+      fullParts.push(
+        summarizeFilterPart({
+          label: t('tags_objects_label'),
+          values: filters.values.objectTags,
+          countWhenMany: false,
+        }),
+      );
+      compactParts.push(
+        summarizeFilterPart({
+          label: t('tags_objects_label'),
+          values: filters.values.objectTags,
+          countWhenMany: true,
+        }),
+      );
+    }
     return {
       full: joinFilterSummary(fullParts, t('common_bullet')),
       compact: joinFilterSummary(compactParts, t('common_bullet')),
     };
-  }, [clientById, filters.values.cities, filters.values.clientIds, filters.values.streets]);
+  }, [
+    clientById,
+    filters.values.cities,
+    filters.values.clientIds,
+    filters.values.objectTags,
+    filters.values.streets,
+  ]);
 
   const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refetchObjects);
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
@@ -498,18 +508,20 @@ export default function ObjectsIndex() {
         mode="objects"
         showSearchCategory={false}
         inlineOptionSearch={{
-          categoryKeys: ['objects_cities', 'objects_streets', 'objects_clients'],
+          categoryKeys: ['objects_cities', 'objects_streets', 'objects_clients', 'objects_tags'],
         }}
         objectFilters={{
           cities: cityOptions,
           streets: streetOptions,
           clients: clientOptions,
+          tags: objectTagOptions,
+          facetCounts: {
+            total: enrichedObjects.length,
+            objectTags: objectTagFacetCounts,
+          },
         }}
         values={filters.values}
         defaults={OBJECT_FILTER_DEFAULTS}
-        previewCountResolver={previewCountResolver}
-        previewCountLabel={t('common_found')}
-        previewStatusResolver={previewStatusResolver}
         setValue={filters.setValue}
         onApply={(nextValues) => filters.apply(nextValues)}
         onReset={() => filters.reset()}

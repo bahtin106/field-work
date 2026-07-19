@@ -131,16 +131,12 @@ export default function SetPasswordScreen() {
     if (password.length > 0) {
       const pwdValidation = getPasswordValidationErrors(password);
       if (!pwdValidation.valid) {
-        if (pwdValidation.errors.includes('password_too_short')) {
-          errors.push(t('err_password_short'));
-        }
         if (pwdValidation.errors.includes('password_invalid_chars')) {
           errors.push(t('err_password_invalid_chars'));
+        } else {
+          errors.push(t('err_password_requirements'));
         }
       }
-      if (!passwordChecks.hasUpper) errors.push(t('register_password_rule_uppercase'));
-      if (!passwordChecks.hasLower) errors.push(t('register_password_rule_lowercase'));
-      if (!passwordChecks.hasDigit) errors.push(t('register_password_rule_digit'));
     }
 
     if (password.length > 0 && confirmPassword.length > 0 && !passwordsMatch) {
@@ -148,7 +144,7 @@ export default function SetPasswordScreen() {
     }
 
     setValidationErrors(errors);
-  }, [password, confirmPassword, passwordsMatch, submittedAttempt, t, passwordChecks]);
+  }, [password, confirmPassword, passwordsMatch, submittedAttempt, t]);
 
   const handleInvalidPasswordInput = useCallback(() => {
     setInvalidCharWarning(true);

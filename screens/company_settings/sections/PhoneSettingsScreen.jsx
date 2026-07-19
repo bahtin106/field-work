@@ -24,6 +24,8 @@ import {
 import { supabase } from '../../../lib/supabase';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
+import { normalizeIntegerInput } from '../../../src/shared/input/numeric';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Screen from '../../../components/layout/Screen';
 
@@ -239,7 +241,12 @@ export default function PhoneVisibilitySettingsScreen() {
                 <TextInput
                   style={styles.delayInput}
                   value={String(rule.delayValue || '')}
-                  onChangeText={(value) => updateRule(kind, { delayValue: value.replace(/[^0-9]/g, '') })}
+                  maxLength={TEXT_INPUT_LIMITS.numeric}
+                  onChangeText={(value) =>
+                    updateRule(kind, {
+                      delayValue: normalizeIntegerInput(value, { allowNegative: false }),
+                    })
+                  }
                   keyboardType="numeric"
                   returnKeyType="done"
                   placeholder="0"

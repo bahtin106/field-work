@@ -141,9 +141,28 @@ export async function upsertOrderFinanceEntry(payload) {
   if (!row.title) throw new Error('Title is required');
   if (!row.company_id || !row.order_id) throw new Error('company_id and order_id are required');
 
+  if (normalizedId) {
+    const updateRow = { ...row };
+    delete updateRow.id;
+    delete updateRow.company_id;
+    delete updateRow.order_id;
+
+    const { data: updated, error: updateError } = await supabase
+      .from('order_finance_entries')
+      .update(updateRow)
+      .eq('id', normalizedId)
+      .eq('company_id', row.company_id)
+      .eq('order_id', row.order_id)
+      .select(ORDER_FINANCE_SELECT)
+      .maybeSingle();
+
+    if (updateError) throw updateError;
+    if (updated) return updated;
+  }
+
   const { data, error } = await supabase
     .from('order_finance_entries')
-    .upsert(row, { onConflict: 'id' })
+    .insert(row)
     .select(ORDER_FINANCE_SELECT)
     .single();
 
@@ -156,6 +175,16 @@ export async function deleteOrderFinanceEntry(entryId) {
   const { error } = await supabase.from('order_finance_entries').delete().eq('id', entryId);
   if (error) throw error;
   return true;
+}
+
+export async function excludeOrderFinanceRule({ orderId, ruleId }) {
+  if (!orderId || !ruleId) throw new Error('Order id and rule id are required');
+  const { data, error } = await supabase.rpc('exclude_order_finance_rule', {
+    p_order_id: orderId,
+    p_rule_id: ruleId,
+  });
+  if (error) throw error;
+  return data !== false;
 }
 
 export async function listCompanyFinanceRules(companyId) {

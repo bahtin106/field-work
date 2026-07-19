@@ -29,7 +29,7 @@ import SectionHeader from '../../components/ui/SectionHeader';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import TextField from '../../components/ui/TextField';
 import PhoneInput from '../../components/ui/PhoneInput';
-import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import QuickPreviewModal from '../../components/ui/modals/QuickPreviewModal';
 import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
@@ -116,6 +116,7 @@ import {
 } from '../../src/features/objects/matching';
 import { buildAutoRequestTitle, resolveRequestTitle } from '../../src/features/requests/title';
 import { buildAssigneeSelectItems } from '../../src/features/requests/assigneeSelect';
+import { registerBottomNavigationGuard } from '../../src/shared/navigation/bottomNavigationGuard';
 
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: false },
@@ -334,6 +335,8 @@ function CreateOrderContent() {
   const [workTypeId, setWorkTypeId] = useState(null);
 
   const [cancelVisible, setCancelVisible] = useState(false);
+  const [draftExitAction, setDraftExitAction] = useState(null);
+  const [draftExitError, setDraftExitError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
@@ -405,6 +408,7 @@ function CreateOrderContent() {
 
   const intentionalExitRef = useRef(false);
   const pendingNavigationActionRef = useRef(null);
+  const pendingBottomNavigationRef = useRef(null);
   const autoTitleRef = useRef('');
   const lastAutoPhoneRef = useRef({ phone: '' });
   const clientFlowKeyRef = useRef(
@@ -527,7 +531,7 @@ function CreateOrderContent() {
 
   // Persist unfinished order form locally.
   const saveDraft = useCallback(async () => {
-    if (!draftScope) return;
+    if (!draftScope) return false;
     try {
       const draft = {
         version: 2,
@@ -552,8 +556,10 @@ function CreateOrderContent() {
         timestamp: Date.now(),
       };
       await AsyncStorage.setItem(draftScope.storageKey, JSON.stringify(draft));
+      return true;
     } catch (e) {
       console.warn('[CreateOrder] Save draft failed:', e);
+      return false;
     }
   }, [
     form,
@@ -603,11 +609,13 @@ function CreateOrderContent() {
 
   // Remove the local draft after successful submit or explicit discard.
   const deleteDraft = useCallback(async () => {
-    if (!draftScope) return;
+    if (!draftScope) return true;
     try {
       await AsyncStorage.removeItem(draftScope.storageKey);
+      return true;
     } catch (e) {
       console.warn('[CreateOrder] Delete draft failed:', e);
+      return false;
     }
   }, [draftScope]);
 
@@ -723,6 +731,8 @@ function CreateOrderContent() {
   const handleCancelPress = useCallback(() => {
     if (isSubmitting) return;
     pendingNavigationActionRef.current = null;
+    pendingBottomNavigationRef.current = null;
+    setDraftExitError('');
     // Show discard confirmation only when there are meaningful edits.
     if (hasChanges()) {
       setCancelVisible(true);
@@ -732,11 +742,19 @@ function CreateOrderContent() {
     }
   }, [hasChanges, isSubmitting]);
 
-  const confirmCancel = useCallback(() => {
+  const continuePendingNavigation = useCallback(() => {
     intentionalExitRef.current = true;
     setCancelVisible(false);
+    setDraftExitAction(null);
+    setDraftExitError('');
+    const pendingBottomNavigation = pendingBottomNavigationRef.current;
+    pendingBottomNavigationRef.current = null;
     const pendingAction = pendingNavigationActionRef.current;
     pendingNavigationActionRef.current = null;
+    if (typeof pendingBottomNavigation === 'function') {
+      pendingBottomNavigation();
+      return;
+    }
     if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
       navigation.dispatch(pendingAction);
       return;
@@ -744,15 +762,69 @@ function CreateOrderContent() {
     router.back();
   }, [navigation]);
 
+  const stayOnCreateScreen = useCallback(() => {
+    pendingNavigationActionRef.current = null;
+    pendingBottomNavigationRef.current = null;
+    setDraftExitAction(null);
+    setDraftExitError('');
+    setCancelVisible(false);
+  }, []);
+
+  const saveDraftAndExit = useCallback(async () => {
+    if (draftExitAction || isSubmitting) return;
+    setDraftExitAction('save');
+    setDraftExitError('');
+    const saved = await saveDraft();
+    if (!saved) {
+      setDraftExitAction(null);
+      setDraftExitError(t('create_order_modal_draft_save_error'));
+      return;
+    }
+    continuePendingNavigation();
+  }, [continuePendingNavigation, draftExitAction, isSubmitting, saveDraft, t]);
+
+  const confirmCancel = useCallback(async () => {
+    if (draftExitAction || isSubmitting) return;
+    setDraftExitAction('discard');
+    setDraftExitError('');
+    const discarded = await deleteDraft();
+    if (!discarded) {
+      setDraftExitAction(null);
+      setDraftExitError(t('create_order_modal_draft_discard_error'));
+      return;
+    }
+    continuePendingNavigation();
+  }, [continuePendingNavigation, deleteDraft, draftExitAction, isSubmitting, t]);
+
   useEffect(() => {
     const subscription = navigation.addListener('beforeRemove', (event) => {
       if (intentionalExitRef.current || !hasChanges()) return;
       event.preventDefault();
+      pendingBottomNavigationRef.current = null;
       pendingNavigationActionRef.current = event?.data?.action || null;
+      setDraftExitError('');
       setCancelVisible(true);
     });
     return subscription;
   }, [hasChanges, navigation]);
+
+  useFocusEffect(
+    useCallback(() => {
+      intentionalExitRef.current = false;
+      return registerBottomNavigationGuard(({ proceed }) => {
+        if (isSubmitting) return;
+        pendingNavigationActionRef.current = null;
+        if (!hasChanges()) {
+          intentionalExitRef.current = true;
+          proceed?.();
+          return;
+        }
+        pendingBottomNavigationRef.current = proceed;
+        setDraftExitError('');
+        setCancelVisible(true);
+      });
+    }, [hasChanges, isSubmitting]),
+  );
 
   const scrollToHandle = useCallback((targetRef) => {
     if (!scrollRef.current || !targetRef.current) return;
@@ -1308,6 +1380,9 @@ function CreateOrderContent() {
     useCallback(() => {
       const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
         if (hasChanges()) {
+          pendingNavigationActionRef.current = null;
+          pendingBottomNavigationRef.current = null;
+          setDraftExitError('');
           setCancelVisible(true);
         } else {
           intentionalExitRef.current = true;
@@ -1443,6 +1518,13 @@ function CreateOrderContent() {
             multiline={multiline}
             keyboardType={keyboardType}
             maxLength={maxLength}
+            inputKind={
+              fieldKey === 'title'
+                ? 'shortText'
+                : fieldKey === 'comment' || fieldKey === 'description'
+                  ? 'description'
+                  : undefined
+            }
             style={formStyles.field}
             forceValidation={submittedAttempt}
             error={finalErr ? 'invalid' : undefined}
@@ -2985,19 +3067,55 @@ function CreateOrderContent() {
           </View>
       </EditScreenTemplate>
 
-      <ConfirmModal
+      <BaseModal
         visible={cancelVisible}
         title={t('create_order_modal_cancel_title')}
-        message={t('create_order_modal_cancel_text')}
-        confirmLabel={t('create_order_modal_cancel_exit')}
-        cancelLabel={t('create_order_modal_cancel_stay')}
-        confirmVariant="destructive"
-        onConfirm={confirmCancel}
-        onClose={() => {
-          pendingNavigationActionRef.current = null;
-          setCancelVisible(false);
+        maxHeightRatio={0.58}
+        disableBackdropClose={!!draftExitAction}
+        disablePanClose={!!draftExitAction}
+        feedback={draftExitError ? { type: 'error', message: draftExitError } : null}
+        onClose={stayOnCreateScreen}
+        onRequestClose={() => {
+          if (!draftExitAction) stayOnCreateScreen();
         }}
-      />
+        footer={
+          <View style={{ gap: theme.spacing.sm }}>
+            <Button
+              title={t('create_order_modal_cancel_save_draft')}
+              onPress={saveDraftAndExit}
+              loading={draftExitAction === 'save'}
+              disabled={!!draftExitAction && draftExitAction !== 'save'}
+              dismissKeyboardOnPress
+            />
+            <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Button
+                  title={t('create_order_modal_cancel_stay')}
+                  onPress={stayOnCreateScreen}
+                  variant="secondary"
+                  disabled={!!draftExitAction}
+                />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Button
+                  title={t('create_order_modal_cancel_exit')}
+                  onPress={confirmCancel}
+                  variant="destructive"
+                  loading={draftExitAction === 'discard'}
+                  disabled={!!draftExitAction && draftExitAction !== 'discard'}
+                  dismissKeyboardOnPress
+                />
+              </View>
+            </View>
+          </View>
+        }
+      >
+        <View style={{ marginBottom: theme.spacing.md }}>
+          <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
+            {t('create_order_modal_cancel_text')}
+          </Text>
+        </View>
+      </BaseModal>
 
       <SelectModal
         visible={workTypeModalVisible}

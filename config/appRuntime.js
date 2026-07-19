@@ -14,12 +14,12 @@ function readPublicEnv(name) {
   return trim(process.env?.[name]);
 }
 
+// Production has one Supabase origin. Keep it out of environment precedence so
+// an old EAS/local variable cannot silently redirect the app to a hosted project.
+export const CANONICAL_SUPABASE_URL = 'https://supabase.monitorapp.ru';
+
 export const APP_RUNTIME_CONFIG = Object.freeze({
-  supabaseUrl: trimTrailingSlash(
-    readPublicEnv('EXPO_PUBLIC_SUPABASE_URL') ||
-      readPublicEnv('SUPABASE_URL') ||
-      EXTRA.supabaseUrl,
-  ),
+  supabaseUrl: CANONICAL_SUPABASE_URL,
   supabaseAnonKey:
     readPublicEnv('EXPO_PUBLIC_SUPABASE_ANON_KEY') ||
     readPublicEnv('SUPABASE_ANON_KEY') ||

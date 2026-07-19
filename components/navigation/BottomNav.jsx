@@ -8,6 +8,7 @@ import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { preloadOrderDetailScreen, preloadRouteScreen } from '../../src/shared/navigation/routePreload';
+import { requestBottomNavigation } from '../../src/shared/navigation/bottomNavigationGuard';
 import { scheduleUiIdleTask } from '../../src/shared/perf/uiIdleTask';
 import { useToast } from '../ui/ToastProvider';
 
@@ -101,7 +102,7 @@ function BottomNavInner() {
   const [navVisible, setNavVisible] = React.useState(false);
   const appear = useRef(new Animated.Value(0)).current;
   const tabNavInFlightRef = useRef(false);
-  const navigateTab = React.useCallback((target) => {
+  const performTabNavigation = React.useCallback((target) => {
     if (!target || tabNavInFlightRef.current) return;
     tabNavInFlightRef.current = true;
 
@@ -125,6 +126,12 @@ function BottomNavInner() {
       tabNavInFlightRef.current = false;
     }
   }, []);
+  const navigateTab = React.useCallback((target) => {
+    if (!target) return;
+    const proceed = () => performTabNavigation(target);
+    if (requestBottomNavigation(target, proceed)) return;
+    proceed();
+  }, [performTabNavigation]);
   // При изменении appReady на false (логаут/новый логин) - скрываем бар
   useEffect(() => {
     if (navVisible) {

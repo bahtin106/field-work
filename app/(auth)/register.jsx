@@ -34,7 +34,7 @@ import {
 } from '../../lib/authValidation';
 import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { FUNCTIONS } from '../../lib/constants';
-import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
+import { persistPublicAuthRoute, resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { logClientError } from '../../lib/errorLogsClient';
 import {
   EDGE_FUNCTION_TRANSPORT_ERROR,
@@ -498,7 +498,7 @@ export default function RegisterScreen() {
     (shouldShowError('password') && !password.trim()
       ? requiredMsg
       : password.length > 0 && !passwordValid
-        ? getMessageByCode(FEEDBACK_CODES.PASSWORD_TOO_SHORT, t)
+        ? t('err_password_requirements')
         : null);
 
   const openLegalLink = useCallback(async (url) => {
@@ -670,7 +670,7 @@ export default function RegisterScreen() {
       }
       if (invalidPwd) {
         nextFieldErrors.password = {
-          message: getMessageByCode(FEEDBACK_CODES.PASSWORD_TOO_SHORT, t),
+          message: t('err_password_requirements'),
         };
       }
       if (mismatchPwd) {
@@ -774,6 +774,7 @@ export default function RegisterScreen() {
       await saveCodeExpiry(normalizedEmail, expiresUntil, expiresInSeconds);
 
       showSuccessToast(t('register_code_sent'));
+      await persistPublicAuthRoute({ pathname: '/(auth)/register-code' });
       router.push({
         pathname: '/(auth)/register-code',
         params: { email: normalizedEmail },

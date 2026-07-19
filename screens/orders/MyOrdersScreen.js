@@ -49,6 +49,8 @@ import {
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes } from '../../lib/workTypes';
 import { useClients } from '../../src/features/clients/queries';
+import { useCompanyTags } from '../../src/features/tags/queries';
+import { buildTagFilterOptions } from '../../src/features/tags/filtering';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -59,7 +61,7 @@ import {
   ORDER_DEFAULT_SORT_KEY,
   applyOrderSortToQuery,
   getOrderSortOptions,
-  normalizeOrderSortKey,
+  resolveOrderSortKeyForFilters,
   sortOrders,
 } from '../../src/features/orders/orderSort';
 import {
@@ -70,6 +72,7 @@ import {
   ensureRequestPrefetch,
   markRequestDetailSeed,
   useRequestExecutors,
+  useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import {
   enrichOrdersWithExecutorNames,
@@ -93,7 +96,8 @@ import {
   startFpsProbe,
   trackRender,
 } from '../../src/shared/perf/devMetrics';
-import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
+import { matchesSearch } from '../../src/shared/search/matching';
+import { buildRequestSearchIndex } from '../../src/features/requests/search';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
 import { queryKeys } from '../../src/shared/query/queryKeys';
@@ -115,7 +119,6 @@ const MY_ORDERS_RENDER_WARN_THRESHOLD = 30;
 const MY_ORDERS_FPS_PROBE_MS = 3500;
 const MY_ORDERS_NAV_LOCK_MS = 1200;
 const MY_ORDERS_REFRESH_WAIT_TIMEOUT_MS = 12000;
-const MY_ORDERS_BACKGROUND_REFRESH_DELAY_MS = 1200;
 const MY_ORDERS_FEED_PREVIEW_SIZE = 20;
 const MY_ORDERS_FEED_PREFETCH_DELAY_MS = 350;
 const MY_ORDERS_FEED_PULSE_DURATION_MS = 1200;
@@ -139,6 +142,8 @@ const ORDER_FILTER_DEFAULTS = Object.freeze({
   workTypes: [],
   statuses: [],
   clientIds: [],
+  clientTags: [],
+  objectTags: [],
   departureDateFrom: null,
   departureDateTo: null,
   departureTimeFrom: null,
@@ -599,12 +604,34 @@ function MyOrdersContent() {
         .filter(Boolean),
     [companyClients],
   );
+  const hasSelectedTagFilters = Boolean(
+    filters.values?.clientTags?.length || filters.values?.objectTags?.length,
+  );
+  const shouldLoadTagOptions = !!companyId && (filters.visible || hasSelectedTagFilters);
+  const { data: companyClientTags = [] } = useCompanyTags({
+    companyId,
+    tagType: 'client',
+    enabled: shouldLoadTagOptions,
+  });
+  const { data: companyObjectTags = [] } = useCompanyTags({
+    companyId,
+    tagType: 'object',
+    enabled: shouldLoadTagOptions,
+  });
+  const clientTagOptions = useMemo(
+    () => buildTagFilterOptions(companyClientTags, filters.values.clientTags),
+    [companyClientTags, filters.values.clientTags],
+  );
+  const objectTagOptions = useMemo(
+    () => buildTagFilterOptions(companyObjectTags, filters.values.objectTags),
+    [companyObjectTags, filters.values.objectTags],
+  );
   const [useWorkTypesFlag, setUseWorkTypesFlag] = useState(false);
   const [workTypeOptions, setWorkTypeOptions] = useState([]);
   const [statusSelectVisible, setStatusSelectVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState(ORDER_DEFAULT_SORT_KEY);
-  const normalizedSortKey = normalizeOrderSortKey(sortKey);
+  const normalizedSortKey = resolveOrderSortKeyForFilters(sortKey, filters.values);
   const listFingerprint = useMemo(
     () =>
       JSON.stringify({
@@ -651,6 +678,8 @@ function MyOrdersContent() {
       workTypes: selectedWorkTypes,
       statuses,
       clientIds,
+      clientTags,
+      objectTags,
       departureDateFrom,
       departureDateTo,
       departureTimeFrom,
@@ -706,6 +735,13 @@ function MyOrdersContent() {
         );
       }
     }
+    const addTagSummary = (label, values) => {
+      if (!Array.isArray(values) || values.length === 0) return;
+      fullParts.push(summarizeFilterPart({ label, values, countWhenMany: false }));
+      compactParts.push(summarizeFilterPart({ label, values, countWhenMany: true }));
+    };
+    addTagSummary(t('tags_clients_label'), clientTags);
+    addTagSummary(t('tags_objects_label'), objectTags);
     const formatDate = (value) => {
       if (!value) return null;
       const parsed = new Date(value);
@@ -1307,7 +1343,7 @@ function MyOrdersContent() {
         const cachedDefault = listCacheMy[defaultListCacheKey];
         const best = Array.isArray(cachedCurrent)
           ? cachedCurrent
-          : Array.isArray(cachedDefault)
+          : currentKey === defaultListCacheKey && Array.isArray(cachedDefault)
             ? cachedDefault
             : null;
         if (!best) return;
@@ -1370,6 +1406,15 @@ function MyOrdersContent() {
   const activeCacheScopeRef = useRef(cacheScopeKey);
   const refreshWaitersRef = useRef([]);
   const forceNetworkRefreshRef = useRef(false);
+  const handleRealtimeRequestsChanged = useCallback(() => {
+    forceNetworkRefreshRef.current = true;
+    setRefreshNonce((value) => value + 1);
+  }, []);
+  useRequestRealtimeSync({
+    enabled: isFocused && !!companyId,
+    companyId,
+    onRequestsChanged: handleRealtimeRequestsChanged,
+  });
   const resolveRefreshWaiters = useCallback(() => {
     const waiters = refreshWaitersRef.current.splice(0);
     waiters.forEach((resolve) => {
@@ -1683,6 +1728,12 @@ function MyOrdersContent() {
       const clientIds = Array.isArray(filterValues.clientIds)
         ? filterValues.clientIds.map(String).filter(Boolean)
         : [];
+      const clientTags = Array.isArray(filterValues.clientTags)
+        ? filterValues.clientTags.map(String).filter(Boolean)
+        : [];
+      const objectTags = Array.isArray(filterValues.objectTags)
+        ? filterValues.objectTags.map(String).filter(Boolean)
+        : [];
       const sumMin = parseFloat(filterValues.sumMin);
       const sumMax = parseFloat(filterValues.sumMax);
       const toIsoDate = (value, startVal) => {
@@ -1741,6 +1792,8 @@ function MyOrdersContent() {
         if (key === 'all' && isFeedFeatureEnabled) query = excludeFeedStatuses(query);
         if (statusFilters.length) query = query.in('status', statusFilters);
         if (clientIds.length) query = query.in('client_id', clientIds);
+        if (clientTags.length) query = query.overlaps('client_tags', clientTags);
+        if (objectTags.length) query = query.overlaps('object_tags', objectTags);
         if (!Number.isNaN(sumMin)) query = query.gte('start_price', sumMin);
         if (!Number.isNaN(sumMax)) query = query.lte('start_price', sumMax);
         if (dateFrom) query = query.gte('time_window_start', dateFrom);
@@ -1765,6 +1818,8 @@ function MyOrdersContent() {
             sortKey: normalizedSortKey,
             statuses: selectedStatusKeys,
             clientIds,
+            clientTags,
+            objectTags,
             orderIds: Array.isArray(workTypeOrderIds) ? workTypeOrderIds : [],
             relationClientId,
             relationObjectIds,
@@ -1870,21 +1925,14 @@ function MyOrdersContent() {
 
     const initialSnapshot = getCachedOrdersSnapshot(effectiveFilter);
     const hasInitialSnapshot = initialSnapshot && (initialSnapshot.exact || initialSnapshot.rows.length > 0);
-    const initialCacheFresh =
-      initialSnapshot?.exact &&
-      initialSnapshot.fetchedAt > 0 &&
-      Date.now() - initialSnapshot.fetchedAt < MY_ORDERS_LIST_CACHE_FRESH_MS;
-
     if (hasInitialSnapshot) {
       applyOrdersSnapshot(initialSnapshot);
     }
 
-    if (!forceNetwork && initialCacheFresh) {
-      resolveRefreshWaiters();
-    } else if (!forceNetwork && hasInitialSnapshot) {
+    if (!forceNetwork && hasInitialSnapshot) {
       backgroundTimer = setTimeout(() => {
         fetchUserAndOrders(true);
-      }, MY_ORDERS_BACKGROUND_REFRESH_DELAY_MS);
+      }, 0);
     } else {
       fetchUserAndOrders(false, { forceNetwork });
     }
@@ -1947,24 +1995,15 @@ function MyOrdersContent() {
       }
       if (!q) return true;
       return matchesSearch(
-        buildSearchIndex({
-          texts: [
-            resolveRequestTitle(o, {
-              fallbackDate: o?.time_window_start || o?.created_at,
-              prefix: t('order_auto_title_prefix'),
-            }),
-            o?.fio,
-            o?.region,
-            o?.city,
-            o?.street,
-            o?.house,
-            o?.status,
-            o?.description,
-            o?.comment,
+        buildRequestSearchIndex(o, {
+          title: resolveRequestTitle(o, {
+            fallbackDate: o?.time_window_start || o?.created_at,
+            prefix: t('order_auto_title_prefix'),
+          }),
+          includePhones: shouldShowOrderPhoneForRole(o, companySettings, auth.profile?.role),
+          extraTexts: [
+            workTypeOptions.find((item) => String(item?.id || '') === String(o?.work_type_id || ''))?.name,
           ],
-          phones: shouldShowOrderPhoneForRole(o, companySettings, auth.profile?.role)
-            ? [o?.customer_phone_visible, o?.customer_phone, o?.phone]
-            : [],
         }),
         q,
       );
@@ -1978,6 +2017,7 @@ function MyOrdersContent() {
     filters.values.departureTimeTo,
     filters.values.createdTimeFrom,
     filters.values.createdTimeTo,
+    workTypeOptions,
     t,
   ]);
 
@@ -2522,6 +2562,8 @@ function MyOrdersContent() {
             statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
             workTypeOptions={useWorkTypesFlag ? workTypeOptions : []}
             clientOptions={clientOptions}
+            clientTagOptions={clientTagOptions}
+            objectTagOptions={objectTagOptions}
             facetCounts={ordersFacetCounts}
             values={filterPanelValues}
             setValue={filters.setValue}
@@ -2530,7 +2572,7 @@ function MyOrdersContent() {
               filters.reset();
               selectStatusFilter('all');
             }}
-            onApply={async (nextValues) => {
+            onApply={async (nextValues, applyMeta) => {
               const nextStatuses = Array.from(
                 new Set(
                   (Array.isArray(nextValues?.statuses) ? nextValues.statuses : [])
@@ -2543,6 +2585,13 @@ function MyOrdersContent() {
                 ...nextValues,
                 statuses: nextStatuses,
               };
+              setSortKey((currentSortKey) =>
+                resolveOrderSortKeyForFilters(
+                  currentSortKey,
+                  normalizedNextValues,
+                  applyMeta?.lastDateFilterField,
+                ),
+              );
               await filters.apply(normalizedNextValues);
               selectStatusFilter(nextStatus, { syncFilter: false });
             }}
@@ -2563,7 +2612,7 @@ function MyOrdersContent() {
             visible={sortVisible}
             onClose={() => setSortVisible(false)}
             options={sortOptions}
-            value={sortKey}
+            value={normalizedSortKey}
             onChange={(nextSort) => {
               if (nextSort) setSortKey(nextSort);
             }}

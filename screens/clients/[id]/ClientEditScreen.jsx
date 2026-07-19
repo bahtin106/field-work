@@ -685,6 +685,7 @@ export default function EditClientScreen() {
       first_name: () => (
         <>
           <TextField
+            inputKind="name"
             label={fieldUi.withRequiredLabel('first_name', stripRequiredStar(t('label_first_name')))}
             value={firstName}
             onChangeText={(value) => {
@@ -701,6 +702,7 @@ export default function EditClientScreen() {
       middle_name: () => (
         <>
           <TextField
+            inputKind="name"
             label={fieldUi.withRequiredLabel('middle_name', stripRequiredStar(t('label_middle_name')))}
             value={middleName}
             onChangeText={(value) => {
@@ -718,6 +720,7 @@ export default function EditClientScreen() {
       last_name: () => (
         <>
           <TextField
+            inputKind="name"
             label={fieldUi.withRequiredLabel('last_name', stripRequiredStar(t('label_last_name')))}
             value={lastName}
             onChangeText={(value) => {

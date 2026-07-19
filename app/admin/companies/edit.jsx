@@ -206,6 +206,7 @@ export default function AdminCompanyEditScreen() {
             value={extraSeats}
             onChangeText={setExtraSeats}
             keyboardType="numeric"
+            numericInput={{ allowDecimal: false, allowNegative: false }}
           />
           {subscriptionMutation.error ? (
             <Text style={styles(theme).error}>{String(subscriptionMutation.error?.message || t('admin_unknown_error'))}</Text>

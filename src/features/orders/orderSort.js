@@ -18,6 +18,39 @@ export function normalizeOrderSortKey(value) {
   return ORDER_SORT_KEY_SET.has(key) ? key : ORDER_DEFAULT_SORT_KEY;
 }
 
+function resolveDateFilterSortKey(filters, group) {
+  const isCreated = group === 'created';
+  const fromValue = isCreated ? filters?.createdDateFrom : filters?.departureDateFrom;
+  const toValue = isCreated ? filters?.createdDateTo : filters?.departureDateTo;
+  if (!fromValue && !toValue) return null;
+  if (isCreated) {
+    return fromValue ? ORDER_SORT_KEYS.createdAsc : ORDER_SORT_KEYS.createdDesc;
+  }
+  return fromValue ? ORDER_SORT_KEYS.departureAsc : ORDER_SORT_KEYS.departureDesc;
+}
+
+export function resolveOrderSortKeyForFilters(sortKey, filters = {}, preferredDateFilterField = '') {
+  const normalized = normalizeOrderSortKey(sortKey);
+  const departureSort = resolveDateFilterSortKey(filters, 'departure');
+  const createdSort = resolveDateFilterSortKey(filters, 'created');
+  const preferredField = String(preferredDateFilterField || '');
+
+  if (preferredField.startsWith('createdDate') && createdSort) return createdSort;
+  if (preferredField.startsWith('departureDate') && departureSort) return departureSort;
+  if (createdSort && !departureSort) return createdSort;
+  if (departureSort && !createdSort) return departureSort;
+  if (createdSort && departureSort) {
+    if (
+      normalized === ORDER_SORT_KEYS.createdAsc ||
+      normalized === ORDER_SORT_KEYS.createdDesc
+    ) {
+      return createdSort;
+    }
+    return departureSort;
+  }
+  return normalized;
+}
+
 export function getOrderSortOptions(t) {
   return [
     { id: ORDER_SORT_KEYS.departureDesc, label: t('orders_sort_departure_desc') },

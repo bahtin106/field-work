@@ -56,10 +56,12 @@ import { enrichOrdersWithKnownExecutorRows } from '../../src/features/requests/e
 import { listRequests } from '../../src/features/requests/api';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import { useClients } from '../../src/features/clients/queries';
+import { useCompanyTags } from '../../src/features/tags/queries';
+import { buildTagFilterOptions } from '../../src/features/tags/filtering';
 import {
   ORDER_DEFAULT_SORT_KEY,
   getOrderSortOptions,
-  normalizeOrderSortKey,
+  resolveOrderSortKeyForFilters,
   sortOrders,
 } from '../../src/features/orders/orderSort';
 import {
@@ -84,7 +86,8 @@ import {
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
-import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
+import { matchesSearch } from '../../src/shared/search/matching';
+import { buildRequestSearchIndex } from '../../src/features/requests/search';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -172,6 +175,8 @@ const ORDER_FILTER_DEFAULTS = {
   workTypes: [],
   statuses: [],
   clientIds: [],
+  clientTags: [],
+  objectTags: [],
   executorId: null,
   executorIds: [],
   departureDateFrom: null,
@@ -226,6 +231,8 @@ function createOrderFilterDefaults() {
     workTypes: [],
     statuses: [],
     clientIds: [],
+    clientTags: [],
+    objectTags: [],
   };
 }
 
@@ -637,7 +644,6 @@ function AllOrdersContent() {
   const [statusSelectVisible, setStatusSelectVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState(ORDER_DEFAULT_SORT_KEY);
-  const normalizedSortKey = normalizeOrderSortKey(sortKey);
   const [departmentFilter] = useState(() => {
     const normalizedDepartment = readRouteParam(department);
     if (EMPTY_DEPARTMENT_ROUTE_VALUES.has(normalizedDepartment)) return null;
@@ -661,6 +667,7 @@ function AllOrdersContent() {
     sumMin: readRouteParam(sum_min),
     sumMax: readRouteParam(sum_max),
   }));
+  const normalizedSortKey = resolveOrderSortKeyForFilters(sortKey, orderFilters);
   const [searchQuery, setSearchQuery] = useState(readRouteParam(search));
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const detailNavLockRef = useRef({ id: '', ts: 0 });
@@ -772,6 +779,34 @@ function AllOrdersContent() {
         .filter(Boolean),
     [companyClients],
   );
+  const hasSelectedTagFilters = Boolean(orderFilters.clientTags?.length || orderFilters.objectTags?.length);
+  const shouldLoadTagOptions = !!companyId && (filtersVisible || hasSelectedTagFilters);
+  const { data: companyClientTags = [] } = useCompanyTags({
+    companyId,
+    tagType: 'client',
+    enabled: shouldLoadTagOptions,
+  });
+  const { data: companyObjectTags = [] } = useCompanyTags({
+    companyId,
+    tagType: 'object',
+    enabled: shouldLoadTagOptions,
+  });
+  const clientTagOptions = useMemo(
+    () =>
+      buildTagFilterOptions(
+        [companyClientTags, ...(Array.isArray(orders) ? orders.map((order) => order?.client_tags) : [])],
+        orderFilters.clientTags,
+      ),
+    [companyClientTags, orderFilters.clientTags, orders],
+  );
+  const objectTagOptions = useMemo(
+    () =>
+      buildTagFilterOptions(
+        [companyObjectTags, ...(Array.isArray(orders) ? orders.map((order) => order?.object_tags) : [])],
+        orderFilters.objectTags,
+      ),
+    [companyObjectTags, orderFilters.objectTags, orders],
+  );
   const allRequestsParams = useMemo(() => {
     const next = { sortKey: normalizedSortKey };
     if (
@@ -796,6 +831,12 @@ function AllOrdersContent() {
     if (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length) {
       next.clientIds = orderFilters.clientIds.map(String);
     }
+    if (Array.isArray(orderFilters.clientTags) && orderFilters.clientTags.length) {
+      next.clientTags = orderFilters.clientTags.map(String);
+    }
+    if (Array.isArray(orderFilters.objectTags) && orderFilters.objectTags.length) {
+      next.objectTags = orderFilters.objectTags.map(String);
+    }
     const dateFrom = toDateBoundaryIso(orderFilters.departureDateFrom, true);
     const dateTo = toDateBoundaryIso(orderFilters.departureDateTo, false);
     const createdFrom = toDateBoundaryIso(orderFilters.createdDateFrom, true);
@@ -817,10 +858,12 @@ function AllOrdersContent() {
     effectiveStatusFilter,
     normalizedSortKey,
     orderFilters.clientIds,
+    orderFilters.clientTags,
     orderFilters.createdDateFrom,
     orderFilters.createdDateTo,
     orderFilters.departureDateFrom,
     orderFilters.departureDateTo,
+    orderFilters.objectTags,
     orderFilters.sumMax,
     orderFilters.sumMin,
     orderFilters.statuses,
@@ -1529,6 +1572,14 @@ function AllOrdersContent() {
       }
     }
 
+    const addTagSummary = (label, values) => {
+      if (!Array.isArray(values) || values.length === 0) return;
+      fullParts.push(summarizeFilterPart({ label, values, countWhenMany: false }));
+      compactParts.push(summarizeFilterPart({ label, values, countWhenMany: true }));
+    };
+    addTagSummary(t('tags_clients_label'), orderFilters.clientTags);
+    addTagSummary(t('tags_objects_label'), orderFilters.objectTags);
+
     if (orderFilters.departureDateFrom || orderFilters.departureDateTo) {
       const fromLabel = formatDateFilterLabel(orderFilters.departureDateFrom, locale) || t('common_dash');
       const toLabel = formatDateFilterLabel(orderFilters.departureDateTo, locale) || t('common_dash');
@@ -1579,6 +1630,7 @@ function AllOrdersContent() {
     locale,
     getStatusLabel,
     orderFilters.clientIds,
+    orderFilters.clientTags,
     orderFilters.createdDateFrom,
     orderFilters.createdDateTo,
     orderFilters.createdTimeFrom,
@@ -1587,6 +1639,7 @@ function AllOrdersContent() {
     orderFilters.departureDateTo,
     orderFilters.departureTimeFrom,
     orderFilters.departureTimeTo,
+    orderFilters.objectTags,
     orderFilters.sumMax,
     orderFilters.sumMin,
     orderFilters.statuses,
@@ -1630,30 +1683,15 @@ function AllOrdersContent() {
       }
       if (!q) return true;
       return matchesSearch(
-        buildSearchIndex({
-          texts: [
-            resolveRequestTitle(order, {
-              fallbackDate: order?.time_window_start || order?.created_at,
-              prefix: t('order_auto_title_prefix'),
-            }),
-            order?.fio,
-            order?.region,
-            order?.city,
-            order?.street,
-            order?.house,
-            order?.status,
-            order?.description,
-            order?.comment,
-            order?.object_name,
-            order?.object_summary,
+        buildRequestSearchIndex(order, {
+          title: resolveRequestTitle(order, {
+            fallbackDate: order?.time_window_start || order?.created_at,
+            prefix: t('order_auto_title_prefix'),
+          }),
+          includePhones: shouldShowOrderPhoneForRole(order, companySettings, profile?.role),
+          extraTexts: [
+            workTypes.find((item) => String(item?.id || '') === String(order?.work_type_id || ''))?.name,
           ],
-          phones: shouldShowOrderPhoneForRole(order, companySettings, profile?.role)
-            ? [
-                order?.customer_phone_visible,
-                order?.customer_phone,
-                order?.phone,
-              ]
-            : [],
         }),
         q,
       );
@@ -1670,6 +1708,7 @@ function AllOrdersContent() {
     orderFilters.departureTimeTo,
     orders,
     profile?.role,
+    workTypes,
     t,
   ]);
 
@@ -2160,6 +2199,8 @@ function AllOrdersContent() {
         statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
         workTypeOptions={useWorkTypes ? workTypes : []}
         clientOptions={clientOptions}
+        clientTagOptions={clientTagOptions}
+        objectTagOptions={objectTagOptions}
         facetCounts={ordersFacetCounts}
         executorOptions={executorOptions}
         showExecutors
@@ -2171,7 +2212,7 @@ function AllOrdersContent() {
           setStatusFilter('all');
           router.setParams({ ...buildClearedRouteFilterParams(), filter: 'all' });
         }}
-        onApply={(nextValues) => {
+        onApply={(nextValues, applyMeta) => {
           const nextStatuses = Array.from(
             new Set(
               (statusSystem.isEnabled && Array.isArray(nextValues?.statuses)
@@ -2194,6 +2235,13 @@ function AllOrdersContent() {
                 : [],
           };
           normalizedNextValues.executorId = normalizedNextValues.executorIds[0] || null;
+          setSortKey((currentSortKey) =>
+            resolveOrderSortKeyForFilters(
+              currentSortKey,
+              normalizedNextValues,
+              applyMeta?.lastDateFilterField,
+            ),
+          );
           setStatusFilter(nextStatus);
           recordStatusFilterUsage(nextStatus);
           setOrderFilters(normalizedNextValues);
@@ -2217,7 +2265,7 @@ function AllOrdersContent() {
         visible={sortVisible}
         onClose={() => setSortVisible(false)}
         options={sortOptions}
-        value={sortKey}
+        value={normalizedSortKey}
         onChange={(nextSort) => {
           if (nextSort) setSortKey(nextSort);
         }}

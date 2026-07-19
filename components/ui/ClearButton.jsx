@@ -7,7 +7,7 @@ import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 
 /**
- * Универсальная кнопка очистки (крестик) с анимацией нажатия
+ * Универсальная destructive-кнопка очистки с иконкой корзины и анимацией нажатия.
  * @param {Object} props
  * @param {Function} props.onPress - Callback при нажатии
  * @param {string} props.accessibilityLabel - Метка для accessibility
@@ -29,7 +29,7 @@ export default function ClearButton({
   // Уменьшаем размер круга на 30% (85% * 85% ≈ 72%)
   const defaultButtonSize = (theme.components?.iconButton?.size ?? 32) * 0.72;
   const buttonSize = size ?? defaultButtonSize;
-  // Размер иконки для аккуратного крестика
+  // Корзина визуально чуть крупнее прежнего крестика при той же области нажатия.
   const iconSz = iconSize ?? Math.round((theme.icons?.sm ?? 18) * 0.75);
 
   const handlePressIn = () => {
@@ -85,7 +85,7 @@ export default function ClearButton({
           right: theme.spacing.sm,
         }}
       >
-        <Feather name="x" size={iconSz} color={theme.colors.onPrimary} strokeWidth={2.5} />
+        <Feather name="trash-2" size={iconSz} color={theme.colors.onPrimary} strokeWidth={2.25} />
       </Pressable>
     </Animated.View>
   );

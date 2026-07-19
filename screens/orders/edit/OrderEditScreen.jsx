@@ -7,7 +7,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   BackHandler,
-  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -75,6 +74,7 @@ import EditScreenTemplate, { useEditFormStyles } from '../../../components/layou
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
+import MapAppChooser from '../../../components/ui/MapAppChooser';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import QuickPreviewModal from '../../../components/ui/modals/QuickPreviewModal';
 import ClientObjectEditorModal from '../../../components/objects/ClientObjectEditorModal';
@@ -100,7 +100,6 @@ import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matc
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 import DeferredScreen from '../../../src/shared/perf/DeferredScreen';
-import { openCoordinatesInYandex } from '../../../components/ui/map';
 import { resolveRequestTitle } from '../../../src/features/requests/title';
 import { buildAssigneeSelectItems } from '../../../src/features/requests/assigneeSelect';
 
@@ -275,6 +274,7 @@ function EditOrderContent() {
   const { t: translate } = useTranslation();
   const navigation = useNavigation();
   const router = useRouter();
+  const mapAppChooserRef = useRef(null);
   const {
     id: rawId,
     companyId: rawCompanyId,
@@ -2145,17 +2145,11 @@ function EditOrderContent() {
   }, [addressModalHasMapPoint]);
 
   const openAddressModalMap = useCallback(async () => {
-    try {
-      if (addressModalHasMapPoint) {
-        openCoordinatesInYandex(addressModalMapLat, addressModalMapLng);
-      } else {
-        await Linking.openURL('yandexnavi://map_search?text=');
-      }
-    } catch {
-      try {
-        await Linking.openURL('https://yandex.ru/maps/');
-      } catch {}
+    if (addressModalHasMapPoint) {
+      await mapAppChooserRef.current?.openCoordinates(addressModalMapLat, addressModalMapLng);
+      return;
     }
+    await mapAppChooserRef.current?.openMap();
   }, [addressModalHasMapPoint, addressModalMapLat, addressModalMapLng]);
 
   const pasteAddressModalCoordinatesFromClipboard = useCallback(async () => {
@@ -2402,6 +2396,7 @@ function EditOrderContent() {
             <>
               <TextField
                 ref={titleRef}
+                inputKind="shortText"
                 label={withRequiredLabel(T('order_field_title'), isFieldRequired('title'))}
                 placeholder={T('order_placeholder_title')}
                 value={title}
@@ -2424,6 +2419,7 @@ function EditOrderContent() {
             <>
               <TextField
                 ref={descriptionRef}
+                inputKind="description"
                 label={withRequiredLabel(T('order_field_description'), isFieldRequired('comment'))}
                 placeholder={T('order_placeholder_description')}
                 value={description}
@@ -2913,9 +2909,11 @@ function EditOrderContent() {
                     {addressModalHasMapPoint ? `${addressModalMapLat}, ${addressModalMapLng}` : T('objects_location_empty')}
                   </Text>
                   {addressModalHasMapPoint ? (
-                    <Pressable onPress={clearAddressModalMapPoint} style={styles.mapPointClearBtn}>
-                      <Feather name="x-circle" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />
-                    </Pressable>
+                    <ClearButton
+                      onPress={clearAddressModalMapPoint}
+                      accessibilityLabel={T('objects_location_clear')}
+                      style={styles.mapPointClearBtn}
+                    />
                   ) : null}
                 </View>
                 <View style={styles.mapActionsRow}>
@@ -3169,6 +3167,7 @@ function EditOrderContent() {
         confirmVariant="destructive"
         onConfirm={confirmCancel}
       />
+      <MapAppChooser ref={mapAppChooserRef} />
     </>
   );
 }

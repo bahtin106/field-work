@@ -1863,13 +1863,13 @@ export default function CompanySettings() {
                             }
                           }}
                           onChangeText={(txt) => {
-                            const v = txt.replace(/[^0-9.,]/g, '').replace(',', '.');
-                            setCurrencyRate(v);
+                            setCurrencyRate(txt);
                             setRateDisplayDirection('old_to_new');
                             if (fetchRateError) setFetchRateError(null);
                           }}
                           placeholder={t('modal_currency_rate_placeholder')}
                           keyboardType="numeric"
+                          numericInput={{ allowNegative: false }}
                         />
                       </View>
                       <Text style={{ color: theme.colors.text, marginLeft: 6, flexShrink: 1 }}>
@@ -1927,13 +1927,13 @@ export default function CompanySettings() {
                             }
                           }}
                           onChangeText={(txt) => {
-                            const v = txt.replace(/[^0-9.,]/g, '').replace(',', '.');
-                            setCurrencyRate(v);
+                            setCurrencyRate(txt);
                             setRateDisplayDirection('new_to_old');
                             if (fetchRateError) setFetchRateError(null);
                           }}
                           placeholder={t('modal_currency_rate_placeholder')}
                           keyboardType="numeric"
+                          numericInput={{ allowNegative: false }}
                         />
                       </View>
                       <Text style={{ color: theme.colors.text, marginLeft: 6, flexShrink: 1 }}>
@@ -2031,8 +2031,9 @@ export default function CompanySettings() {
                 <TextField
                   label={t('common_value')}
                   value={windowBefore}
-                  onChangeText={(v) => setWindowBefore(v.replace(/[^0-9]/g, ''))}
+                  onChangeText={setWindowBefore}
                   keyboardType="numeric"
+                  numericInput={{ allowDecimal: false, allowNegative: false }}
                   returnKeyType="done"
                 />
               </View>
@@ -2070,8 +2071,9 @@ export default function CompanySettings() {
                 <TextField
                   label={t('common_value')}
                   value={windowAfter}
-                  onChangeText={(v) => setWindowAfter(v.replace(/[^0-9]/g, ''))}
+                  onChangeText={setWindowAfter}
                   keyboardType="numeric"
+                  numericInput={{ allowDecimal: false, allowNegative: false }}
                   returnKeyType="done"
                 />
               </View>

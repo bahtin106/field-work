@@ -47,8 +47,8 @@ import {
 } from '../../lib/notificationForegroundState';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
-import { mapStatusToDb } from '../../lib/orderFilters';
-import { useCompanyOrderStatuses } from '../../lib/orderStatuses';
+import { mapStatusToDb, normalizeOrderStatusFilterKey } from '../../lib/orderFilters';
+import { getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import {
   FEED_ORDER_FIELD_KEYS,
@@ -67,9 +67,10 @@ import MediaUploadModal from '../../components/media/MediaUploadModal';
 import { OrderStatusCapsuleView } from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import AnimatedChevron from '../../components/ui/AnimatedChevron';
+import MapAppChooser from '../../components/ui/MapAppChooser';
 import { BaseModal, ConfirmModal, AlertModal, SelectModal } from '../../components/ui/modals';
 import { listItemStyles } from '../../components/ui/listItemStyles';
-import { buildAddressForNavigator, openAddressInYandex, openCoordinatesInYandex } from '../../components/ui/map';
+import { buildAddressForNavigator } from '../../components/ui/map';
 import { usePermissions } from '../../lib/permissions';
 import { formatClientNameForOrder, getClientByOrderId } from '../../src/features/clients/api';
 import { useClient, useUpdateClientMutation } from '../../src/features/clients/queries';
@@ -77,11 +78,15 @@ import {
   ensureRequestAssigneeNamePrefetch,
   ensureRequestPrefetch,
   isRequestDetailLoaded,
+  markRequestDetailLoaded,
   useRequest,
   useRequestRealtimeSync,
   useUpdateRequestMutation,
 } from '../../src/features/requests/queries';
-import { updateRequestWithVersion } from '../../src/features/requests/api';
+import {
+  isRequestAuthorizationError,
+  updateRequestWithVersion,
+} from '../../src/features/requests/api';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import {
   financeQueryKeys,
@@ -279,6 +284,26 @@ function normalizeOrderRouteId(value) {
   if (!normalized) return null;
   if (ROUTE_PLACEHOLDER_RE.test(normalized)) return null;
   return normalized;
+}
+
+function isEntityBoundToOrder(entity, orderId) {
+  const normalizedOrderId = normalizeOrderRouteId(orderId);
+  const entityOrderId = normalizeOrderRouteId(entity?.order_id ?? entity?.id);
+  return Boolean(normalizedOrderId && entityOrderId && entityOrderId === normalizedOrderId);
+}
+
+function resolveCompanyOrderStatusKey(status, statuses) {
+  const rawStatus = String(status || '').trim();
+  if (!rawStatus) return '';
+  const normalizedStatus = normalizeOrderStatusFilterKey(rawStatus);
+  return (
+    (Array.isArray(statuses) ? statuses : []).find(
+      (item) =>
+        String(item?.status_key || '') === rawStatus ||
+        String(item?.status_key || '') === normalizedStatus ||
+        String(item?.name || '') === rawStatus,
+    )?.status_key || normalizedStatus
+  );
 }
 
 function normalizeDepartureTimeString(input) {
@@ -564,6 +589,7 @@ function OrderDetailsContent() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
+  const mapAppChooserRef = useRef(null);
 
   const applyNavBar = useCallback(async () => {
     try {
@@ -590,6 +616,32 @@ function OrderDetailsContent() {
     }
     return normalizeOrderRouteId(last);
   }, [idParam, pathname]);
+
+  const authCanVerifySession =
+    auth.isAuthenticated === true && auth.isInitializing !== true && !!authUserId;
+  const [verifiedSessionUserId, setVerifiedSessionUserId] = useState(null);
+  useEffect(() => {
+    let active = true;
+    setVerifiedSessionUserId(null);
+
+    if (!authCanVerifySession) return () => { active = false; };
+
+    supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (!active || error) return;
+        const sessionUserId = String(data?.session?.user?.id || '').trim();
+        const hasAccessToken = !!data?.session?.access_token;
+        if (hasAccessToken && sessionUserId === String(authUserId)) {
+          setVerifiedSessionUserId(sessionUserId);
+        }
+      })
+      .catch(() => {});
+
+    return () => { active = false; };
+  }, [authCanVerifySession, authUserId]);
+  const protectedDataReady =
+    authCanVerifySession && verifiedSessionUserId === String(authUserId);
 
   useFocusEffect(
     useCallback(() => {
@@ -625,16 +677,17 @@ function OrderDetailsContent() {
   const initialCachedOrder = useMemo(() => {
     if (!id) return null;
     const cached = queryClient.getQueryData(queryKeys.requests.detail(id));
-    return cached && typeof cached === 'object'
+    return cached && typeof cached === 'object' && isEntityBoundToOrder(cached, id)
       ? { ...cached, time_window_start: cached.time_window_start ?? null }
       : null;
   }, [id, queryClient]);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
-    enabled: !!id,
+    enabled: !!id && protectedDataReady,
   });
   const updateClientMutation = useUpdateClientMutation();
   const firstContentTrackedRef = useRef(false);
   const lastRequestSyncRef = useRef('');
+  const fetchDataRunRef = useRef(0);
 
   const initialDisplayOrder = useMemo(
     () => {
@@ -652,6 +705,8 @@ function OrderDetailsContent() {
     [companySettings?.use_work_types, initialCachedOrder],
   );
   const [order, setOrder] = useState(initialDisplayOrder);
+  const activeOrderIdRef = useRef(id);
+  activeOrderIdRef.current = id;
   const [orderReady, setOrderReady] = useState(() => !!initialDisplayOrder || !id);
   const [role, setRole] = useState(null);
   const [userId, setUserId] = useState(null);
@@ -894,6 +949,10 @@ function OrderDetailsContent() {
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [pendingStatusSelection, setPendingStatusSelection] = useState(null);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [orderPhotosModal, setOrderPhotosModal] = useState({ visible: false, category: null });
   const [amountEditModalVisible, setAmountEditModalVisible] = useState(false);
@@ -923,6 +982,7 @@ function OrderDetailsContent() {
   const [selectedFinanceEntry, setSelectedFinanceEntry] = useState(null);
   const [financeEntryDraft, setFinanceEntryDraft] = useState({
     id: null,
+    order_id: null,
     kind: 'expense',
     calc_mode: 'fixed',
     percent_base: 'base_price',
@@ -942,8 +1002,6 @@ function OrderDetailsContent() {
   const [financeSaving, setFinanceSaving] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
-  const [orderPhotosModalSuspended, setOrderPhotosModalSuspended] = useState(false);
-  const [pendingOrderPhotoViewer, setPendingOrderPhotoViewer] = useState(null);
   const [financeViewerVisible, setFinanceViewerVisible] = useState(false);
   const [financeViewerPhotos, setFinanceViewerPhotos] = useState([]);
   const [financeViewerIndex, setFinanceViewerIndex] = useState(0);
@@ -989,6 +1047,7 @@ function OrderDetailsContent() {
   const activeOrderPhotoUploadsRef = useRef(new Set());
   const orderPhotoRotateJobsRef = useRef(new Map());
   const financePhotoRotateJobsRef = useRef(new Map());
+  const statusMutationOrderIdRef = useRef(null);
 
   useEffect(() => {
     if (!isSoloAdmin) return;
@@ -1024,19 +1083,60 @@ function OrderDetailsContent() {
   // Always-current order ref — prevents stale closures in parallel uploads
   const orderRef = useRef(order);
   useEffect(() => { orderRef.current = order; }, [order]);
+  const previousRouteOrderIdRef = useRef(id);
+  useEffect(() => {
+    if (previousRouteOrderIdRef.current === id) return;
+    previousRouteOrderIdRef.current = id;
+    lastRequestSyncRef.current = '';
+    orderRef.current = null;
+    setOrder(null);
+    setOrderReady(!id);
+    setCompanyId(null);
+    setSelectedFinanceEntry(null);
+    setPendingFinanceEntryEdit(null);
+    setPendingFinanceEntryKind(null);
+    setFinanceEntryModalVisible(false);
+    setFinanceEntryViewModalVisible(false);
+    setFinanceEntryDeleteConfirmVisible(false);
+    setFinanceEntryPhotosModalVisible(false);
+    setAssigneeModalVisible(false);
+    setStatusModalVisible(false);
+    setStatusSaving(false);
+    setPendingStatusSelection(null);
+    setUsersLoading(false);
+    setUsers([]);
+    statusMutationOrderIdRef.current = null;
+    setFinanceEntryLocalPending([]);
+    financeEntryInitialPhotoUrlsRef.current = [];
+    setFinanceEntryFieldErrors({});
+    setFinanceEntrySubmitAttempt(false);
+    setFinanceEntryDraft({
+      id: null,
+      order_id: null,
+      kind: 'expense',
+      calc_mode: 'fixed',
+      percent_base: 'base_price',
+      expense_payer: 'executor',
+      title: '',
+      note: '',
+      input_amount: '',
+      input_percent: '',
+      photo_urls: [],
+    });
+  }, [id]);
 
   const { data: requestData, refetch: refetchRequestData } = useRequest(id, {
-    enabled: !!id,
+    enabled: !!id && protectedDataReady,
     staleTime: 45 * 1000,
     refetchOnMount: false,
   });
   const requestDataRef = useRef(requestData);
   useEffect(() => {
-    requestDataRef.current = requestData;
-  }, [requestData]);
+    requestDataRef.current = isEntityBoundToOrder(requestData, id) ? requestData : null;
+  }, [id, requestData]);
   const updateRequestMutation = useUpdateRequestMutation();
   const financeEntriesQuery = useOrderFinanceEntries(id, {
-    enabled: !!id && canViewFinanceSection,
+    enabled: !!id && protectedDataReady && canViewFinanceSection,
   });
   const upsertFinanceEntryMutation = useUpsertOrderFinanceEntryMutation(id);
   const deleteFinanceEntryMutation = useDeleteOrderFinanceEntryMutation(id);
@@ -1057,7 +1157,13 @@ function OrderDetailsContent() {
         expectedUpdatedAt,
         base,
       });
-      if (next?.id) setOrder((prev) => ({ ...(prev || {}), ...next }));
+      if (
+        next?.id &&
+        String(activeOrderIdRef.current || '') === String(targetId || '') &&
+        isEntityBoundToOrder(next, targetId)
+      ) {
+        setOrder((prev) => ({ ...(prev || {}), ...next }));
+      }
       return next;
     },
     [queryClient, updateRequestMutation],
@@ -1084,8 +1190,11 @@ function OrderDetailsContent() {
     [queryClient],
   );
   const financeEntries = useMemo(
-    () => (Array.isArray(financeEntriesQuery.data) ? financeEntriesQuery.data : []),
-    [financeEntriesQuery.data],
+    () =>
+      (Array.isArray(financeEntriesQuery.data) ? financeEntriesQuery.data : []).filter(
+        (entry) => isEntityBoundToOrder(entry, id),
+      ),
+    [financeEntriesQuery.data, id],
   );
   const orderedFinanceEntries = useMemo(
     () =>
@@ -1108,6 +1217,10 @@ function OrderDetailsContent() {
     [orderedFinanceEntries],
   );
   const isDisplayableFinanceEntry = useCallback((entry) => {
+    // A manually saved entry is user data and must stay visible even when its
+    // current calculated value is zero (for example, a percentage of a base
+    // price that has not been entered yet).
+    if (entry?.is_system !== true) return Boolean(entry?.id);
     const amount = Number(entry?.calculated_amount ?? 0);
     if (!Number.isFinite(amount)) return false;
     return Math.abs(amount) > 0.004;
@@ -1550,6 +1663,11 @@ function OrderDetailsContent() {
       setOrderReady(true);
       return;
     }
+    if (!protectedDataReady) return;
+    const runId = fetchDataRunRef.current + 1;
+    fetchDataRunRef.current = runId;
+    const isActiveRun = () =>
+      activeOrderIdRef.current === id && fetchDataRunRef.current === runId;
 
     try {
       // в”Ђв”Ђ 1. Auth: instant from context (no network) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -1561,25 +1679,48 @@ function OrderDetailsContent() {
       // в”Ђв”Ђ 2. Order data: show cache instantly, then refetch в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       const cachedOrderRaw = queryClient.getQueryData(queryKeys.requests.detail(id));
 
-      let fetchedOrderRaw = isOrderSnapshotReadyForDisplay(cachedOrderRaw) ? cachedOrderRaw : null;
-      if (!fetchedOrderRaw && isOrderSnapshotReadyForDisplay(requestDataRef.current)) {
+      let fetchedOrderRaw =
+        isEntityBoundToOrder(cachedOrderRaw, id) && isOrderSnapshotReadyForDisplay(cachedOrderRaw)
+          ? cachedOrderRaw
+          : null;
+      if (
+        !fetchedOrderRaw &&
+        isEntityBoundToOrder(requestDataRef.current, id) &&
+        isOrderSnapshotReadyForDisplay(requestDataRef.current)
+      ) {
         fetchedOrderRaw = requestDataRef.current;
       }
+      const cachedOrderNeedsStatusAdvance = Boolean(
+        fetchedOrderRaw &&
+          uid &&
+          fetchedOrderRaw.assigned_to === uid &&
+          (statusSystem.isEnabled
+            ? fetchedOrderRaw.status === 'new'
+            : fetchedOrderRaw.status === mapStatusToDb('new')),
+      );
       if (fetchedOrderRaw) {
-        refetchRequestData()
-          .then((refetched) => {
-            const fresh = refetched?.data;
-            if (!isOrderSnapshotReadyForDisplay(fresh)) return;
-            const nextOrder = { ...fresh, time_window_start: fresh.time_window_start ?? null };
-            queryClient.setQueryData(queryKeys.requests.detail(id), nextOrder);
-            setOrder((prev) => ({ ...(prev || {}), ...nextOrder }));
-            setCompanyId((prev) => prev || nextOrder.company_id || null);
-            setWorkTypeId(nextOrder.work_type_id ?? null);
-            if (nextOrder.work_type_id || nextOrder.work_type_name || nextOrder.work_type?.name) {
-              setUseWorkTypesFlag(true);
-            }
-          })
-          .catch(() => {});
+        // The automatic status mutation below already returns a fresh detail row.
+        // Do not race it with a stale-while-revalidate response for the same row.
+        if (!cachedOrderNeedsStatusAdvance) {
+          refetchRequestData()
+            .then((refetched) => {
+              const fresh = refetched?.data;
+              if (
+                !isActiveRun() ||
+                !isEntityBoundToOrder(fresh, id) ||
+                !isOrderSnapshotReadyForDisplay(fresh)
+              ) return;
+              const nextOrder = { ...fresh, time_window_start: fresh.time_window_start ?? null };
+              queryClient.setQueryData(queryKeys.requests.detail(id), nextOrder);
+              setOrder((prev) => ({ ...(prev || {}), ...nextOrder }));
+              setCompanyId((prev) => prev || nextOrder.company_id || null);
+              setWorkTypeId(nextOrder.work_type_id ?? null);
+              if (nextOrder.work_type_id || nextOrder.work_type_name || nextOrder.work_type?.name) {
+                setUseWorkTypesFlag(true);
+              }
+            })
+            .catch(() => {});
+        }
       } else {
         try {
           const refetched = await refetchRequestData();
@@ -1591,72 +1732,35 @@ function OrderDetailsContent() {
           fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
         }
       }
-      if (!fetchedOrderRaw) throw new Error('Order not found');
+      if (!isActiveRun()) return;
+      if (!isEntityBoundToOrder(fetchedOrderRaw, id)) throw new Error('Order not found');
 
       const fetchedOrder = {
         ...fetchedOrderRaw,
         time_window_start: fetchedOrderRaw.time_window_start ?? null,
       };
 
-      // в”Ђв”Ђ 4. Auto-status "Новый"в†’"В работе" в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-      let effectiveOrder = fetchedOrder;
+      // Publish the request as soon as its primary payload is available. Status
+      // persistence and reference-data enrichment must not hold the first paint.
       const hasProgressStatus = statusSystem.regularStatuses.some(
         (status) => status.status_key === 'in_progress',
       );
       const isNewStatus = statusSystem.isEnabled
         ? fetchedOrder.status === 'new'
         : fetchedOrder.status === mapStatusToDb('new');
-      if (uid && isNewStatus && fetchedOrder.assigned_to === uid) {
-        try {
-          const nextStatus = statusSystem.isEnabled
-            ? hasProgressStatus
-              ? 'in_progress'
-              : null
-            : mapStatusToDb('in_progress');
-          await updateRequestWithVersion(id, { status: nextStatus }, fetchedOrder?.updated_at || null);
-          queryClient.invalidateQueries({ queryKey: ['requests'] });
-          queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
-          const refreshed = await ensureRequestPrefetch(queryClient, id);
-          effectiveOrder = refreshed || { ...fetchedOrder, status: nextStatus };
-        } catch (e) {
-          console.warn('Persist status error:', e);
-          effectiveOrder = fetchedOrder;
-        }
-      }
+      const shouldAdvanceStatus = uid && isNewStatus && fetchedOrder.assigned_to === uid;
+      const nextStatus = shouldAdvanceStatus
+        ? statusSystem.isEnabled
+          ? hasProgressStatus
+            ? 'in_progress'
+            : null
+          : mapStatusToDb('in_progress')
+        : fetchedOrder.status;
+      const effectiveOrder = shouldAdvanceStatus
+        ? { ...fetchedOrder, status: nextStatus }
+        : fetchedOrder;
 
-      const effectiveWorkTypeId = String(effectiveOrder?.work_type_id || '').trim();
-      const effectiveWorkTypeName = String(
-        effectiveOrder?.work_type_name || effectiveOrder?.work_type?.name || '',
-      ).trim();
-      try {
-        const workTypeCompanyId = effectiveOrder?.company_id || (await getMyCompanyId());
-        if (workTypeCompanyId) {
-          const workTypePayload = await fetchWorkTypes(workTypeCompanyId, {
-            includeDisabled: true,
-          });
-          setUseWorkTypesFlag(!!workTypePayload?.useWorkTypes);
-          setWorkTypes(workTypePayload?.types || []);
-          if (effectiveWorkTypeId && !effectiveWorkTypeName) {
-            const resolvedWorkType = (workTypePayload?.types || []).find(
-              (item) => String(item?.id || '').trim() === effectiveWorkTypeId,
-            );
-            if (resolvedWorkType?.name) {
-              effectiveOrder = {
-                ...effectiveOrder,
-                work_type_name: resolvedWorkType.name,
-                work_type: resolvedWorkType,
-              };
-              queryClient.setQueryData(queryKeys.requests.detail(id), (previous) => ({
-                ...(previous || {}),
-                ...effectiveOrder,
-              }));
-            }
-          }
-        }
-      } catch {}
-
-      // в”Ђв”Ђ 5. Resolve media (async, non-blocking for screen) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-      // Show order + form immediately, resolve media in background
+      if (!isActiveRun() || !isEntityBoundToOrder(effectiveOrder, id)) return;
       hydrateFormFields(effectiveOrder);
       setOrder(effectiveOrder);
       setCompanyId((prev) => prev || effectiveOrder.company_id || null);
@@ -1665,10 +1769,51 @@ function OrderDetailsContent() {
         setUseWorkTypesFlag(true);
       }
       setOrderReady(true);
-
+      initialFormSnapshotRef.current = makeSnapshotFromOrder(effectiveOrder);
 
       const media = orderMediaRef.current;
       const bgTasks = [];
+
+      // Persist the automatic "new" -> "in progress" transition without a
+      // second blocking detail fetch. The mutation already returns a fresh row.
+      if (shouldAdvanceStatus) {
+        setStatusSaving(true);
+        bgTasks.push(
+          updateRequestWithVersion(
+            id,
+            { status: nextStatus },
+            fetchedOrder?.updated_at || null,
+          )
+            .then((updatedOrder) => {
+              if (!isActiveRun() || !isEntityBoundToOrder(updatedOrder, id)) return;
+              const normalizedOrder = {
+                ...updatedOrder,
+                time_window_start: updatedOrder.time_window_start ?? null,
+              };
+              const cachedUpdatedOrder = markRequestDetailLoaded(normalizedOrder);
+              queryClient.setQueryData(queryKeys.requests.detail(id), cachedUpdatedOrder);
+              setOrder((previous) => ({ ...(previous || {}), ...cachedUpdatedOrder }));
+              queryClient.invalidateQueries({ queryKey: ['requests', 'all'] });
+              queryClient.invalidateQueries({ queryKey: ['requests', 'my'] });
+              queryClient.invalidateQueries({ queryKey: ['requests', 'calendar'] });
+            })
+            .catch((error) => {
+              console.warn('Persist status error:', error);
+              if (!isActiveRun()) return;
+              const latestOrder = isEntityBoundToOrder(error?.latest, id)
+                ? error.latest
+                : fetchedOrder;
+              const cachedLatestOrder = markRequestDetailLoaded(latestOrder);
+              queryClient.setQueryData(queryKeys.requests.detail(id), cachedLatestOrder);
+              setOrder((previous) => ({ ...(previous || {}), ...cachedLatestOrder }));
+            })
+            .finally(() => {
+              if (isActiveRun() && statusMutationOrderIdRef.current == null) {
+                setStatusSaving(false);
+              }
+            }),
+        );
+      }
 
       // 5a. Yandex media resolution
       bgTasks.push(
@@ -1678,7 +1823,7 @@ function OrderDetailsContent() {
 
       bgTasks.push(
         media.syncPhotos(effectiveOrder.id).then((fresh) => {
-          if (!fresh) return;
+          if (!fresh || !isActiveRun()) return;
           setOrder((prev) => {
             const cats = ORDER_MEDIA_FIELD_KEYS;
             const next = { ...prev };
@@ -1698,6 +1843,8 @@ function OrderDetailsContent() {
         }).catch(() => {})
       );
 
+      const executorCompanyId = String(effectiveOrder.company_id || '').trim();
+
       // 5c. Executor name
       if (effectiveOrder.assigned_to) {
         const cachedName = deriveExecutorNameInstant(effectiveOrder);
@@ -1706,9 +1853,13 @@ function OrderDetailsContent() {
         }
         // Always refresh assignee name in background to prevent stale cache after profile edits.
         bgTasks.push(
-          supabase.from('profiles').select('first_name, middle_name, last_name').eq('id', effectiveOrder.assigned_to).single()
+          supabase.from('profiles')
+            .select('first_name, middle_name, last_name')
+            .eq('id', effectiveOrder.assigned_to)
+            .eq('company_id', executorCompanyId)
+            .single()
             .then(({ data: executorProfile }) => {
-              if (executorProfile) {
+              if (executorProfile && isActiveRun()) {
                 const full = formatPersonName(executorProfile);
                 if (full) {
                   setCachedExecutorName(effectiveOrder.assigned_to, full);
@@ -1720,27 +1871,58 @@ function OrderDetailsContent() {
       }
 
       // 5d. Users list
-      bgTasks.push(
-        supabase.from('profiles').select('id, first_name, middle_name, last_name, role')
-          .in('role', ['worker', 'dispatcher', 'admin'])
-          .order('last_name', { ascending: true })
-          .then(({ data: execList }) => setUsers(execList || []))
-          .catch(() => {})
-      );
+      setUsers([]);
+      if (executorCompanyId) {
+        setUsersLoading(true);
+        bgTasks.push(
+          supabase.from('profiles')
+            .select('id, company_id, first_name, middle_name, last_name, role')
+            .eq('company_id', executorCompanyId)
+            .in('role', ['worker', 'dispatcher', 'admin'])
+            .order('last_name', { ascending: true })
+            .then(({ data: execList }) => {
+              if (!isActiveRun()) return;
+              const scopedExecutors = (Array.isArray(execList) ? execList : []).filter(
+                (profile) => String(profile?.company_id || '') === executorCompanyId,
+              );
+              setUsers(scopedExecutors);
+            })
+            .catch(() => {})
+            .finally(() => {
+              if (isActiveRun()) setUsersLoading(false);
+            }),
+        );
+      } else {
+        setUsersLoading(false);
+      }
 
-      initialFormSnapshotRef.current = makeSnapshotFromOrder(effectiveOrder);
       void Promise.allSettled(bgTasks);
     } catch (e) {
+      if (!isActiveRun()) return;
       const errorName = String(e?.name || '').trim();
       if (errorName === 'CancelledError') {
         setOrderReady(true);
         return;
+      }
+      if (isRequestAuthorizationError(e)) {
+        const sessionResult = await supabase.auth.getSession().catch(() => null);
+        const activeSessionUserId = String(
+          sessionResult?.data?.session?.user?.id || '',
+        ).trim();
+        if (!activeSessionUserId || activeSessionUserId !== String(authUserId || '')) {
+          // A lost/refreshing session is handled by the auth provider. Close
+          // this screen's gate immediately and avoid a noisy expected warning.
+          setVerifiedSessionUserId(null);
+          setOrderReady(true);
+          return;
+        }
       }
       console.warn('Fetch data error:', e);
       setOrderReady(true);
     }
   }, [
     id,
+    protectedDataReady,
     authUserId,
     authRole,
     hydrateFormFields,
@@ -2437,11 +2619,17 @@ function OrderDetailsContent() {
 
   const openCreateFinanceEntry = useCallback(
     (kind = 'expense') => {
+      const routeOrderId = normalizeOrderRouteId(id);
+      if (!routeOrderId || !isEntityBoundToOrder(order, routeOrderId)) {
+        showWarning(t('order_save_error'));
+        return;
+      }
       financeEntryInitialPhotoUrlsRef.current = [];
       setFinanceEntryFieldErrors({});
       setFinanceEntrySubmitAttempt(false);
       setFinanceEntryDraft({
         id: null,
+        order_id: routeOrderId,
         kind,
         calc_mode: 'fixed',
         percent_base: normalizeFinancePercentBase(kind, 'base_price'),
@@ -2454,11 +2642,20 @@ function OrderDetailsContent() {
       });
       setFinanceEntryModalVisible(true);
     },
-    [getDefaultFinanceEntryTitle, isSoloAdmin, normalizeFinancePercentBase],
+    [getDefaultFinanceEntryTitle, id, isSoloAdmin, normalizeFinancePercentBase, order, showWarning, t],
   );
 
   const openEditFinanceEntry = useCallback((entry) => {
-    if (!entry?.id) return;
+    const routeOrderId = normalizeOrderRouteId(id);
+    if (
+      !entry?.id ||
+      !routeOrderId ||
+      !isEntityBoundToOrder(order, routeOrderId) ||
+      !isEntityBoundToOrder(entry, routeOrderId)
+    ) {
+      showWarning(t('order_save_error'));
+      return;
+    }
     financeEntryInitialPhotoUrlsRef.current = Array.isArray(entry.photo_urls)
       ? entry.photo_urls.map((value) => String(value || '')).filter(Boolean)
       : [];
@@ -2466,6 +2663,7 @@ function OrderDetailsContent() {
     setFinanceEntrySubmitAttempt(false);
     setFinanceEntryDraft({
       id: entry.id,
+      order_id: routeOrderId,
       kind: String(entry.kind || 'expense'),
       calc_mode: String(entry.calc_mode || 'fixed'),
       percent_base: normalizeFinancePercentBase(entry.kind, entry.percent_base),
@@ -2482,15 +2680,24 @@ function OrderDetailsContent() {
         : [],
     });
     setFinanceEntryModalVisible(true);
-  }, [isSoloAdmin, normalizeFinancePercentBase]);
+  }, [id, isSoloAdmin, normalizeFinancePercentBase, order, showWarning, t]);
 
   const openFinanceEntryView = useCallback((entry) => {
-    if (!entry?.id) return;
+    const routeOrderId = normalizeOrderRouteId(id);
+    if (
+      !entry?.id ||
+      !routeOrderId ||
+      !isEntityBoundToOrder(order, routeOrderId) ||
+      !isEntityBoundToOrder(entry, routeOrderId)
+    ) {
+      showWarning(t('order_save_error'));
+      return;
+    }
     setSelectedFinanceEntry(entry);
     setFinanceEntryViewCommentExpanded(false);
     setFinanceEntryViewCommentExpandable(false);
     setFinanceEntryViewModalVisible(true);
-  }, []);
+  }, [id, order, showWarning, t]);
 
   const startEditFinanceEntryFromView = useCallback(() => {
     if (!selectedFinanceEntry) return;
@@ -2522,6 +2729,7 @@ function OrderDetailsContent() {
       : [];
     setFinanceEntryDraft({
       id: selectedFinanceEntry.id,
+      order_id: selectedFinanceEntry.order_id,
       kind: String(selectedFinanceEntry.kind || 'expense'),
       calc_mode: String(selectedFinanceEntry.calc_mode || 'fixed'),
       percent_base: normalizeFinancePercentBase(selectedFinanceEntry.kind, selectedFinanceEntry.percent_base),
@@ -3059,11 +3267,20 @@ function OrderDetailsContent() {
   }, [id]);
 
   const saveFinanceEntry = useCallback(async () => {
-    if (!id) return;
+    const targetOrderId = normalizeOrderRouteId(financeEntryDraft.order_id);
+    const routeOrderId = normalizeOrderRouteId(id);
+    if (
+      !targetOrderId ||
+      targetOrderId !== routeOrderId ||
+      !isEntityBoundToOrder(order, targetOrderId)
+    ) {
+      showWarning(t('order_save_error'));
+      return;
+    }
     const resolvedCompanyId =
-      companyId ||
       order?.company_id ||
-      requestData?.company_id ||
+      (isEntityBoundToOrder(requestData, targetOrderId) ? requestData?.company_id : null) ||
+      companyId ||
       auth?.user?.company_id ||
       null;
     if (!resolvedCompanyId) {
@@ -3101,7 +3318,7 @@ function OrderDetailsContent() {
       const savedEntry = await upsertFinanceEntryMutation.mutateAsync({
         id: financeEntryDraft.id || undefined,
         company_id: resolvedCompanyId,
-        order_id: id,
+        order_id: targetOrderId,
         kind: financeEntryDraft.kind,
         calc_mode: financeEntryDraft.calc_mode,
         percent_base: financeEntryDraft.percent_base,
@@ -3145,6 +3362,7 @@ function OrderDetailsContent() {
       }
 
       await financeEntriesQuery.refetch();
+      if (activeOrderIdRef.current !== targetOrderId) return;
       financeEntryInitialPhotoUrlsRef.current = [];
       setFinanceEntryLocalPending([]);
       setFinanceEntryPhotosModalVisible(false);
@@ -3162,7 +3380,9 @@ function OrderDetailsContent() {
         showToast(t('order_toast_saved'));
       }
     } catch (error) {
-      showWarning(error?.message || t('order_save_error'));
+      if (activeOrderIdRef.current === targetOrderId) {
+        showWarning(error?.message || t('order_save_error'));
+      }
     }
   }, [
     auth?.user?.company_id,
@@ -3176,7 +3396,7 @@ function OrderDetailsContent() {
     isValidFinanceNumericInput,
     isLocalFinancePhotoUrl,
     parseMoney,
-    requestData?.company_id,
+    requestData,
     showToast,
     showWarning,
     setFinanceEntryFieldErrors,
@@ -3184,7 +3404,7 @@ function OrderDetailsContent() {
     t,
     uploadFinanceEntryLocalUri,
     upsertFinanceEntryMutation,
-    order?.company_id,
+    order,
   ]);
 
   const removeFinanceEntry = useCallback(
@@ -3193,7 +3413,16 @@ function OrderDetailsContent() {
       if (!entry?.id) return;
       if (entry?.is_system && !allowSystemDelete) return;
       try {
-        await deleteFinanceEntryMutation.mutateAsync(entry.id);
+        await deleteFinanceEntryMutation.mutateAsync(
+          entry?.is_system
+            ? {
+                entryId: entry.id,
+                orderId: id,
+                ruleId: entry.rule_id,
+                isSystem: true,
+              }
+            : entry.id,
+        );
         showToast(t('finance_rule_deleted'));
       } catch (error) {
         logClientError(error, {
@@ -3471,40 +3700,43 @@ function OrderDetailsContent() {
     return required.every((cat) => Array.isArray(order[cat]) && order[cat].length > 0);
   }, [order, orderFieldsByKey]);
 
-  const handleFinishOrder = useCallback(async () => {
+  const handleFinishOrder = useCallback(async (targetOrder = orderRef.current) => {
+    const targetOrderId = String(targetOrder?.id || '').trim();
+    if (!targetOrderId) return false;
+
     const missing = [];
     if (
       isOrderFieldVisible('media_file_1') &&
       orderFieldsByKey.get('media_file_1')?.isRequired === true &&
-      (!Array.isArray(order.media_file_1) || order.media_file_1.length === 0)
+      (!Array.isArray(targetOrder.media_file_1) || targetOrder.media_file_1.length === 0)
     ) {
       missing.push(getOrderFieldLabel('media_file_1', t('order_media_field_1')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_2') &&
       orderFieldsByKey.get('media_file_2')?.isRequired === true &&
-      (!Array.isArray(order.media_file_2) || order.media_file_2.length === 0)
+      (!Array.isArray(targetOrder.media_file_2) || targetOrder.media_file_2.length === 0)
     ) {
       missing.push(getOrderFieldLabel('media_file_2', t('order_media_field_2')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_3') &&
       orderFieldsByKey.get('media_file_3')?.isRequired === true &&
-      (!Array.isArray(order.media_file_3) || order.media_file_3.length === 0)
+      (!Array.isArray(targetOrder.media_file_3) || targetOrder.media_file_3.length === 0)
     ) {
       missing.push(getOrderFieldLabel('media_file_3', t('order_media_field_3')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_4') &&
       orderFieldsByKey.get('media_file_4')?.isRequired === true &&
-      (!Array.isArray(order.media_file_4) || order.media_file_4.length === 0)
+      (!Array.isArray(targetOrder.media_file_4) || targetOrder.media_file_4.length === 0)
     ) {
       missing.push(getOrderFieldLabel('media_file_4', t('order_media_field_4')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_5') &&
       orderFieldsByKey.get('media_file_5')?.isRequired === true &&
-      (!Array.isArray(order.media_file_5) || order.media_file_5.length === 0)
+      (!Array.isArray(targetOrder.media_file_5) || targetOrder.media_file_5.length === 0)
     ) {
       missing.push(getOrderFieldLabel('media_file_5', t('order_media_field_5')).toLowerCase());
     }
@@ -3516,18 +3748,18 @@ function OrderDetailsContent() {
           missing.join(', '),
         ),
       );
-      return;
+      return false;
     }
 
     const doneStatusAvailable =
       statusSystem.isEnabled &&
       statusSystem.regularStatuses.some((status) => status.status_key === 'done');
-    if (!doneStatusAvailable) return;
+    if (!doneStatusAvailable) return false;
 
     let data = null;
     let error = null;
     try {
-      data = await saveOrderPatch(order.id, { status: 'done' });
+      data = await saveOrderPatch(targetOrderId, { status: 'done' }, { base: targetOrder });
     } catch (e) {
       error = e;
     }
@@ -3536,22 +3768,143 @@ function OrderDetailsContent() {
       if (error?.code === 'CONFLICT' && error?.latest) {
         setOrder(error.latest);
         showToast(t('order_stale_updated'));
-        return;
+        return false;
       }
       showToast(t('order_toast_finish_error'));
-      return;
+      return false;
     }
 
-    const nextOrder = data || { ...order, status: 'done' };
+    if (String(activeOrderIdRef.current || '') !== targetOrderId) return false;
+
+    const nextOrder = data || { ...targetOrder, status: 'done' };
     setOrder(nextOrder);
     if (nextOrder?.id) {
       queryClient.setQueryData(queryKeys.requests.detail(nextOrder.id), nextOrder);
       queryClient.invalidateQueries({ queryKey: ['requests'] });
     }
     showToast(t('order_toast_order_finished'));
-  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, queryClient, saveOrderPatch, showToast, statusSystem.isEnabled, statusSystem.regularStatuses, t]);
+    return true;
+  }, [getOrderFieldLabel, isOrderFieldVisible, orderFieldsByKey, queryClient, saveOrderPatch, showToast, statusSystem.isEnabled, statusSystem.regularStatuses, t]);
 
-  const onFinishPress = useCallback(() => handleFinishOrder(), [handleFinishOrder]);
+  const onFinishPress = useCallback(async () => {
+    const targetOrder = orderRef.current;
+    const targetOrderId = String(targetOrder?.id || '').trim();
+    if (!targetOrderId || statusSaving || statusMutationOrderIdRef.current != null) return;
+
+    statusMutationOrderIdRef.current = targetOrderId;
+    setStatusSaving(true);
+    try {
+      await handleFinishOrder(targetOrder);
+    } finally {
+      if (statusMutationOrderIdRef.current === targetOrderId) {
+        statusMutationOrderIdRef.current = null;
+        if (String(activeOrderIdRef.current || '') === targetOrderId) {
+          setStatusSaving(false);
+        }
+      }
+    }
+  }, [handleFinishOrder, statusSaving]);
+
+  const handleOrderStatusSelect = useCallback(
+    async (item, options = {}) => {
+      const nextStatus = String(item?.id || '').trim();
+      const currentOrder = orderRef.current;
+      const targetOrderId = String(currentOrder?.id || '').trim();
+      const expectedOrderId = String(options?.expectedOrderId || '').trim();
+      if (
+        !nextStatus ||
+        !targetOrderId ||
+        (expectedOrderId && expectedOrderId !== targetOrderId) ||
+        statusSaving ||
+        statusMutationOrderIdRef.current != null
+      ) {
+        return;
+      }
+
+      setStatusModalVisible(false);
+      const rawCurrentStatus = String(currentOrder?.status || '').trim();
+      const resolvedCurrentStatus = resolveCompanyOrderStatusKey(
+        rawCurrentStatus,
+        statusSystem.statuses,
+      );
+      if (nextStatus === rawCurrentStatus || nextStatus === resolvedCurrentStatus) return;
+
+      let selectedAssigneeId = String(options?.assigneeId || '').trim() || null;
+      const leavingFeed = resolvedCurrentStatus === 'feed' && nextStatus !== 'feed';
+      if (leavingFeed && !selectedAssigneeId) {
+        if (isSoloAdmin && authUserId) {
+          selectedAssigneeId = String(authUserId);
+        } else {
+          setPendingStatusSelection({ orderId: targetOrderId, statusKey: nextStatus });
+          return;
+        }
+      }
+      if (leavingFeed && selectedAssigneeId && !isSoloAdmin) {
+        const targetCompanyId = String(currentOrder?.company_id || '').trim();
+        const selectedAssigneeIsScoped = users.some(
+          (profile) =>
+            String(profile?.id || '') === selectedAssigneeId &&
+            String(profile?.company_id || '') === targetCompanyId,
+        );
+        if (!selectedAssigneeIsScoped) {
+          setPendingStatusSelection(null);
+          showToast(t('order_save_error'));
+          return;
+        }
+      }
+
+      setPendingStatusSelection(null);
+
+      statusMutationOrderIdRef.current = targetOrderId;
+      setStatusSaving(true);
+      try {
+        if (nextStatus === 'done') {
+          await handleFinishOrder(currentOrder);
+          return;
+        }
+
+        const patch =
+          nextStatus === 'feed'
+            ? { status: nextStatus, assigned_to: null }
+            : selectedAssigneeId
+              ? { status: nextStatus, assigned_to: selectedAssigneeId }
+            : { status: nextStatus };
+        const updatedOrder = await saveOrderPatch(targetOrderId, patch, { base: currentOrder });
+        if (String(activeOrderIdRef.current || '') !== targetOrderId) return;
+
+        const nextOrder = updatedOrder || { ...currentOrder, ...patch };
+        setOrder(nextOrder);
+        if (nextStatus === 'feed') {
+          setAssigneeId(null);
+          setExecutorName(null);
+          setToFeed(true);
+        } else {
+          if (selectedAssigneeId) {
+            setAssigneeId(selectedAssigneeId);
+            setExecutorName(String(options?.assigneeLabel || '').trim() || null);
+          }
+          setToFeed(false);
+        }
+        showToast(t('order_toast_status_updated'));
+      } catch (error) {
+        if (String(activeOrderIdRef.current || '') !== targetOrderId) return;
+        if (error?.code === 'CONFLICT' && isEntityBoundToOrder(error?.latest, targetOrderId)) {
+          setOrder(markRequestDetailLoaded(error.latest));
+          showToast(t('order_stale_updated'));
+        } else {
+          showToast(t('order_save_error'));
+        }
+      } finally {
+        if (statusMutationOrderIdRef.current === targetOrderId) {
+          statusMutationOrderIdRef.current = null;
+          if (String(activeOrderIdRef.current || '') === targetOrderId) {
+            setStatusSaving(false);
+          }
+        }
+      }
+    },
+    [authUserId, handleFinishOrder, isSoloAdmin, saveOrderPatch, showToast, statusSaving, statusSystem.statuses, t, users],
+  );
 
   const onAcceptOrder = useCallback(async () => {
     try {
@@ -4038,18 +4391,6 @@ function OrderDetailsContent() {
     setViewerVisible(false);
   }, []);
 
-  const handleOrderPhotosModalDismiss = useCallback(() => {
-    if (!pendingOrderPhotoViewer) return;
-    const { photos, index, category, label } = pendingOrderPhotoViewer;
-    setPendingOrderPhotoViewer(null);
-    const opened = openViewer(photos, index, category, label);
-    if (!opened) setOrderPhotosModalSuspended(false);
-  }, [openViewer, pendingOrderPhotoViewer]);
-
-  const handleViewerDismiss = useCallback(() => {
-    if (orderPhotosModalSuspended) setOrderPhotosModalSuspended(false);
-  }, [orderPhotosModalSuspended]);
-
   const handleViewerDelete = useCallback(
     (viewerIdx) => {
       const category = viewerCategoryRef.current;
@@ -4195,7 +4536,12 @@ function OrderDetailsContent() {
   }, [canViewOrderPhotos, order]);
 
   useEffect(() => {
-    if (!requestData || editMode || !isOrderSnapshotReadyForDisplay(requestData)) return;
+    if (
+      !requestData ||
+      editMode ||
+      !isEntityBoundToOrder(requestData, id) ||
+      !isOrderSnapshotReadyForDisplay(requestData)
+    ) return;
     const syncToken = buildOrderSyncToken(requestData);
     if (lastRequestSyncRef.current === syncToken) return;
     lastRequestSyncRef.current = syncToken;
@@ -4212,7 +4558,7 @@ function OrderDetailsContent() {
     if (Object.prototype.hasOwnProperty.call(requestData, 'work_type_id')) {
       setWorkTypeId(requestData?.work_type_id ?? null);
     }
-  }, [requestData, editMode, hasMeaningfulOrderDiff, buildOrderSyncToken, isSoloAdmin]);
+  }, [requestData, editMode, hasMeaningfulOrderDiff, buildOrderSyncToken, id, isSoloAdmin]);
 
   useEffect(() => {
     if (!order?.id || firstContentTrackedRef.current) return;
@@ -4220,7 +4566,7 @@ function OrderDetailsContent() {
     markFirstContent('RequestView');
   }, [order, order?.id]);
 
-  useRequestRealtimeSync({ enabled: !!id, companyId });
+  useRequestRealtimeSync({ enabled: !!id && protectedDataReady, companyId });
 
   useEffect(() => {
     applyNavBar();
@@ -4229,8 +4575,7 @@ function OrderDetailsContent() {
   useEffect(() => {
     if (!canViewOrderPhotos && orderPhotosModal.visible) {
       setOrderPhotosModal({ visible: false, category: null });
-      setOrderPhotosModalSuspended(false);
-      setPendingOrderPhotoViewer(null);
+      setViewerVisible(false);
     }
     if (!canViewOrderPhotos && financeEntryPhotosModalVisible) {
       closeFinanceEntryPhotosModal();
@@ -4549,6 +4894,7 @@ function OrderDetailsContent() {
   }, [editMode, initialDisplayOrder]);
 
   useEffect(() => {
+    if (!protectedDataReady) return undefined;
     let alive = true;
     (async () => {
       try {
@@ -4570,7 +4916,7 @@ function OrderDetailsContent() {
     return () => {
       alive = false;
     };
-  }, [companyId]);
+  }, [companyId, protectedDataReady]);
 
   const loading = !orderReady;
 
@@ -4684,10 +5030,10 @@ function OrderDetailsContent() {
   const linkedObjectId = order?.object_id ? String(order.object_id) : null;
   const canShowOrderPhone = shouldShowOrderPhoneForRole(order, companySettings, authRole);
   const { data: linkedClient } = useClient(linkedClientId, {
-    enabled: !!linkedClientId && canViewClients && showFeedCustomerField,
+    enabled: protectedDataReady && !!linkedClientId && canViewClients && showFeedCustomerField,
   });
   const { data: linkedObject } = useClientObject(linkedObjectId, {
-    enabled: !!linkedObjectId && canViewObjects && showFeedAddressField,
+    enabled: protectedDataReady && !!linkedObjectId && canViewObjects && showFeedAddressField,
   });
   const customerDisplayName = useMemo(() => {
     const liveClientName = formatClientNameForOrder(linkedClient);
@@ -4852,6 +5198,77 @@ function OrderDetailsContent() {
     };
   }, [canViewClients, order?.client_id, order?.id, showFeedCustomerField]);
 
+  const currentOrderStatusKey = useMemo(() => {
+    return resolveCompanyOrderStatusKey(order?.status, statusSystem.statuses) || null;
+  }, [order?.status, statusSystem.statuses]);
+  const currentOrderStatusLabel = useMemo(
+    () => getOrderStatusLabel(currentOrderStatusKey || order?.status, statusSystem.statuses, t),
+    [currentOrderStatusKey, order?.status, statusSystem.statuses, t],
+  );
+  const isAssignedToCurrentUser =
+    !!order?.assigned_to && String(order.assigned_to) === String(authUserId || '');
+  const canCompleteOrder =
+    !isReadOnlyBySubscription &&
+    !!order?.assigned_to &&
+    (isAssignedToCurrentUser ? has('canCompleteOwnOrders') : has('canCompleteOtherOrders'));
+  const doneStatusAvailable =
+    statusSystem.isEnabled &&
+    statusSystem.regularStatuses.some((status) => status.status_key === 'done');
+  const canEditAnyOrderStatus = statusSystem.isEnabled && canEdit();
+  const canCompleteStatusTransition =
+    doneStatusAvailable && currentOrderStatusKey !== 'done' && canCompleteOrder;
+  const canChangeOrderStatus = canEditAnyOrderStatus || canCompleteStatusTransition;
+  const orderStatusItems = useMemo(() => {
+    if (!statusSystem.isEnabled) return [];
+    const availableStatuses = isSoloAdmin
+      ? statusSystem.regularStatuses
+      : statusSystem.selectableStatuses;
+    return availableStatuses
+      .filter((status) => {
+        const statusKey = String(status?.status_key || '');
+        if (!canEditAnyOrderStatus && statusKey !== currentOrderStatusKey && statusKey !== 'done') {
+          return false;
+        }
+        return statusKey !== 'done' || currentOrderStatusKey === 'done' || canCompleteOrder;
+      })
+      .map((status) => ({
+        id: status.status_key,
+        label: getOrderStatusLabel(status.status_key, statusSystem.statuses, t),
+        icon: (
+          <View
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: 6,
+              backgroundColor: status.color || theme.colors.primary,
+            }}
+          />
+        ),
+      }));
+  }, [
+    canCompleteOrder,
+    canEditAnyOrderStatus,
+    currentOrderStatusKey,
+    isSoloAdmin,
+    statusSystem.isEnabled,
+    statusSystem.regularStatuses,
+    statusSystem.selectableStatuses,
+    statusSystem.statuses,
+    t,
+    theme.colors.primary,
+  ]);
+  const canOpenStatusModal = canChangeOrderStatus && orderStatusItems.length > 0 && !statusSaving;
+
+  useEffect(() => {
+    if (!canChangeOrderStatus || orderStatusItems.length === 0) {
+      setStatusModalVisible(false);
+      if (pendingStatusSelection) {
+        setPendingStatusSelection(null);
+        setAssigneeModalVisible(false);
+      }
+    }
+  }, [canChangeOrderStatus, orderStatusItems.length, pendingStatusSelection]);
+
   const onOpenClient = useCallback(() => {
     if (!linkedClientId || !canViewClients) return;
     router.push({
@@ -4887,9 +5304,6 @@ function OrderDetailsContent() {
     order.status === 'feed' ||
     order.status === mapStatusToDb('feed') ||
     order.status === t('order_status_in_feed');
-  const doneStatusAvailable =
-    statusSystem.isEnabled &&
-    statusSystem.regularStatuses.some((status) => status.status_key === 'done');
   const showOrderStatusRow = statusSystem.isEnabled && !!order.status;
   const canAcceptOrder =
     (isInFeedStatus || !statusSystem.isEnabled || !statusSystem.feedEnabled) &&
@@ -4897,12 +5311,6 @@ function OrderDetailsContent() {
     !isSoloAdmin &&
     !isReadOnlyBySubscription &&
     canEditByRole();
-  const isAssignedToCurrentUser =
-    !!order?.assigned_to && String(order.assigned_to) === String(authUserId || '');
-  const canCompleteOrder =
-    !isReadOnlyBySubscription &&
-    !!order?.assigned_to &&
-    (isAssignedToCurrentUser ? has('canCompleteOwnOrders') : has('canCompleteOtherOrders'));
   const currency = order?.currency || companySettings?.currency;
   const resolveExpensePayer = (entry) => {
     if (String(entry?.kind || '') !== 'expense') return 'company';
@@ -5115,11 +5523,34 @@ function OrderDetailsContent() {
                         <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
                       </View>
                     )}
-                    <OrderStatusCapsuleView
-                      status={order.status}
-                      statuses={statusSystem.statuses}
-                      isEnabled={statusSystem.isEnabled}
-                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`${t('order_details_status')}: ${currentOrderStatusLabel}. ${t('order_modal_change_status')}`}
+                      accessibilityState={{
+                        disabled: !canOpenStatusModal,
+                        busy: statusSaving,
+                        expanded: statusModalVisible,
+                      }}
+                      disabled={!canOpenStatusModal}
+                      hitSlop={6}
+                      onPress={() => setStatusModalVisible(true)}
+                      style={({ pressed }) => [
+                        { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
+                        pressed ? { opacity: 0.7 } : null,
+                      ]}
+                    >
+                      <OrderStatusCapsuleView
+                        status={order.status}
+                        statuses={statusSystem.statuses}
+                        isEnabled={statusSystem.isEnabled}
+                      />
+                      {statusSaving ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={theme.colors.textSecondary}
+                        />
+                      ) : null}
+                    </Pressable>
                   </View>
                 </View>
               </> : null}
@@ -5287,7 +5718,7 @@ function OrderDetailsContent() {
                           <Pressable
                             style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                             accessibilityRole="link"
-                            onPress={() => openCoordinatesInYandex(orderMapLat, orderMapLng)}
+                            onPress={() => mapAppChooserRef.current?.openCoordinates(orderMapLat, orderMapLng)}
                             onLongPress={copyOrderCoordinates}
                           >
                             <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
@@ -5320,14 +5751,14 @@ function OrderDetailsContent() {
                         onValuePress={
                           orderAddressForNavigator
                             ? () => {
-                                openAddressInYandex(orderAddressForNavigator);
+                                mapAppChooserRef.current?.openAddress(orderAddressForNavigator);
                               }
                             : null
                         }
                         onCollapsedPress={
                           orderAddressForNavigator
                             ? () => {
-                                openAddressInYandex(orderAddressForNavigator);
+                                mapAppChooserRef.current?.openAddress(orderAddressForNavigator);
                               }
                             : null
                         }
@@ -5711,54 +6142,6 @@ function OrderDetailsContent() {
               </>
             )}
 
-            {orderPhotosModal.visible ? (
-              <Suspense fallback={null}>
-                <MediaUploadModal
-                  visible={orderPhotosModal.visible}
-                  suspended={orderPhotosModalSuspended}
-                  onDismiss={handleOrderPhotosModalDismiss}
-                  onClose={() => {
-                    setPendingOrderPhotoViewer(null);
-                    setOrderPhotosModalSuspended(false);
-                    setOrderPhotosModal({ visible: false, category: null });
-                  }}
-                  category={orderPhotosModal.category}
-                  photos={orderMediaSnapshotReady ? orderWithPendingDeletesHidden?.[orderPhotosModal.category] || [] : []}
-                  pending={localPendingMap[orderPhotosModal.category] || []}
-                  onRetryPending={(pendingPhoto) =>
-                    handleRetryPendingPhoto(orderPhotosModal.category, pendingPhoto)
-                  }
-                  getDisplayUrl={orderMedia.getDisplayUrl}
-                  getThumbnailUrl={orderMedia.getThumbnailUrl}
-                  getIssue={orderMedia.getIssue}
-                  onUploadUri={handleUploadUri}
-                  onUploadMultiple={handleUploadMultiple}
-                  onRemove={removePhoto}
-                  onRemoveMany={removePhotosBatch}
-                  canAddFromCamera={canAddOrderPhotosFromCamera}
-                  canAddFromGallery={canAddOrderPhotosFromGallery}
-                  canRemovePhotos={canAddOrderPhotos}
-                  onOpenViewer={(photos, idx) => {
-                    const catLabels = {
-                      media_file_1: getOrderFieldLabel('media_file_1', t('order_media_field_1')),
-                      media_file_2: getOrderFieldLabel('media_file_2', t('order_media_field_2')),
-                      media_file_3: getOrderFieldLabel('media_file_3', t('order_media_field_3')),
-                      media_file_4: getOrderFieldLabel('media_file_4', t('order_media_field_4')),
-                      media_file_5: getOrderFieldLabel('media_file_5', t('order_media_field_5')),
-                    };
-                    const category = orderPhotosModal.category;
-                    const label = catLabels[category] || '';
-                    // Never stack the fullscreen native viewer on top of the
-                    // photo sheet. Waiting for the shared sheet to dismiss is
-                    // reliable on both platforms and prevents lost taps or a
-                    // frozen native modal layer on Android.
-                    setPendingOrderPhotoViewer({ photos, index: idx, category, label });
-                    setOrderPhotosModalSuspended(true);
-                  }}
-                />
-              </Suspense>
-            ) : null}
-
             {canAcceptOrder && (
               <Button
                 title={t('order_details_accept_order')}
@@ -5771,7 +6154,7 @@ function OrderDetailsContent() {
               <Button
                 title={t('order_details_finish_order')}
                 onPress={onFinishPress}
-                disabled={!canFinishOrder()}
+                disabled={statusSaving || !canFinishOrder()}
                 style={styles.footerActionButton}
               />
             )}
@@ -5787,6 +6170,82 @@ function OrderDetailsContent() {
         </ScrollView>
       </View>
     </SafeAreaView>
+
+      {orderPhotosModal.visible ? (
+        <Suspense fallback={null}>
+          <MediaUploadModal
+            visible={orderPhotosModal.visible}
+            onClose={() => {
+              setViewerVisible(false);
+              setOrderPhotosModal({ visible: false, category: null });
+            }}
+            category={orderPhotosModal.category}
+            photos={orderMediaSnapshotReady ? orderWithPendingDeletesHidden?.[orderPhotosModal.category] || [] : []}
+            pending={localPendingMap[orderPhotosModal.category] || []}
+            onRetryPending={(pendingPhoto) =>
+              handleRetryPendingPhoto(orderPhotosModal.category, pendingPhoto)
+            }
+            getDisplayUrl={orderMedia.getDisplayUrl}
+            getThumbnailUrl={orderMedia.getThumbnailUrl}
+            getIssue={orderMedia.getIssue}
+            onUploadUri={handleUploadUri}
+            onUploadMultiple={handleUploadMultiple}
+            onRemove={removePhoto}
+            onRemoveMany={removePhotosBatch}
+            canAddFromCamera={canAddOrderPhotosFromCamera}
+            canAddFromGallery={canAddOrderPhotosFromGallery}
+            canRemovePhotos={canAddOrderPhotos}
+            onOpenViewer={(photos, idx) => {
+              const catLabels = {
+                media_file_1: getOrderFieldLabel('media_file_1', t('order_media_field_1')),
+                media_file_2: getOrderFieldLabel('media_file_2', t('order_media_field_2')),
+                media_file_3: getOrderFieldLabel('media_file_3', t('order_media_field_3')),
+                media_file_4: getOrderFieldLabel('media_file_4', t('order_media_field_4')),
+                media_file_5: getOrderFieldLabel('media_file_5', t('order_media_field_5')),
+              };
+              const category = orderPhotosModal.category;
+              const label = catLabels[category] || '';
+              openViewer(photos, idx, category, label);
+            }}
+            onFullscreenRequestClose={closeViewer}
+            fullscreenContent={viewerVisible ? (
+              <Suspense fallback={null}>
+                <FullscreenImageViewer
+                  embedded
+                  visible
+                  images={viewerPhotos}
+                  initialIndex={viewerIndex}
+                  onClose={closeViewer}
+                  onDelete={handleViewerDelete}
+                  onRotateSave={handleViewerRotateSave}
+                  categoryLabel={viewerCategoryLabel}
+                />
+              </Suspense>
+            ) : null}
+          />
+        </Suspense>
+      ) : null}
+
+      <SelectModal
+        visible={statusModalVisible && canChangeOrderStatus}
+        title={t('order_modal_change_status')}
+        searchable={false}
+        items={orderStatusItems}
+        selectedId={currentOrderStatusKey}
+        loading={statusSystem.isLoading}
+        onSelect={handleOrderStatusSelect}
+        onClose={() => {
+          if (!statusSaving) setStatusModalVisible(false);
+        }}
+        onDismiss={() => {
+          if (
+            pendingStatusSelection?.orderId &&
+            String(activeOrderIdRef.current || '') === String(pendingStatusSelection.orderId)
+          ) {
+            setAssigneeModalVisible(true);
+          }
+        }}
+      />
 
       <SelectModal
         visible={workTypeModalVisible}
@@ -5804,21 +6263,6 @@ function OrderDetailsContent() {
           <Text style={styles.modalText}>{t('order_modal_work_type_empty')}</Text>
         }
       />
-
-      {viewerVisible ? (
-        <Suspense fallback={null}>
-          <FullscreenImageViewer
-            visible={viewerVisible}
-            images={viewerPhotos}
-            initialIndex={viewerIndex}
-            onClose={closeViewer}
-            onDismiss={handleViewerDismiss}
-            onDelete={handleViewerDelete}
-            onRotateSave={handleViewerRotateSave}
-            categoryLabel={viewerCategoryLabel}
-          />
-        </Suspense>
-      ) : null}
 
       <ConfirmModal
         visible={cancelVisible}
@@ -5838,15 +6282,38 @@ function OrderDetailsContent() {
         <SelectModal
           visible={assigneeModalVisible}
           title={t('order_modal_select_executor')}
-          searchable={false}
+          searchable={!!pendingStatusSelection}
+          loading={usersLoading}
+          selectedId={pendingStatusSelection ? null : assigneeId}
           items={[
-            { id: '__feed__', label: t('order_modal_to_feed') },
-            ...users.map((user) => ({
-              id: user.id,
-              label: formatPersonName(user),
-            })),
+            ...(pendingStatusSelection
+              ? []
+              : [{ id: '__feed__', label: t('order_modal_to_feed') }]),
+            ...users
+              .filter(
+                (user) =>
+                  String(user?.company_id || '') === String(order?.company_id || ''),
+              )
+              .map((user) => ({
+                id: user.id,
+                label: formatPersonName(user),
+              })),
           ]}
           onSelect={(item) => {
+            if (pendingStatusSelection) {
+              const selection = pendingStatusSelection;
+              setPendingStatusSelection(null);
+              setAssigneeModalVisible(false);
+              void handleOrderStatusSelect(
+                { id: selection.statusKey },
+                {
+                  expectedOrderId: selection.orderId,
+                  assigneeId: item.id,
+                  assigneeLabel: item.label,
+                },
+              );
+              return;
+            }
             if (item.id === '__feed__') {
               setToFeed(true);
               setAssigneeId(null);
@@ -5857,7 +6324,10 @@ function OrderDetailsContent() {
             }
             setAssigneeModalVisible(false);
           }}
-          onClose={() => setAssigneeModalVisible(false)}
+          onClose={() => {
+            setPendingStatusSelection(null);
+            setAssigneeModalVisible(false);
+          }}
         />
       ) : null}
 
@@ -6229,6 +6699,10 @@ function OrderDetailsContent() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="none"
+          automaticallyAdjustKeyboardInsets
+          enableFallbackAutomaticScroll={false}
+          enableFallbackFocusedInputUpdate={false}
+          usePlainScrollViewFallback
         >
           <TextField
             label={`${t('finance_rule_name')}${t('common_required_suffix')}`}
@@ -6352,6 +6826,8 @@ function OrderDetailsContent() {
         buttonLabel={t('btn_ok')}
         onClose={() => setWarningVisible(false)}
       />
+
+      <MapAppChooser ref={mapAppChooserRef} />
 
       <ConfirmModal
         visible={deleteModalVisible}

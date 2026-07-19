@@ -24,6 +24,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { getRoleLabel } from '../../constants/roles';
 import { NO_DEPARTMENT_FILTER_ID } from '../../src/features/employees/departments';
+import { normalizeNumericInput } from '../../src/shared/input/numeric';
 import Button from '../ui/Button';
 import TextField from '../ui/TextField';
 import { DateTimeModal } from '../ui/modals';
@@ -65,6 +66,7 @@ export default function FiltersPanel({
   onClose,
   departments = EMPTY_ARRAY,
   rolesOptions = EMPTY_ARRAY,
+  clientFilters = null,
   objectFilters = null,
   inlineOptionSearch = null,
   previewCountResolver = null,
@@ -91,6 +93,7 @@ export default function FiltersPanel({
   const localeTag = getLocale?.() || 'ru';
 
   const isAssignmentMode = mode === 'assignment' && assignment;
+  const isClientsMode = mode === 'clients';
   const isObjectsMode = mode === 'objects';
   const isOrdersMode = mode === 'orders';
   const isOrdersExecutorMulti =
@@ -163,6 +166,8 @@ export default function FiltersPanel({
     cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
     streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
     clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
+    clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
+    objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
     workTypes: Array.isArray(values.workTypes) ? values.workTypes.map(String) : [],
     statuses: Array.isArray(values.statuses) ? values.statuses.map(String) : [],
     executorId:
@@ -191,6 +196,8 @@ export default function FiltersPanel({
     cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
     streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
     clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
+    clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
+    objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
     workTypes: Array.isArray(values.workTypes) ? values.workTypes.map(String) : [],
     statuses: Array.isArray(values.statuses) ? values.statuses.map(String) : [],
     executorId:
@@ -223,6 +230,7 @@ export default function FiltersPanel({
   );
   const [datePickerField, setDatePickerField] = useState(null);
   const [timePickerField, setTimePickerField] = useState(null);
+  const lastOrderDateFilterFieldRef = useRef('');
 
   // Re-init draft and baseline every time panel opens
   useEffect(() => {
@@ -234,6 +242,8 @@ export default function FiltersPanel({
         cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
         streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
         clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
+        clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
+        objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
         workTypes: Array.isArray(values.workTypes) ? values.workTypes.map(String) : [],
         statuses: Array.isArray(values.statuses) ? values.statuses.map(String) : [],
         executorId:
@@ -260,6 +270,7 @@ export default function FiltersPanel({
   }, [
     visible,
     values.clientIds,
+    values.clientTags,
     values.cities,
     values.departments,
     values.roles,
@@ -269,6 +280,7 @@ export default function FiltersPanel({
     values.statuses,
     values.executorId,
     values.executorIds,
+    values.objectTags,
     values.departureDateFrom,
     values.departureDateTo,
     values.departureTimeFrom,
@@ -337,6 +349,7 @@ export default function FiltersPanel({
 
   useEffect(() => {
     if (visible) {
+      lastOrderDateFilterFieldRef.current = '';
       Animated.spring(tx, {
         toValue: 0,
         damping: openSpring.damping ?? 28,
@@ -439,11 +452,19 @@ export default function FiltersPanel({
     if (isAssignmentMode) {
       return showSearchCategory ? [searchCategory, ...assignmentCategories] : assignmentCategories;
     }
+    if (isClientsMode) {
+      const clientCategories = [
+        { key: 'clients_clientTags', label: t('tags_clients_label') },
+        { key: 'clients_objectTags', label: t('tags_objects_label') },
+      ];
+      return showSearchCategory ? [searchCategory, ...clientCategories] : clientCategories;
+    }
     if (isObjectsMode) {
       const objectCategories = [];
       objectCategories.push({ key: 'objects_cities', label: t('common_city') });
       objectCategories.push({ key: 'objects_streets', label: t('common_street') });
       objectCategories.push({ key: 'objects_clients', label: t('common_client') });
+      objectCategories.push({ key: 'objects_tags', label: t('tags_objects_label') });
       return showSearchCategory ? [searchCategory, ...objectCategories] : objectCategories;
     }
     if (isOrdersMode) {
@@ -461,6 +482,8 @@ export default function FiltersPanel({
       if (ordersWorkTypes.length) cats.push({ key: 'orders_workTypes', label: t('order_field_work_type') });
       if (ordersClients.length) cats.push({ key: 'orders_clients', label: t('common_client') });
       if (ordersExecutors.length) cats.push({ key: 'orders_executors', label: t('orders_filter_executor') });
+      cats.push({ key: 'orders_clientTags', label: t('tags_clients_label') });
+      cats.push({ key: 'orders_objectTags', label: t('tags_objects_label') });
       if (showDate) cats.push({ key: 'orders_departure_date', label: t('order_field_departure_date') });
       if (showTime) cats.push({ key: 'orders_departure_time', label: t('order_field_departure_time') });
       if (showCreatedDate) cats.push({ key: 'orders_created_date', label: t('orders_filter_created_date') });
@@ -475,7 +498,7 @@ export default function FiltersPanel({
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
     return showSearchCategory ? [searchCategory, ...cats] : cats;
-  }, [assignmentCategories, departmentOptions.length, isAssignmentMode, isObjectsMode, isOrdersMode, ordersFilters, showSearchCategory]);
+  }, [assignmentCategories, departmentOptions.length, isAssignmentMode, isClientsMode, isObjectsMode, isOrdersMode, ordersFilters, showSearchCategory]);
 
   const restoredCategoryRef = useRef(false);
   const lastCategoriesKeyRef = useRef('');
@@ -612,16 +635,24 @@ export default function FiltersPanel({
     if (isAssignmentMode) {
       return !eqArrays(assignmentDraftSelection || [], assignmentBaselineSelection || []);
     }
+    if (isClientsMode) {
+      if (!eqArrays(draft.clientTags || [], baseline.clientTags || [])) return true;
+      if (!eqArrays(draft.objectTags || [], baseline.objectTags || [])) return true;
+      return false;
+    }
     if (isObjectsMode) {
       if (!eqArrays(draft.cities || [], baseline.cities || [])) return true;
       if (!eqArrays(draft.streets || [], baseline.streets || [])) return true;
       if (!eqArrays(draft.clientIds || [], baseline.clientIds || [])) return true;
+      if (!eqArrays(draft.objectTags || [], baseline.objectTags || [])) return true;
       return false;
     }
     if (isOrdersMode) {
       if (!eqArrays(draft.workTypes || [], baseline.workTypes || [])) return true;
       if (!eqArrays(draft.statuses || [], baseline.statuses || [])) return true;
       if (!eqArrays(draft.clientIds || [], baseline.clientIds || [])) return true;
+      if (!eqArrays(draft.clientTags || [], baseline.clientTags || [])) return true;
+      if (!eqArrays(draft.objectTags || [], baseline.objectTags || [])) return true;
       if ((draft.executorId ?? null) !== (baseline.executorId ?? null)) return true;
       if (!eqArrays(draft.executorIds || [], baseline.executorIds || [])) return true;
       if ((draft.departureDateFrom ?? null) !== (baseline.departureDateFrom ?? null)) return true;
@@ -646,6 +677,7 @@ export default function FiltersPanel({
     assignmentBaselineSelection,
     assignmentDraftSelection,
     isAssignmentMode,
+    isClientsMode,
     isObjectsMode,
     isOrdersMode,
   ]);
@@ -655,19 +687,30 @@ export default function FiltersPanel({
     if (isAssignmentMode) {
       return !eqArrays(assignmentDraftSelection || [], assignmentDefaultSelection || []);
     }
+    if (isClientsMode) {
+      const defaultClientTags = Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [];
+      const defaultObjectTags = Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [];
+      if (!eqArrays(draft.clientTags || [], defaultClientTags)) return true;
+      if (!eqArrays(draft.objectTags || [], defaultObjectTags)) return true;
+      return false;
+    }
     if (isObjectsMode) {
       const defaultCities = Array.isArray(defaults.cities) ? defaults.cities.map(String) : [];
       const defaultStreets = Array.isArray(defaults.streets) ? defaults.streets.map(String) : [];
       const defaultClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
+      const defaultObjectTags = Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [];
       if (!eqArrays(draft.cities || [], defaultCities)) return true;
       if (!eqArrays(draft.streets || [], defaultStreets)) return true;
       if (!eqArrays(draft.clientIds || [], defaultClientIds)) return true;
+      if (!eqArrays(draft.objectTags || [], defaultObjectTags)) return true;
       return false;
     }
     if (isOrdersMode) {
       const defaultWorkTypes = Array.isArray(defaults.workTypes) ? defaults.workTypes.map(String) : [];
       const defaultStatuses = Array.isArray(defaults.statuses) ? defaults.statuses.map(String) : [];
       const defaultClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
+      const defaultClientTags = Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [];
+      const defaultObjectTags = Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [];
       const defaultExecutorId =
         defaults.executorId === null || defaults.executorId === undefined ? null : String(defaults.executorId);
       const defaultExecutorIds = Array.isArray(defaults.executorIds)
@@ -689,6 +732,8 @@ export default function FiltersPanel({
       if (!eqArrays(draft.workTypes || [], defaultWorkTypes)) return true;
       if (!eqArrays(draft.statuses || [], defaultStatuses)) return true;
       if (!eqArrays(draft.clientIds || [], defaultClientIds)) return true;
+      if (!eqArrays(draft.clientTags || [], defaultClientTags)) return true;
+      if (!eqArrays(draft.objectTags || [], defaultObjectTags)) return true;
       if ((draft.executorId ?? null) !== defaultExecutorId) return true;
       if (!eqArrays(draft.executorIds || [], defaultExecutorIds)) return true;
       if ((draft.departureDateFrom ?? null) !== defaultDateFrom) return true;
@@ -713,7 +758,7 @@ export default function FiltersPanel({
     if (!eqArrays(draft.roles || [], defaultRoles)) return true;
     if ((draft.suspended ?? null) !== defaultSuspended) return true;
     return false;
-  }, [assignmentDefaultSelection, assignmentDraftSelection, defaults, draft, isAssignmentMode, isObjectsMode, isOrdersMode]);
+  }, [assignmentDefaultSelection, assignmentDraftSelection, defaults, draft, isAssignmentMode, isClientsMode, isObjectsMode, isOrdersMode]);
 
   const handleAssignmentReset = () => {
     const defaultSelection = [...assignmentDefaultSelection];
@@ -795,11 +840,6 @@ export default function FiltersPanel({
   };
   const getDatePickerInitial = () => parseDateValue(draft[datePickerField]) || new Date();
   const getTimePickerInitial = () => parseTimeValue(draft[timePickerField]) || new Date();
-  const normalizeNumberInput = (text) =>
-    String(text || '')
-      .replace(/[^0-9.,]/g, '')
-      .replace(',', '.');
-
   const styles = useMemo(() => {
     const leftRatioRaw = theme?.components?.filtersPanel?.leftColumnRatio;
     const leftRatio = typeof leftRatioRaw === 'number' ? leftRatioRaw : 1 / 3;
@@ -904,13 +944,10 @@ export default function FiltersPanel({
         overflow: 'hidden',
       },
       applyBar: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
         paddingHorizontal: sz.lg,
         paddingBottom: sz.lg,
         paddingTop: sz.md,
+        backgroundColor: c.background,
       },
       resetBtn: { paddingHorizontal: sz.sm, paddingVertical: sz.xs },
       resetBtnText: { color: c.primary, fontSize: ty.sizes.sm, fontWeight: ty.weight.semibold },
@@ -946,6 +983,7 @@ export default function FiltersPanel({
     }),
     [c.textSecondary, sz.sm, ty.sizes.sm],
   );
+  const zeroFacetColor = useMemo(() => withAlpha(c.text, 0.38), [c.text]);
 
   const checkboxBase = useMemo(
     () => ({
@@ -978,8 +1016,25 @@ export default function FiltersPanel({
       statuses: src?.statuses && typeof src.statuses === 'object' ? src.statuses : {},
       workTypes: src?.workTypes && typeof src.workTypes === 'object' ? src.workTypes : {},
       clients: src?.clients && typeof src.clients === 'object' ? src.clients : {},
+      clientTags: src?.clientTags && typeof src.clientTags === 'object' ? src.clientTags : {},
+      objectTags: src?.objectTags && typeof src.objectTags === 'object' ? src.objectTags : {},
     };
   }, [ordersFilters?.facetCounts]);
+  const clientFacetCounts = useMemo(() => {
+    const src = clientFilters?.facetCounts;
+    return {
+      total: Number(src?.total) || 0,
+      clientTags: src?.clientTags && typeof src.clientTags === 'object' ? src.clientTags : {},
+      objectTags: src?.objectTags && typeof src.objectTags === 'object' ? src.objectTags : {},
+    };
+  }, [clientFilters?.facetCounts]);
+  const objectFacetCounts = useMemo(() => {
+    const src = objectFilters?.facetCounts;
+    return {
+      total: Number(src?.total) || 0,
+      objectTags: src?.objectTags && typeof src.objectTags === 'object' ? src.objectTags : {},
+    };
+  }, [objectFilters?.facetCounts]);
   const formatFacetCount = useMemo(
     () => (value) => {
       const n = Number(value);
@@ -1090,7 +1145,10 @@ export default function FiltersPanel({
         rightSlot={
           hasValue ? (
             <Pressable
-              onPress={() => setDraft((prev) => ({ ...prev, [field]: null }))}
+              onPress={() => {
+                lastOrderDateFilterFieldRef.current = field;
+                setDraft((prev) => ({ ...prev, [field]: null }));
+              }}
               hitSlop={8}
               accessibilityRole="button"
               accessibilityLabel={t('common_clear')}
@@ -1231,6 +1289,97 @@ export default function FiltersPanel({
     );
   };
 
+  const renderTagFilterOptions = (
+    options,
+    draftKey,
+    toggleSelection,
+    facetCounts = null,
+    facetTotal = orderFacetCounts.total,
+  ) => {
+    const source = Array.isArray(options) ? options : [];
+    const filteredOptions = normalizedInlineSearch
+      ? source.filter((option) =>
+          String(option?.label ?? option?.value ?? option?.id ?? '')
+            .toLowerCase()
+            .includes(normalizedInlineSearch),
+        )
+      : source;
+    const selectedValues = Array.isArray(draft[draftKey]) ? draft[draftKey] : [];
+    const allSelected = selectedValues.length === 0;
+    const showFacetCounts = facetCounts && typeof facetCounts === 'object';
+
+    return (
+      <>
+        {renderInlineOptionsSearch()}
+        <Pressable
+          key={`all_${draftKey}`}
+          onPress={() => setDraft((current) => ({ ...current, [draftKey]: [] }))}
+          style={({ pressed }) => [
+            optionRow,
+            pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+          ]}
+        >
+          <View style={[checkboxBase, allSelected && checkboxSelected]}>
+            {allSelected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+          </View>
+          <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
+            {t('users_showAll')}
+          </Text>
+          {showFacetCounts ? (
+            <Text style={optionCount}>{formatFacetCount(facetTotal)}</Text>
+          ) : null}
+        </Pressable>
+        {filteredOptions.length === 0 ? (
+          <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+            <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>
+              {normalizedInlineSearch ? t('empty_noResults') : t('common_noData')}
+            </Text>
+          </View>
+        ) : (
+          filteredOptions.map((option, index) => {
+            const value = String(option?.value ?? option?.id ?? option?.label ?? '').trim();
+            const label = String(option?.label ?? value).trim();
+            if (!value || !label) return null;
+            const selected = selectedValues.includes(value);
+            const normalizedValue = value.toLowerCase();
+            const rawCount = showFacetCounts
+              ? Number(facetCounts?.[value] ?? facetCounts?.[normalizedValue] ?? 0)
+              : null;
+            const isEmpty = showFacetCounts && rawCount === 0;
+            return (
+              <Pressable
+                key={`${draftKey}_${value}_${index}`}
+                onPress={() => toggleSelection(draftKey, value)}
+                style={({ pressed }) => [
+                  optionRow,
+                  pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+                ]}
+              >
+                <View style={[checkboxBase, selected && checkboxSelected]}>
+                  {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+                </View>
+                <Text
+                  style={[
+                    optionLabel,
+                    isEmpty && !selected && { color: zeroFacetColor },
+                    selected && { fontWeight: ty.weight.semibold },
+                  ]}
+                >
+                  {label}
+                </Text>
+                {showFacetCounts ? (
+                  <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>
+                    {formatFacetCount(rawCount)}
+                  </Text>
+                ) : null}
+              </Pressable>
+            );
+          })
+        )}
+      </>
+    );
+  };
+
   const renderOptions = () => {
     if (showSearchCategory && activeCat === SEARCH_CATEGORY_KEY) {
       return renderSearchMode();
@@ -1242,6 +1391,44 @@ export default function FiltersPanel({
       return renderAssignmentOptions();
     }
     switch (activeCat) {
+      case 'clients_clientTags':
+        return renderTagFilterOptions(
+          clientFilters?.clientTags,
+          'clientTags',
+          toggleObjectsMulti,
+          clientFacetCounts.clientTags,
+          clientFacetCounts.total,
+        );
+      case 'clients_objectTags':
+        return renderTagFilterOptions(
+          clientFilters?.objectTags,
+          'objectTags',
+          toggleObjectsMulti,
+          clientFacetCounts.objectTags,
+          clientFacetCounts.total,
+        );
+      case 'objects_tags':
+        return renderTagFilterOptions(
+          objectFilters?.tags,
+          'objectTags',
+          toggleObjectsMulti,
+          objectFacetCounts.objectTags,
+          objectFacetCounts.total,
+        );
+      case 'orders_clientTags':
+        return renderTagFilterOptions(
+          ordersFilters?.clientTags,
+          'clientTags',
+          toggleOrdersMulti,
+          orderFacetCounts.clientTags,
+        );
+      case 'orders_objectTags':
+        return renderTagFilterOptions(
+          ordersFilters?.objectTags,
+          'objectTags',
+          toggleOrdersMulti,
+          orderFacetCounts.objectTags,
+        );
       case 'objects_cities': {
         const citiesRaw = Array.isArray(objectFilters?.cities) ? objectFilters.cities : [];
         const cities = normalizedInlineSearch
@@ -1449,7 +1636,9 @@ export default function FiltersPanel({
               const id = String(statusItem?.id ?? statusItem?.value ?? index);
               const label = String(statusItem?.label ?? id);
               const selected = Array.isArray(draft.statuses) ? draft.statuses.includes(id) : false;
-              const statusCount = formatFacetCount(orderFacetCounts.statuses?.[id]);
+              const statusCountValue = Number(orderFacetCounts.statuses?.[id] ?? 0);
+              const statusCount = formatFacetCount(statusCountValue);
+              const isEmpty = statusCountValue === 0;
               return (
                 <Pressable
                   key={`orders_status_${id}`}
@@ -1479,10 +1668,18 @@ export default function FiltersPanel({
                   <View style={[checkboxBase, selected && checkboxSelected]}>
                     {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
                   </View>
-                  <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                  <Text
+                    style={[
+                      optionLabel,
+                      isEmpty && !selected && { color: zeroFacetColor },
+                      selected && { fontWeight: ty.weight.semibold },
+                    ]}
+                  >
                     {label}
                   </Text>
-                  {statusCount ? <Text style={optionCount}>{statusCount}</Text> : null}
+                  {statusCount ? (
+                    <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>{statusCount}</Text>
+                  ) : null}
                 </Pressable>
               );
             })}
@@ -1516,7 +1713,9 @@ export default function FiltersPanel({
               const id = String(workType?.id ?? workType?.value ?? index);
               const label = String(workType?.label ?? workType?.name ?? id);
               const selected = Array.isArray(draft.workTypes) ? draft.workTypes.includes(id) : false;
-              const workTypeCount = formatFacetCount(orderFacetCounts.workTypes?.[id]);
+              const workTypeCountValue = Number(orderFacetCounts.workTypes?.[id] ?? 0);
+              const workTypeCount = formatFacetCount(workTypeCountValue);
+              const isEmpty = workTypeCountValue === 0;
               return (
                 <Pressable
                   key={`orders_work_type_${id}`}
@@ -1529,10 +1728,18 @@ export default function FiltersPanel({
                   <View style={[checkboxBase, selected && checkboxSelected]}>
                     {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
                   </View>
-                  <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                  <Text
+                    style={[
+                      optionLabel,
+                      isEmpty && !selected && { color: zeroFacetColor },
+                      selected && { fontWeight: ty.weight.semibold },
+                    ]}
+                  >
                     {label}
                   </Text>
-                  {workTypeCount ? <Text style={optionCount}>{workTypeCount}</Text> : null}
+                  {workTypeCount ? (
+                    <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>{workTypeCount}</Text>
+                  ) : null}
                 </Pressable>
               );
             })}
@@ -1579,7 +1786,9 @@ export default function FiltersPanel({
                 const id = String(client?.value ?? client?.id ?? client?.label ?? '').trim();
                 const label = String(client?.label ?? client?.name ?? id).trim();
                 const selected = Array.isArray(draft.clientIds) ? draft.clientIds.includes(id) : false;
-                const clientCount = formatFacetCount(orderFacetCounts.clients?.[id]);
+                const clientCountValue = Number(orderFacetCounts.clients?.[id] ?? 0);
+                const clientCount = formatFacetCount(clientCountValue);
+                const isEmpty = clientCountValue === 0;
                 return (
                   <Pressable
                     key={`orders_client_${id}`}
@@ -1592,10 +1801,18 @@ export default function FiltersPanel({
                     <View style={[checkboxBase, selected && checkboxSelected]}>
                       {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
                     </View>
-                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                    <Text
+                      style={[
+                        optionLabel,
+                        isEmpty && !selected && { color: zeroFacetColor },
+                        selected && { fontWeight: ty.weight.semibold },
+                      ]}
+                    >
                       {label}
                     </Text>
-                    {clientCount ? <Text style={optionCount}>{clientCount}</Text> : null}
+                    {clientCount ? (
+                      <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>{clientCount}</Text>
+                    ) : null}
                   </Pressable>
                 );
               })
@@ -1759,14 +1976,14 @@ export default function FiltersPanel({
           <View style={{ paddingHorizontal: sz.md, paddingTop: sz.sm, gap: sz.sm }}>
             <TextField
               value={String(draft.sumMin || '')}
-              onChangeText={(text) => setDraft((d) => ({ ...d, sumMin: normalizeNumberInput(text) }))}
+              onChangeText={(text) => setDraft((d) => ({ ...d, sumMin: normalizeNumericInput(text) }))}
               placeholder={t('common_from')}
               hideSeparator
               keyboardType="numeric"
             />
             <TextField
               value={String(draft.sumMax || '')}
-              onChangeText={(text) => setDraft((d) => ({ ...d, sumMax: normalizeNumberInput(text) }))}
+              onChangeText={(text) => setDraft((d) => ({ ...d, sumMax: normalizeNumericInput(text) }))}
               placeholder={t('common_to')}
               hideSeparator
               keyboardType="numeric"
@@ -1951,15 +2168,31 @@ export default function FiltersPanel({
                   handleAssignmentReset();
                   return;
                 }
+                if (isClientsMode) {
+                  const snapshot = {
+                    clientTags: Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [],
+                    objectTags: Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [],
+                  };
+                  setDraft((prev) => ({ ...prev, ...snapshot }));
+                  setBaseline((prev) => ({ ...prev, ...snapshot }));
+                  if (setValue) {
+                    setValue('clientTags', snapshot.clientTags);
+                    setValue('objectTags', snapshot.objectTags);
+                  }
+                  if (onReset) onReset(snapshot);
+                  return;
+                }
                 if (isObjectsMode) {
                   const emptyCities = Array.isArray(defaults.cities) ? defaults.cities.map(String) : [];
                   const emptyStreets = Array.isArray(defaults.streets) ? defaults.streets.map(String) : [];
                   const emptyClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
+                  const emptyObjectTags = Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [];
                   const snapshot = {
                     ...draft,
                     cities: emptyCities,
                     streets: emptyStreets,
                     clientIds: emptyClientIds,
+                    objectTags: emptyObjectTags,
                   };
                   setDraft(snapshot);
                   setBaseline(snapshot);
@@ -1967,6 +2200,7 @@ export default function FiltersPanel({
                     setValue('cities', emptyCities);
                     setValue('streets', emptyStreets);
                     setValue('clientIds', emptyClientIds);
+                    setValue('objectTags', emptyObjectTags);
                   }
                   if (onReset) onReset(snapshot);
                   return;
@@ -1976,6 +2210,8 @@ export default function FiltersPanel({
                     workTypes: Array.isArray(defaults.workTypes) ? defaults.workTypes.map(String) : [],
                     statuses: Array.isArray(defaults.statuses) ? defaults.statuses.map(String) : [],
                     clientIds: Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [],
+                    clientTags: Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [],
+                    objectTags: Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [],
                     executorId:
                       defaults.executorId === null || defaults.executorId === undefined
                         ? null
@@ -2002,6 +2238,8 @@ export default function FiltersPanel({
                     setValue('workTypes', snapshot.workTypes);
                     setValue('statuses', snapshot.statuses);
                     setValue('clientIds', snapshot.clientIds);
+                    setValue('clientTags', snapshot.clientTags);
+                    setValue('objectTags', snapshot.objectTags);
                     setValue('executorId', snapshot.executorId);
                     setValue('executorIds', snapshot.executorIds);
                     setValue('departureDateFrom', snapshot.departureDateFrom);
@@ -2113,16 +2351,32 @@ export default function FiltersPanel({
                   if (onClose) onClose();
                   return;
                 }
+                if (isClientsMode) {
+                  const clientSnapshot = {
+                    clientTags: Array.isArray(draft.clientTags) ? draft.clientTags : [],
+                    objectTags: Array.isArray(draft.objectTags) ? draft.objectTags : [],
+                  };
+                  if (setValue) {
+                    setValue('clientTags', clientSnapshot.clientTags);
+                    setValue('objectTags', clientSnapshot.objectTags);
+                  }
+                  if (onApply) onApply(clientSnapshot);
+                  setBaseline((prev) => ({ ...prev, ...clientSnapshot }));
+                  if (onClose) onClose();
+                  return;
+                }
                 if (isObjectsMode) {
                   if (setValue) {
                     setValue('cities', Array.isArray(draft.cities) ? draft.cities : []);
                     setValue('streets', Array.isArray(draft.streets) ? draft.streets : []);
                     setValue('clientIds', Array.isArray(draft.clientIds) ? draft.clientIds : []);
+                    setValue('objectTags', Array.isArray(draft.objectTags) ? draft.objectTags : []);
                   }
                   const objectSnapshot = {
                     cities: Array.isArray(draft.cities) ? draft.cities : [],
                     streets: Array.isArray(draft.streets) ? draft.streets : [],
                     clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
+                    objectTags: Array.isArray(draft.objectTags) ? draft.objectTags : [],
                   };
                   if (onApply) onApply(objectSnapshot);
                   setBaseline((prev) => ({
@@ -2130,6 +2384,7 @@ export default function FiltersPanel({
                     cities: Array.isArray(draft.cities) ? draft.cities : [],
                     streets: Array.isArray(draft.streets) ? draft.streets : [],
                     clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
+                    objectTags: Array.isArray(draft.objectTags) ? draft.objectTags : [],
                   }));
                   if (onClose) onClose();
                   return;
@@ -2139,6 +2394,8 @@ export default function FiltersPanel({
                     workTypes: Array.isArray(draft.workTypes) ? draft.workTypes : [],
                     statuses: Array.isArray(draft.statuses) ? draft.statuses : [],
                     clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
+                    clientTags: Array.isArray(draft.clientTags) ? draft.clientTags : [],
+                    objectTags: Array.isArray(draft.objectTags) ? draft.objectTags : [],
                     executorId: draft.executorId ?? null,
                     executorIds: Array.isArray(draft.executorIds) ? draft.executorIds : [],
                     departureDateFrom: draft.departureDateFrom ?? null,
@@ -2156,6 +2413,8 @@ export default function FiltersPanel({
                     setValue('workTypes', ordersSnapshot.workTypes);
                     setValue('statuses', ordersSnapshot.statuses);
                     setValue('clientIds', ordersSnapshot.clientIds);
+                    setValue('clientTags', ordersSnapshot.clientTags);
+                    setValue('objectTags', ordersSnapshot.objectTags);
                     setValue('executorId', ordersSnapshot.executorId);
                     setValue('executorIds', ordersSnapshot.executorIds);
                     setValue('departureDateFrom', ordersSnapshot.departureDateFrom);
@@ -2169,7 +2428,11 @@ export default function FiltersPanel({
                     setValue('sumMin', ordersSnapshot.sumMin);
                     setValue('sumMax', ordersSnapshot.sumMax);
                   }
-                  if (onApply) onApply(ordersSnapshot);
+                  if (onApply) {
+                    onApply(ordersSnapshot, {
+                      lastDateFilterField: lastOrderDateFilterFieldRef.current,
+                    });
+                  }
                   setBaseline((prev) => ({ ...prev, ...ordersSnapshot }));
                   if (onClose) onClose();
                   return;
@@ -2211,6 +2474,7 @@ export default function FiltersPanel({
         allowFutureDates
         onApply={(selected) => {
           if (!datePickerField || !selected) return;
+          lastOrderDateFilterFieldRef.current = datePickerField;
           setDraft((prev) => ({
             ...prev,
             [datePickerField]: formatDateValue(selected),

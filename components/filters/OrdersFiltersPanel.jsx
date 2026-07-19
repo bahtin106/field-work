@@ -6,6 +6,8 @@ export default function OrdersFiltersPanel({
   statusOptions = EMPTY_ARRAY,
   workTypeOptions = EMPTY_ARRAY,
   clientOptions = EMPTY_ARRAY,
+  clientTagOptions = EMPTY_ARRAY,
+  objectTagOptions = EMPTY_ARRAY,
   executorOptions = EMPTY_ARRAY,
   showExecutors = false,
   facetCounts,
@@ -16,6 +18,8 @@ export default function OrdersFiltersPanel({
     'orders_workTypes',
     ...(showExecutors ? ['orders_executors'] : []),
     'orders_clients',
+    'orders_clientTags',
+    'orders_objectTags',
   ];
 
   return (
@@ -28,6 +32,8 @@ export default function OrdersFiltersPanel({
         statuses: statusOptions,
         workTypes: workTypeOptions,
         clients: clientOptions,
+        clientTags: clientTagOptions,
+        objectTags: objectTagOptions,
         executors: showExecutors ? executorOptions : EMPTY_ARRAY,
         ...(showExecutors ? { executorSelectionMode: 'multiple' } : null),
         facetCounts,

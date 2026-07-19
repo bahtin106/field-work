@@ -12,6 +12,7 @@ import Card from '../../../components/ui/Card';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
 import IconButton from '../../../components/ui/IconButton';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
+import MapAppChooser from '../../../components/ui/MapAppChooser';
 import EntityPhotoPreview from '../../../components/media/EntityPhotoPreview';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
@@ -40,7 +41,7 @@ import { getObjectAdditionalPhones } from '../../../src/features/objects/additio
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { buildAddressForNavigator, openAddressInYandex, openCoordinatesInYandex } from '../../../components/ui/map';
+import { buildAddressForNavigator } from '../../../components/ui/map';
 import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
@@ -95,6 +96,7 @@ export default function ObjectViewScreen() {
   const { has } = usePermissions();
   const router = useRouter();
   const toast = useToast();
+  const mapAppChooserRef = React.useRef(null);
   const params = useLocalSearchParams();
   const id = params?.id;
   const rawReturnTo = params?.returnTo;
@@ -492,7 +494,7 @@ export default function ObjectViewScreen() {
                       toast.warning(t('objects_location_empty'));
                       return;
                     }
-                    openCoordinatesInYandex(mapLat, mapLng);
+                    mapAppChooserRef.current?.openCoordinates(mapLat, mapLng);
                   }}
                 >
                   <Text style={[base.value, hasMapPoint ? styles.clientLink : null]}>
@@ -513,7 +515,7 @@ export default function ObjectViewScreen() {
                   toast.warning(t('order_details_address_not_specified'));
                   return;
                 }
-                openAddressInYandex(navigatorAddress);
+                mapAppChooserRef.current?.openAddress(navigatorAddress);
               }}
               onCollapsedLongPress={copyShortAddress}
               collapsedValueStyle={navigatorAddress ? styles.clientLink : null}
@@ -646,6 +648,7 @@ export default function ObjectViewScreen() {
         onClose={closeViewer}
         categoryLabel={viewerCategoryLabel}
       />
+      <MapAppChooser ref={mapAppChooserRef} />
     </SafeAreaView>
   );
 }

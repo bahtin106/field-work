@@ -2,7 +2,25 @@ import { useMemo } from 'react';
 import { getStatusDbAliases, normalizeOrderStatusFilterKey } from '../../../lib/orderFilters';
 import { supabase } from '../../../lib/supabase';
 
-const EMPTY_COUNTS = Object.freeze({ total: 0, statuses: {}, workTypes: {}, clients: {} });
+const EMPTY_COUNTS = Object.freeze({
+  total: 0,
+  statuses: {},
+  workTypes: {},
+  clients: {},
+  clientTags: {},
+  objectTags: {},
+});
+
+function addOrderTagCounts(target, tags) {
+  const uniqueValues = new Set(
+    (Array.isArray(tags) ? tags : [])
+      .map((tag) => String(tag?.value ?? tag ?? '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  uniqueValues.forEach((value) => {
+    target[value] = (target[value] || 0) + 1;
+  });
+}
 
 export async function fetchAccessibleFeedCount() {
   const aliases = getStatusDbAliases('feed');
@@ -40,7 +58,14 @@ export function buildOrderFacetCounts(orders, statusOptions) {
     getStatusDbAliases(id).forEach((alias) => addAlias(statusAliases, alias, id));
   });
 
-  const counts = { total: orders.length, statuses: {}, workTypes: {}, clients: {} };
+  const counts = {
+    total: orders.length,
+    statuses: {},
+    workTypes: {},
+    clients: {},
+    clientTags: {},
+    objectTags: {},
+  };
   orders.forEach((order) => {
     const rawStatus = String(order?.status || '').trim();
     const statusId =
@@ -54,6 +79,9 @@ export function buildOrderFacetCounts(orders, statusOptions) {
 
     const clientId = String(order?.client_id || '').trim();
     if (clientId) counts.clients[clientId] = (counts.clients[clientId] || 0) + 1;
+
+    addOrderTagCounts(counts.clientTags, order?.client_tags);
+    addOrderTagCounts(counts.objectTags, order?.object_tags);
   });
 
   return counts;

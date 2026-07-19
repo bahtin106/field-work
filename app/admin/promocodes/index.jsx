@@ -276,6 +276,7 @@ export default function AdminPromoCodesScreen() {
             value={form.discountValue}
             onChangeText={(discountValue) => setForm((p) => ({ ...p, discountValue }))}
             keyboardType="decimal-pad"
+            numericInput={{ allowNegative: false }}
           />
           <SelectField label={t('admin_promocode_valid_until_label')} value={formatDateTime(form.validUntil, t, locale)} onPress={() => setDateVisible(true)} />
           {form.validUntil ? (

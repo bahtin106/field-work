@@ -13,6 +13,14 @@ import {
 } from 'react-native';
 import { t as T } from '../../src/i18n';
 import {
+  normalizeNumericInput,
+  resolveNumericInputOptions,
+} from '../../src/shared/input/numeric';
+import {
+  formatMaxLengthError,
+  resolveTextInputMaxLength,
+} from '../../src/shared/input/limits';
+import {
   useAutoScrollOnInvalid,
   useFormAutoScrollContext,
   useValidationAttemptSinceMount,
@@ -46,6 +54,7 @@ const TextField = forwardRef(function TextField(
     onChangeText,
     placeholder,
     keyboardType,
+    numericInput,
     secureTextEntry,
     error,
     rightSlot,
@@ -54,6 +63,7 @@ const TextField = forwardRef(function TextField(
     numberOfLines,
     style,
     maxLength,
+    inputKind,
     autoCapitalize,
     autoFocus = false,
     showSoftInputOnFocus = true,
@@ -86,6 +96,7 @@ const TextField = forwardRef(function TextField(
   const containerRef = useRef(null);
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
+  const [limitReached, setLimitReached] = useState(false);
   const lastKeyRef = useRef(null);
   // Для управления видимостью пароля через toggle кнопку
   const [showPassword, setShowPassword] = useState(false);
@@ -107,6 +118,20 @@ const TextField = forwardRef(function TextField(
 
   // Используем multiline для ВСЕх полей кроме паролей (можем переопределить через пропсы)
   const effectiveMultiline = !!multiline;
+  const numericInputOptions = useMemo(
+    () => resolveNumericInputOptions(keyboardType, numericInput),
+    [keyboardType, numericInput],
+  );
+  const effectiveMaxLength = useMemo(
+    () => resolveTextInputMaxLength({
+      maxLength,
+      inputKind,
+      keyboardType,
+      secureTextEntry,
+      multiline: effectiveMultiline,
+    }),
+    [effectiveMultiline, inputKind, keyboardType, maxLength, secureTextEntry],
+  );
 
   const maxRowsFromProps =
     Number.isFinite(maxLines) && maxLines >= 1 ? Math.max(1, Math.floor(maxLines)) : null;
@@ -128,7 +153,7 @@ const TextField = forwardRef(function TextField(
     forceValidation: forceValidation || validationAttemptedSinceMount,
   });
   const resolvedLabel = getRequiredFieldLabel(label, validationState.isRequired);
-  const isErr = validationState.isInvalid;
+  const isErr = validationState.isInvalid || limitReached;
   useAutoScrollOnInvalid({
     fieldRef: containerRef,
     isInvalid: isErr,
@@ -171,25 +196,31 @@ const TextField = forwardRef(function TextField(
   const handleChangeText = React.useCallback(
     (text) => {
       const sourceText = effectiveMultiline ? String(text ?? '').replace(/\r\n?/g, '\n') : text;
-      let processedText = sourceText;
+      let processedText = numericInputOptions
+        ? normalizeNumericInput(sourceText, numericInputOptions)
+        : sourceText;
 
       // Если указана функция фильтрации (например, для паролей)
       if (filterInput) {
         const filtered = effectiveMultiline
-          ? sourceText.split('\n').map((line) => filterInput(line)).join('\n')
-          : filterInput(sourceText);
+          ? processedText.split('\n').map((line) => filterInput(line)).join('\n')
+          : filterInput(processedText);
 
         // Если текст изменился после фильтрации - были недопустимые символы
-        if (filtered !== sourceText && onInvalidInput) {
-          onInvalidInput(sourceText, filtered);
+        if (filtered !== processedText && onInvalidInput) {
+          onInvalidInput(processedText, filtered);
         }
 
         processedText = filtered;
       }
 
+      if (processedText.length < effectiveMaxLength) {
+        setLimitReached(false);
+      }
+
       onChangeText?.(processedText);
     },
-    [effectiveMultiline, onChangeText, filterInput, onInvalidInput],
+    [effectiveMaxLength, effectiveMultiline, filterInput, numericInputOptions, onChangeText, onInvalidInput],
   );
 
   // Правильное вычисление secureTextEntry: скрываем пароль ТОЛЬКО если это поле пароля И showPassword=false
@@ -295,7 +326,17 @@ const TextField = forwardRef(function TextField(
             editable={!disabled}
             accessibilityState={{ disabled }}
             onKeyPress={(e) => {
-              lastKeyRef.current = e?.nativeEvent?.key ?? null;
+              const key = e?.nativeEvent?.key ?? null;
+              lastKeyRef.current = key;
+              if (
+                effectiveValue.length >= effectiveMaxLength &&
+                key &&
+                key !== 'Backspace' &&
+                key !== 'Delete' &&
+                key !== 'Enter'
+              ) {
+                setLimitReached(true);
+              }
             }}
             multiline={effectiveMultiline}
             numberOfLines={numberOfLines}
@@ -324,7 +365,7 @@ const TextField = forwardRef(function TextField(
               setTouched(true);
               onBlur?.(e);
             }}
-            maxLength={maxLength}
+            maxLength={effectiveMaxLength}
             autoCapitalize={autoCapitalize}
             autoFocus={autoFocus}
             showSoftInputOnFocus={showSoftInputOnFocus}
@@ -404,6 +445,15 @@ const TextField = forwardRef(function TextField(
         {rightSlot && <View style={s.slot}>{rightSlot}</View>}
       </View>
       {!hideSeparator && sepEnabled ? <View style={s.separator} /> : null}
+      {limitReached ? (
+        <Text
+          style={s.limitError}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {formatMaxLengthError(T('validation_max_length'), effectiveMaxLength)}
+        </Text>
+      ) : null}
     </View>
   );
 });
@@ -475,6 +525,13 @@ const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMul
     separator: {
       height: sepHeight,
       backgroundColor: sepColor,
+      marginLeft: ml,
+      marginRight: mr,
+    },
+    limitError: {
+      color: t.colors.danger,
+      fontSize: t.typography.sizes.sm,
+      marginTop: t.spacing?.xs ?? 4,
       marginLeft: ml,
       marginRight: mr,
     },

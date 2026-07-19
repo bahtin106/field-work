@@ -42,7 +42,11 @@ import {
   normalizeOptionalEmail,
 } from '../../../src/shared/validation/fields';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
-import { getPasswordStrengthChecks } from '../../../lib/authValidation';
+import {
+  AUTH_CONSTRAINTS,
+  getPasswordStrengthChecks,
+  getPasswordValidationErrors,
+} from '../../../lib/authValidation';
 import { ensureImageLibraryPermission } from '../../../src/shared/media/imagePipeline';
 import { getEmailChangeRedirectUrl } from '../../../lib/authRedirects';
 import { useClearResolvedFieldErrors } from '../../../src/shared/forms/useClearResolvedFieldErrors';
@@ -79,7 +83,7 @@ const TABLES = {
   departments: TBL.DEPARTMENTS || 'departments',
 };
 
-const MIN_PASSWORD_LENGTH = Number(process.env.EXPO_PUBLIC_MIN_PASSWORD_LENGTH) || 8;
+const MIN_PASSWORD_LENGTH = AUTH_CONSTRAINTS.PASSWORD.MIN_LENGTH;
 const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
 
 // Helper: determine supported mediaTypes option across expo-image-picker versions
@@ -1876,20 +1880,8 @@ export default function EditUser() {
     const hasPasswordChange = !!(meId && meId === userId && newPassword && newPassword.length);
     const hasOwnEmailChange = isEditingOwnProfile && hasEmailChangeForValidation;
     if (hasPasswordChange) {
-      if (newPassword.length < MIN_PASSWORD_LENGTH) {
-        setFieldErrors({ newPassword: { message: t('error_password_too_short') } });
-        return;
-      }
-      if (!newPasswordChecks.hasUpper) {
-        setFieldErrors({ newPassword: { message: t('register_password_rule_uppercase') } });
-        return;
-      }
-      if (!newPasswordChecks.hasLower) {
-        setFieldErrors({ newPassword: { message: t('register_password_rule_lowercase') } });
-        return;
-      }
-      if (!newPasswordChecks.hasDigit) {
-        setFieldErrors({ newPassword: { message: t('register_password_rule_digit') } });
+      if (!getPasswordValidationErrors(newPassword).valid) {
+        setFieldErrors({ newPassword: { message: t('err_password_requirements') } });
         return;
       }
       if (confirmPassword !== newPassword) {

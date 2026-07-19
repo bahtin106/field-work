@@ -4,10 +4,12 @@ import React from 'react';
 import * as Clipboard from 'expo-clipboard';
 import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import AdditionalPhoneInputRow from '../../../../components/clients/AdditionalPhoneInputRow';
 import EditScreenTemplate from '../../../../components/layout/EditScreenTemplate';
 import Card from '../../../../components/ui/Card';
+import ClearButton from '../../../../components/ui/ClearButton';
+import MapAppChooser from '../../../../components/ui/MapAppChooser';
 import SectionHeader from '../../../../components/ui/SectionHeader';
 import TextField from '../../../../components/ui/TextField';
 import { useToast } from '../../../../components/ui/ToastProvider';
@@ -79,6 +81,7 @@ export default function NewClientObjectScreen() {
   const toast = useToast();
   const router = useRouter();
   const navigation = useNavigation();
+  const mapAppChooserRef = React.useRef(null);
   const { has } = usePermissions();
   const { id } = useLocalSearchParams();
   const clientId = Array.isArray(id) ? id[0] : id;
@@ -270,18 +273,11 @@ export default function NewClientObjectScreen() {
   }, []);
 
   const openMapForPoint = React.useCallback(async () => {
-    try {
-      if (hasMapPoint) {
-        const query = `${mapLat}, ${mapLng}`;
-        await Linking.openURL(`yandexnavi://map_search?text=${encodeURIComponent(query)}`);
-      } else {
-        await Linking.openURL('yandexnavi://map_search?text=');
-      }
-    } catch {
-      try {
-        await Linking.openURL('https://yandex.ru/maps/');
-      } catch {}
+    if (hasMapPoint) {
+      await mapAppChooserRef.current?.openCoordinates(mapLat, mapLng);
+      return;
     }
+    await mapAppChooserRef.current?.openMap();
   }, [hasMapPoint, mapLat, mapLng]);
 
   const pasteCoordinatesFromClipboard = React.useCallback(async () => {
@@ -310,6 +306,7 @@ export default function NewClientObjectScreen() {
   }
 
   return (
+    <>
     <EditScreenTemplate
       title={t('routes_objects_new')}
       rightTextLabel={saving ? t('toast_saving') : t('btn_create')}
@@ -364,9 +361,11 @@ export default function NewClientObjectScreen() {
             <View style={styles.mapPointValueRow}>
               <Text style={styles.mapPointValue}>{hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty')}</Text>
               {hasMapPoint ? (
-                <Pressable onPress={clearMapPoint} style={styles.mapPointClearBtn}>
-                  <Feather name="x-circle" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />
-                </Pressable>
+                <ClearButton
+                  onPress={clearMapPoint}
+                  accessibilityLabel={t('objects_location_clear')}
+                  style={styles.mapPointClearBtn}
+                />
               ) : null}
             </View>
             <View style={styles.mapActionsRow}>
@@ -467,6 +466,8 @@ export default function NewClientObjectScreen() {
         </Card>
       ) : null}
     </EditScreenTemplate>
+    <MapAppChooser ref={mapAppChooserRef} />
+    </>
   );
 }
 

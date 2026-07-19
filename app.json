@@ -56,6 +56,7 @@
     "owner": "bahtin106",
     "plugins": [
       "expo-router",
+      "./plugins/withMapAppQueries",
       "expo-font",
       [
         "expo-splash-screen",
@@ -90,7 +91,14 @@
     },
     "ios": {
       "bundleIdentifier": "com.monitorapp.monitor",
-      "runtimeVersion": "1.0.2"
+      "runtimeVersion": "1.0.2",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "yandexmaps",
+          "yandexnavi",
+          "comgooglemaps"
+        ]
+      }
     }
   }
 }

@@ -2,6 +2,7 @@ import React, { useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { getFieldValidationState } from '../src/shared/forms/fieldValidation';
+import { TEXT_INPUT_LIMITS } from '../src/shared/input/limits';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -118,6 +119,7 @@ const SecurePasswordInput = React.forwardRef(
           testID={testID}
           accessibilityLabel={effectivePlaceholder}
           accessibilityHint={t('password_accessibility_hint')}
+          maxLength={TEXT_INPUT_LIMITS.password}
         />
 
         {showVisibilityToggle ? (

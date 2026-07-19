@@ -6,16 +6,18 @@ import * as Clipboard from 'expo-clipboard';
 import { useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { BackHandler, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import AdditionalPhoneInputRow from '../../../components/clients/AdditionalPhoneInputRow';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import ClearButton from '../../../components/ui/ClearButton';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
+import MapAppChooser from '../../../components/ui/MapAppChooser';
 import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import TagEditorField from '../../../components/tags/TagEditorField';
@@ -73,8 +75,8 @@ import { useTranslation } from '../../../src/i18n/useTranslation';
 import { getRequiredFieldLabel } from '../../../src/shared/forms/fieldValidation';
 import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
 import { hasMobilePhoneValue, isValidOptionalMobilePhone } from '../../../src/shared/validation/phone';
+import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { openCoordinatesInYandex } from '../../../components/ui/map';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 import MediaUploadModal from '../../../components/media/MediaUploadModal';
 import FullscreenImageViewer from '../../../app/orders/components/FullscreenImageViewer';
@@ -228,6 +230,7 @@ function ObjectMediaEditRow({
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs }}>
         <TextInput
           value={value}
+          maxLength={TEXT_INPUT_LIMITS.shortText}
           onChangeText={(nextValue) => {
             setValue(nextValue);
             onChangeLabel(nextValue);
@@ -366,6 +369,7 @@ export default function EditObjectScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
+  const mapAppChooserRef = React.useRef(null);
   const { has } = usePermissions();
   const params = useLocalSearchParams();
   const id = params?.id;
@@ -842,13 +846,11 @@ export default function EditObjectScreen() {
   }, [ensureLibraryPerms, mediaAspect, mediaQuality, mediaTypesOpt, t, toast]);
 
   const openMapForPoint = React.useCallback(async () => {
-    try {
-      if (hasMapPoint) {
-        openCoordinatesInYandex(mapLat, mapLng);
-      } else {
-        await Linking.openURL('https://yandex.ru/maps/');
-      }
-    } catch {}
+    if (hasMapPoint) {
+      await mapAppChooserRef.current?.openCoordinates(mapLat, mapLng);
+      return;
+    }
+    await mapAppChooserRef.current?.openMap();
   }, [hasMapPoint, mapLat, mapLng]);
 
   const showClipboardEmptyFeedback = React.useCallback(() => {
@@ -1705,6 +1707,7 @@ export default function EditObjectScreen() {
         onDelete={handleViewerDelete}
         categoryLabel={viewerCategoryLabel}
       />
+      <MapAppChooser ref={mapAppChooserRef} />
 
       <BaseModal
         visible={addressModalVisible}
@@ -1755,19 +1758,11 @@ export default function EditObjectScreen() {
                     {hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty')}
                   </Text>
                   {hasMapPoint ? (
-                    <Pressable
+                    <ClearButton
                       onPress={clearMapPoint}
                       style={styles.mapPointClearBtn}
-                      hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                      accessibilityRole="button"
                       accessibilityLabel={t('objects_location_clear')}
-                    >
-                      <Feather
-                        name="x-circle"
-                        size={theme.icons?.sm ?? 18}
-                        color={theme.colors.textSecondary}
-                      />
-                    </Pressable>
+                    />
                   ) : null}
                 </View>
                 <View style={styles.mapActionsRow}>

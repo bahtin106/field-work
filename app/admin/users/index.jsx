@@ -13,6 +13,7 @@ import { formatPersonName } from '../../../lib/personName';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
+import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 async function fetchUsers(search) {
@@ -58,6 +59,7 @@ export default function AdminUsersScreen() {
             placeholder={t('admin_users_search_placeholder')}
             placeholderTextColor={theme.colors.textSecondary}
             style={styles(theme).input}
+            maxLength={TEXT_INPUT_LIMITS.search}
           />
         </Card>
 

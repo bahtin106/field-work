@@ -9,6 +9,7 @@ import {
 import {
   deleteCompanyFinanceRule,
   deleteOrderFinanceEntry,
+  excludeOrderFinanceRule,
   listCompanyFinanceRules,
   listOrderFinanceEntries,
   upsertCompanyFinanceRule,
@@ -32,6 +33,14 @@ function normalizeMoney(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100) / 100;
+}
+
+function shouldAttemptOnlineWrite() {
+  const snapshot = getOfflineSnapshot();
+  // NetInfo is briefly unknown during a cold start. Try the server first in
+  // that state and fall back to the durable outbox only on a network error.
+  if (!snapshot.isNetworkKnown) return true;
+  return onlineManager.isOnline() && snapshot.isOnline;
 }
 
 async function readFinanceOutboxStorage() {
@@ -196,6 +205,9 @@ export function useOrderFinanceEntries(orderId, options = {}) {
     enabled: !!orderId,
     staleTime: 30 * 1000,
     ...options,
+    // Never carry finance rows across identity keys. Showing the previous
+    // order's entries while a new order loads can lead to editing the wrong row.
+    placeholderData: () => undefined,
   });
 }
 
@@ -204,8 +216,7 @@ export function useUpsertOrderFinanceEntryMutation(orderId) {
   return useMutation({
     mutationFn: async (payload) => {
       const stablePayload = { ...(payload || {}), id: payload?.id || makeUuid() };
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
-      if (online) {
+      if (shouldAttemptOnlineWrite()) {
         try {
           return await upsertOrderFinanceEntry(stablePayload);
         } catch (error) {
@@ -252,13 +263,14 @@ export function useUpsertOrderFinanceEntryMutation(orderId) {
     onError: (_error, _payload, ctx) => {
       if (ctx?.key) queryClient.setQueryData(ctx.key, ctx.prev);
     },
-    onSuccess: () => {
-      if (orderId) {
-        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(orderId) });
-        queryClient.invalidateQueries({ queryKey: ['requests', 'detail', String(orderId)] });
+    onSuccess: (_savedEntry, payload) => {
+      const targetOrderId = String(payload?.order_id || orderId || '');
+      if (targetOrderId) {
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(targetOrderId) });
+        queryClient.invalidateQueries({ queryKey: ['requests', 'detail', targetOrderId] });
       }
       queryClient.invalidateQueries({ queryKey: ['requests'] });
-      syncOfflineFinanceOutbox(queryClient, orderId).catch(() => {});
+      syncOfflineFinanceOutbox(queryClient, targetOrderId).catch(() => {});
     },
   });
 }
@@ -266,9 +278,16 @@ export function useUpsertOrderFinanceEntryMutation(orderId) {
 export function useDeleteOrderFinanceEntryMutation(orderId) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (entryId) => {
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
-      if (online) {
+    mutationFn: async (payload) => {
+      const isSystemRule = payload && typeof payload === 'object' && payload.isSystem === true;
+      const entryId = isSystemRule ? payload.entryId : payload;
+      if (isSystemRule) {
+        return excludeOrderFinanceRule({
+          orderId: payload.orderId || orderId,
+          ruleId: payload.ruleId,
+        });
+      }
+      if (shouldAttemptOnlineWrite()) {
         try {
           return await deleteOrderFinanceEntry(entryId);
         } catch (error) {
@@ -291,7 +310,8 @@ export function useDeleteOrderFinanceEntryMutation(orderId) {
       await mutateFinanceOutbox((items) => ({ items: [...items, item] }));
       return true;
     },
-    onMutate: async (entryId) => {
+    onMutate: async (payload) => {
+      const entryId = payload && typeof payload === 'object' ? payload.entryId : payload;
       const key = financeQueryKeys.orderEntries(orderId);
       const prev = queryClient.getQueryData(key);
       const current = Array.isArray(prev) ? prev : [];

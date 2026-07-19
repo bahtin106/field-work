@@ -45,6 +45,8 @@ export default function MediaUploadModal({
   canAddFromGallery = true,
   canRemovePhotos = true,
   embedded = false,
+  fullscreenContent = null,
+  onFullscreenRequestClose,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -464,7 +466,7 @@ export default function MediaUploadModal({
         title={confirmationMode ? confirmationTitle : t('order_photos_title')}
         maxHeightRatio={0.85}
         footer={modalFooter}
-        onFullscreenRequestClose={handleCloseCamera}
+        onFullscreenRequestClose={cameraVisible ? handleCloseCamera : onFullscreenRequestClose}
         fullscreenContent={
           cameraVisible && canAddFromCamera ? (
             <Suspense fallback={<View style={s.cameraLoading}><ActivityIndicator color={theme.colors.primary} /></View>}>
@@ -474,7 +476,7 @@ export default function MediaUploadModal({
                 onSave={handleSaveFromCamera}
               />
             </Suspense>
-          ) : null
+          ) : fullscreenContent
         }
       >
         {modalContent}

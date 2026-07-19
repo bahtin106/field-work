@@ -46,6 +46,36 @@ function isAuthSessionMissing(error: any) {
   return name.includes('authsessionmissingerror') || message.includes('auth session missing');
 }
 
+export function isRequestAuthorizationError(error: any) {
+  const code = String(error?.code || '').trim().toUpperCase();
+  const status = Number(error?.status || error?.statusCode || error?.response?.status);
+  const message = String(error?.message || error || '').toLowerCase();
+  return (
+    code === '42501' ||
+    code === 'PGRST301' ||
+    code === 'AUTH_SESSION_UNAVAILABLE' ||
+    status === 401 ||
+    status === 403 ||
+    message.includes('auth session missing') ||
+    message.includes('permission denied') ||
+    message.includes('unauthorized') ||
+    message.includes('jwt expired')
+  );
+}
+
+async function requireRequestSession() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+
+  const session = data?.session;
+  if (session?.access_token && session?.user?.id) return session;
+
+  const sessionError: any = new Error('Authenticated session is not ready');
+  sessionError.name = 'AuthSessionUnavailableError';
+  sessionError.code = 'AUTH_SESSION_UNAVAILABLE';
+  throw sessionError;
+}
+
 function isUuid(value) {
   const normalized = String(value || '').trim();
   return UUID_RE.test(normalized);
@@ -241,6 +271,8 @@ export async function listRequests(params: any = {}) {
       relationObjectIds = [],
       clientIds = [],
       orderIds = [],
+      clientTags = [],
+      objectTags = [],
       dateFrom = null,
       dateTo = null,
       createdFrom = null,
@@ -259,6 +291,16 @@ export async function listRequests(params: any = {}) {
       ? executorIds.map(String).map((value) => value.trim()).filter(Boolean)
       : [];
     const normalizedExecutorId = String(executorId || '').trim();
+    const normalizeTagFilters = (values: any) =>
+      Array.from(
+        new Set(
+          (Array.isArray(values) ? values : [])
+            .map((value) => String(value || '').trim())
+            .filter(Boolean),
+        ),
+      );
+    const normalizedClientTags = normalizeTagFilters(clientTags);
+    const normalizedObjectTags = normalizeTagFilters(objectTags);
     let query = supabase
       .from('orders_accessible')
       .select(SECURE_ORDER_SELECT_COLUMNS);
@@ -309,6 +351,8 @@ export async function listRequests(params: any = {}) {
     if (Array.isArray(orderIds) && orderIds.length) {
       query = query.in('id', orderIds.map(String));
     }
+    if (normalizedClientTags.length) query = query.overlaps('client_tags', normalizedClientTags);
+    if (normalizedObjectTags.length) query = query.overlaps('object_tags', normalizedObjectTags);
     const parsedSumMin = String(sumMin ?? '').trim() === '' ? NaN : Number(sumMin);
     const parsedSumMax = String(sumMax ?? '').trim() === '' ? NaN : Number(sumMax);
     if (dateFrom) query = query.gte('time_window_start', dateFrom);
@@ -336,6 +380,9 @@ export async function getRequestById(id: any) {
   const key = String(id || '').trim();
   if (!key || !isUuid(key)) return null;
   return measureNetwork('requests.getById', async () => {
+    // Never let a protected order-detail request fall through as `anon` while
+    // Supabase is restoring or refreshing the persisted mobile session.
+    await requireRequestSession();
     const { data, error } = await supabase
       .from('orders_accessible')
       .select(SECURE_ORDER_SELECT_COLUMNS)

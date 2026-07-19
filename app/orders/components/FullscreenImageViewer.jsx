@@ -17,7 +17,7 @@ import { cacheDirectory, copyAsync, downloadAsync, getInfoAsync } from 'expo-fil
 import { Image as ExpoImage } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
-import { Gallery } from 'react-native-zoom-toolkit';
+import { fitContainer, Gallery, useImageResolution } from 'react-native-zoom-toolkit';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme';
 import { withAlpha } from '../../../theme/colors';
@@ -78,6 +78,19 @@ const GalleryPhoto = memo(function GalleryPhoto({
   viewportWidth,
   viewportHeight,
 }) {
+  const { resolution } = useImageResolution({ uri });
+  const fittedSize = useMemo(() => {
+    const width = Number(resolution?.width) || 0;
+    const height = Number(resolution?.height) || 0;
+    if (width <= 0 || height <= 0) {
+      return { width: viewportWidth, height: viewportHeight };
+    }
+    return fitContainer(width / height, {
+      width: viewportWidth,
+      height: viewportHeight,
+    });
+  }, [resolution?.height, resolution?.width, viewportHeight, viewportWidth]);
+
   return (
     <ExpoImage
       source={{ uri }}
@@ -87,7 +100,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
       recyclingKey={uri}
       style={[
         styles.galleryPhoto,
-        { width: viewportWidth, height: viewportHeight },
+        fittedSize,
       ]}
     />
   );

@@ -244,6 +244,7 @@ export default function NewClientScreen() {
       first_name: () => (
         <>
           <TextField
+            inputKind="name"
             label={fieldUi.withRequiredLabel('first_name', t('label_first_name'))}
             value={firstName}
             onChangeText={(value) => {
@@ -261,6 +262,7 @@ export default function NewClientScreen() {
       middle_name: () => (
         <>
           <TextField
+            inputKind="name"
             label={fieldUi.withRequiredLabel('middle_name', t('label_middle_name'))}
             value={middleName}
             onChangeText={(value) => {
@@ -278,6 +280,7 @@ export default function NewClientScreen() {
       last_name: () => (
         <>
           <TextField
+            inputKind="name"
             label={fieldUi.withRequiredLabel('last_name', t('label_last_name'))}
             value={lastName}
             onChangeText={(value) => {

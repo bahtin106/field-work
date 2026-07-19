@@ -12,6 +12,7 @@ import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
+import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 async function fetchCompanies(search) {
@@ -66,6 +67,7 @@ export default function AdminCompaniesScreen() {
             placeholder={t('admin_companies_search_placeholder')}
             placeholderTextColor={theme.colors.textSecondary}
             style={styles(theme).input}
+            maxLength={TEXT_INPUT_LIMITS.search}
           />
         </Card>
 

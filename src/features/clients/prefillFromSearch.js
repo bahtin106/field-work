@@ -1,32 +1,16 @@
 import { toE164MobilePhoneOrNull } from '../../shared/validation/phone';
 
 const SURNAME_SUFFIXES = [
-  'ов',
-  'ова',
-  'ев',
-  'ева',
-  'ин',
-  'ина',
-  'ын',
-  'ына',
-  'ский',
-  'ская',
-  'цкий',
-  'цкая',
-  'ко',
-  'ук',
-  'юк',
-  'дзе',
-  'швили',
+  'ов', 'ова', 'ев', 'ева', 'ин', 'ина', 'ын', 'ына',
+  'ский', 'ская', 'цкий', 'цкая', 'ко', 'ук', 'юк', 'дзе', 'швили',
+];
+
+const PATRONYMIC_SUFFIXES = [
+  'ич', 'ична', 'овна', 'евна', 'оглы', 'кызы', 'уулу',
 ];
 
 function wordsFromQuery(value) {
-  return String(value || '')
-    .replace(/[0-9]+/g, ' ')
-    .replace(/[^\p{L}\s-]+/gu, ' ')
-    .split(/\s+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return String(value || '').match(/[\p{L}\p{M}\p{N}]+(?:[’'ʼ-][\p{L}\p{M}\p{N}]+)*/gu) || [];
 }
 
 function normalizeWord(value) {
@@ -35,7 +19,7 @@ function normalizeWord(value) {
 
 function looksLikePatronymic(value) {
   const normalized = normalizeWord(value);
-  return normalized.endsWith('ич') || normalized.endsWith('на');
+  return PATRONYMIC_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }
 
 function looksLikeSurname(value) {
@@ -54,7 +38,7 @@ function detectPhoneRaw(value) {
 export function parseClientPrefillFromSearch(query) {
   const raw = String(query || '').trim();
   const phoneRaw = detectPhoneRaw(raw);
-  const tokens = wordsFromQuery(raw);
+  const tokens = phoneRaw ? [] : wordsFromQuery(raw);
 
   let firstName = '';
   let lastName = '';
@@ -67,7 +51,13 @@ export function parseClientPrefillFromSearch(query) {
     else firstName = token;
   } else if (tokens.length === 2) {
     const [a, b] = tokens;
-    if (looksLikeSurname(a) && !looksLikeSurname(b)) {
+    if (looksLikePatronymic(b) && !looksLikeSurname(a)) {
+      firstName = a;
+      middleName = b;
+    } else if (looksLikePatronymic(a) && !looksLikeSurname(b)) {
+      firstName = b;
+      middleName = a;
+    } else if (looksLikeSurname(a) && !looksLikeSurname(b)) {
       lastName = a;
       firstName = b;
     } else {
@@ -75,15 +65,39 @@ export function parseClientPrefillFromSearch(query) {
       lastName = b;
     }
   } else if (tokens.length >= 3) {
-    const [a, b, c] = tokens;
-    if (looksLikePatronymic(c)) {
+    const [a, b] = tokens;
+    const finalToken = tokens[tokens.length - 1];
+    const patronymicIndex = tokens.findIndex(looksLikePatronymic);
+
+    if (patronymicIndex === tokens.length - 1) {
+      middleName = tokens.slice(2).join(' ');
+      if (looksLikeSurname(a) && !looksLikeSurname(b)) {
+        lastName = a;
+        firstName = b;
+      } else {
+        firstName = a;
+        lastName = b;
+      }
+    } else if (patronymicIndex === 1) {
+      firstName = a;
+      middleName = b;
+      lastName = tokens.slice(2).join(' ');
+    } else if (patronymicIndex === 0) {
+      middleName = a;
       firstName = b;
+      lastName = tokens.slice(2).join(' ');
+    } else if (looksLikeSurname(a) && !looksLikeSurname(b)) {
       lastName = a;
-      middleName = c;
-    } else {
+      firstName = b;
+      middleName = tokens.slice(2).join(' ');
+    } else if (looksLikeSurname(b)) {
       firstName = a;
       lastName = b;
-      middleName = c;
+      middleName = tokens.slice(2).join(' ');
+    } else {
+      firstName = a;
+      lastName = finalToken;
+      middleName = tokens.slice(1, -1).join(' ');
     }
   }
 

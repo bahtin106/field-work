@@ -4,7 +4,7 @@ import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { createLogger } from '../lib/logger';
 import { formatPersonNameParts } from '../lib/personName';
 import { readCurrentPushToken } from '../lib/pushAutoSetup';
-import { supabase } from '../lib/supabase';
+import { clearPersistedAuthSession, supabase } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
 import { queryClient } from '../src/shared/query/queryClient';
 import { queryKeys } from '../src/shared/query/queryKeys';
@@ -16,8 +16,27 @@ const PROFILE_COLUMNS =
 const PROFILE_LOAD_TIMEOUT_MS = 4000;
 const PROFILE_RECOVERY_ATTEMPTS = 4;
 const PROFILE_RECOVERY_BASE_DELAY_MS = 1200;
+const SIGN_OUT_SESSION_TIMEOUT_MS = 1000;
+const SIGN_OUT_PUSH_TIMEOUT_MS = 1200;
+const SIGN_OUT_AUTH_TIMEOUT_MS = 2000;
 const INVALID_REFRESH_TOKEN_RE = /invalid refresh token|refresh token.+already used/i;
 const log = createLogger('SimpleAuth');
+
+const settleWithin = async (promise, timeoutMs) => {
+  let timeoutId;
+  const timeoutResult = Symbol('timeout');
+  try {
+    const result = await Promise.race([
+      Promise.resolve(promise),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve(timeoutResult), timeoutMs);
+      }),
+    ]);
+    return result === timeoutResult ? { timedOut: true, value: null } : { timedOut: false, value: result };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
 
 const buildProfileFromUser = (user, source = 'user-metadata') => {
   if (!user?.id) return null;
@@ -423,7 +442,11 @@ export function SimpleAuthProvider({ children }) {
 
   const recoverFromInvalidRefreshToken = useCallback(async () => {
     try {
-      await supabase.auth.signOut({ scope: 'local' });
+      await settleWithin(supabase.auth.signOut({ scope: 'local' }), SIGN_OUT_AUTH_TIMEOUT_MS);
+    } catch {}
+
+    try {
+      await settleWithin(clearPersistedAuthSession(), SIGN_OUT_SESSION_TIMEOUT_MS);
     } catch {}
 
     setSignedOutState();
@@ -733,8 +756,15 @@ export function SimpleAuthProvider({ children }) {
     let hadSession = false;
     let sessionWasChecked = false;
     try {
-      const sessionResult = await supabase.auth.getSession();
-      sessionWasChecked = !sessionResult?.error;
+      const sessionAttempt = await settleWithin(
+        supabase.auth.getSession(),
+        SIGN_OUT_SESSION_TIMEOUT_MS,
+      );
+      const sessionResult = sessionAttempt.value;
+      if (sessionAttempt.timedOut) {
+        log.warn('getSession timed out during sign-out');
+      }
+      sessionWasChecked = !sessionAttempt.timedOut && !sessionResult?.error;
       hadSession = !!sessionResult?.data?.session;
       currentAccessToken = sessionResult?.data?.session?.access_token
         ? String(sessionResult.data.session.access_token)
@@ -746,13 +776,20 @@ export function SimpleAuthProvider({ children }) {
     // best-effort background race with the next account login.
     if (currentUserId && currentAccessToken) {
       try {
-        const { token } = await readCurrentPushToken();
-        if (token) {
-          await deletePushToken(currentUserId, {
-            pushToken: token,
-            disableNotifications: false,
-            accessToken: currentAccessToken,
-          });
+        const pushAttempt = await settleWithin(
+          (async () => {
+            const { token } = await readCurrentPushToken();
+            if (!token) return;
+            await deletePushToken(currentUserId, {
+              pushToken: token,
+              disableNotifications: false,
+              accessToken: currentAccessToken,
+            });
+          })(),
+          SIGN_OUT_PUSH_TIMEOUT_MS,
+        );
+        if (pushAttempt.timedOut) {
+          log.warn('push installation detach timed out during sign-out');
         }
       } catch (error) {
         log.warn('push installation detach failed during sign-out', error);
@@ -760,8 +797,14 @@ export function SimpleAuthProvider({ children }) {
     }
 
     let signOutError = null;
+    let signOutTimedOut = false;
     try {
-      const result = await supabase.auth.signOut({ scope: 'local' });
+      const signOutAttempt = await settleWithin(
+        supabase.auth.signOut({ scope: 'local' }),
+        SIGN_OUT_AUTH_TIMEOUT_MS,
+      );
+      signOutTimedOut = signOutAttempt.timedOut;
+      const result = signOutAttempt.value;
       signOutError = result?.error || null;
     } catch (error) {
       signOutError = error;
@@ -769,13 +812,17 @@ export function SimpleAuthProvider({ children }) {
 
     const sessionIsGone =
       (sessionWasChecked && !hadSession) || isAuthSessionMissingError(signOutError);
-    if (signOutError && !sessionIsGone) {
-      logoutInProgressRef.current = false;
-      log.error('signOut error', signOutError);
-      setState((prev) => ({ ...prev, isInitializing: false, isSigningOut: false }));
-      return;
+    if (signOutTimedOut) {
+      log.warn('Supabase signOut timed out; completing local sign-out');
+    } else if (signOutError && !sessionIsGone) {
+      log.warn('Supabase signOut failed; completing local sign-out', signOutError);
     }
 
+    try {
+      await settleWithin(clearPersistedAuthSession(), SIGN_OUT_SESSION_TIMEOUT_MS);
+    } catch (error) {
+      log.warn('persisted auth session cleanup failed during sign-out', error);
+    }
     const cleanupPromise = cleanupSessionRuntime('sign-out').catch(() => {});
     setSignedOutState({ signedOutUserId: currentUserId });
     logoutInProgressRef.current = false;
