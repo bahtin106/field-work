@@ -23,6 +23,16 @@ export type TrashListItem = {
   total_count?: number;
 };
 
+export type TrashMediaOrigin = {
+  owner_type: 'order' | 'object' | 'finance_entry' | string;
+  owner_id: string | null;
+  title: string;
+  status: 'active' | 'trash' | 'missing';
+  route_entity_id: string | null;
+  finance_entry_id: string | null;
+  trash_entry_id: string | null;
+};
+
 export function buildTrashMediaUrl(item: Pick<TrashListItem, 'id' | 'entity_type'> | null | undefined, {
   raw = false,
   width = 512,
@@ -62,6 +72,12 @@ export async function getTrashItem(id: string) {
   const { data, error } = await supabase.rpc('get_trash_item', { p_id: id });
   if (error) throw error;
   return data as TrashListItem & { data: Record<string, unknown> };
+}
+
+export async function getTrashMediaOrigin(id: string) {
+  const { data, error } = await supabase.rpc('get_trash_media_origin', { p_id: id });
+  if (error) throw error;
+  return data as TrashMediaOrigin;
 }
 
 export async function restoreTrashItem(id: string) {
