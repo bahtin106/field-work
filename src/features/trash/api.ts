@@ -188,3 +188,10 @@ export async function purgeTrashItems(ids: string[]) {
   if (error) throw error;
   return Number(data || normalizedIds.length);
 }
+
+export async function purgeAllTrashItems() {
+  if (!getOfflineSnapshot().isOnline) throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
+  const { data, error } = await supabase.rpc('purge_all_trash_items');
+  if (error) throw error;
+  return Number(data || 0);
+}

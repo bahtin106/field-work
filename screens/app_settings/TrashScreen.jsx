@@ -9,6 +9,7 @@ import SortSelectModal from '../../components/filters/SortSelectModal';
 import TrashFiltersPanel from '../../components/filters/TrashFiltersPanel';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
+import Button from '../../components/ui/Button';
 import SelectionToolbar from '../../components/ui/SelectionToolbar';
 import { useToast } from '../../components/ui/ToastProvider';
 import { ConfirmModal } from '../../components/ui/modals';
@@ -19,6 +20,7 @@ import {
   getTrashFilterOptions,
   listTrashItemIds,
   listTrashItems,
+  purgeAllTrashItems,
   purgeTrashItems,
   restoreTrashItems,
 } from '../../src/features/trash/api';
@@ -191,11 +193,21 @@ export default function TrashScreen() {
     },
     onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
   });
+  const clearMutation = useMutation({
+    mutationFn: purgeAllTrashItems,
+    onSuccess: async (count) => {
+      await invalidate();
+      toast.success(formatMessage(t, 'trash_cleared', { count }));
+    },
+    onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
+  });
 
   const listItems = listQuery.data?.pages?.flatMap((page) => page) || [];
   const totalCount = Number(listItems[0]?.total_count || 0);
+  const allTrashCount = (optionsQuery.data?.entityTypes || []).reduce((sum, item) => sum + Number(item?.count || 0), 0);
+  const trashKnownEmpty = optionsQuery.isSuccess && allTrashCount === 0;
   const allSelected = totalCount > 0 && selectedIds.size === totalCount;
-  const busy = selectingAll || restoreMutation.isPending || purgeMutation.isPending;
+  const busy = selectingAll || restoreMutation.isPending || purgeMutation.isPending || clearMutation.isPending;
 
   const optionLabels = useMemo(() => {
     const result = {};
@@ -357,7 +369,26 @@ export default function TrashScreen() {
   };
 
   return (
-    <Screen scroll={false} headerOptions={{ title: t('trash_title') }}>
+    <Screen
+      scroll={false}
+      headerOptions={{
+        title: t('trash_title'),
+        headerRight: canPurgeTrash && !selectionMode
+          ? () => (
+            <Button
+              title={t('trash_clear_action')}
+              accessibilityLabel={t('trash_clear_action')}
+              variant="secondary"
+              size="sm"
+              disabled={busy || trashKnownEmpty}
+              loading={clearMutation.isPending}
+              onPress={() => setConfirmation({ action: 'purgeAll' })}
+              style={styles.headerAction}
+            />
+          )
+          : undefined,
+      }}
+    >
       <View style={styles.container}>
         {selectionMode ? (
           <SelectionToolbar
@@ -427,18 +458,29 @@ export default function TrashScreen() {
       <SortSelectModal visible={sortVisible} onClose={() => setSortVisible(false)} options={SORTS.map((value) => ({ id: value, label: t(`trash_sort_${value}`) }))} value={sort} onChange={(value) => { if (value) setSort(value); }} title={t('common_sort')} />
       <ConfirmModal
         visible={Boolean(confirmation)}
-        title={t(confirmation?.action === 'restore' ? 'trash_bulk_restore_title' : 'trash_bulk_purge_title')}
-        message={confirmation?.ids?.length === 1 && confirmation?.title
-          ? formatMessage(t, 'trash_purge_message', { title: confirmation.title })
-          : formatMessage(t, confirmation?.action === 'restore' ? 'trash_bulk_restore_message' : 'trash_bulk_purge_message', { count: confirmation?.ids?.length || 0 })}
-        confirmLabel={t(confirmation?.action === 'restore' ? 'trash_restore' : 'trash_purge')}
+        title={t(confirmation?.action === 'restore'
+          ? 'trash_bulk_restore_title'
+          : confirmation?.action === 'purgeAll'
+            ? 'trash_clear_title'
+            : 'trash_bulk_purge_title')}
+        message={confirmation?.action === 'purgeAll'
+          ? formatMessage(t, 'trash_clear_message', { count: allTrashCount })
+          : confirmation?.ids?.length === 1 && confirmation?.title
+            ? formatMessage(t, 'trash_purge_message', { title: confirmation.title })
+            : formatMessage(t, confirmation?.action === 'restore' ? 'trash_bulk_restore_message' : 'trash_bulk_purge_message', { count: confirmation?.ids?.length || 0 })}
+        confirmLabel={t(confirmation?.action === 'restore'
+          ? 'trash_restore'
+          : confirmation?.action === 'purgeAll'
+            ? 'trash_clear_confirm'
+            : 'trash_purge')}
         cancelLabel={t('common_cancel')}
-        confirmVariant={confirmation?.action === 'purge' ? 'destructive' : 'primary'}
-        loading={restoreMutation.isPending || purgeMutation.isPending}
+        confirmVariant={confirmation?.action === 'restore' ? 'primary' : 'destructive'}
+        loading={restoreMutation.isPending || purgeMutation.isPending || clearMutation.isPending}
         onClose={() => setConfirmation(null)}
         onConfirm={() => {
           const ids = confirmation?.ids || [];
           if (confirmation?.action === 'restore') restoreMutation.mutate(ids);
+          else if (confirmation?.action === 'purgeAll') clearMutation.mutate();
           else purgeMutation.mutate(ids);
         }}
       />
@@ -453,6 +495,7 @@ const createStyles = (theme) => StyleSheet.create({
   list: { gap: 10, paddingHorizontal: theme.spacing.lg, paddingBottom: 32 },
   listEmpty: { flexGrow: 1 },
   loader: { marginTop: 40 },
+  headerAction: { height: 32, borderRadius: 16, paddingHorizontal: 12 },
   searchBar: { paddingTop: theme.spacing.sm },
   card: { flexDirection: 'row', alignItems: 'stretch', borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 16, overflow: 'hidden' },
   cardSelected: { borderColor: theme.colors.primary, backgroundColor: theme.colors.surface },

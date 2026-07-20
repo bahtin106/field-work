@@ -105,6 +105,12 @@ const trashBulkMigration = read(trashBulkMigrationPath);
 const trashBulkRollbackPath =
   'supabase/rollback/20260720200000_add_trash_filters_and_bulk_actions_rollback.sql';
 const trashBulkRollback = read(trashBulkRollbackPath);
+const trashClearMigrationPath =
+  'supabase/migrations/20260720213000_add_atomic_empty_trash.sql';
+const trashClearMigration = read(trashClearMigrationPath);
+const trashClearRollbackPath =
+  'supabase/rollback/20260720213000_add_atomic_empty_trash_rollback.sql';
+const trashClearRollback = read(trashClearRollbackPath);
 
 check(!packageJson.dependencies?.['expo-dev-client'], 'expo-dev-client must not be bundled in production dependencies');
 check(packageJson.dependencies?.['expo-background-task'], 'expo-background-task is required for deferred media delivery');
@@ -586,13 +592,23 @@ check(
     trashBulkMigration.includes('Trash selection changed') &&
     trashBulkRollback.includes('drop function if exists public.purge_trash_items') &&
     trashBulkRollback.includes('drop function if exists public.list_trash_items_v2') &&
+    fs.existsSync(path.join(root, trashClearMigrationPath)) &&
+    fs.existsSync(path.join(root, trashClearRollbackPath)) &&
+    trashClearMigration.includes('purge_all_trash_items') &&
+    trashClearMigration.includes("current_user_has_trash_permission('canPurgeTrash')") &&
+    trashClearMigration.includes('auth.uid() = any(t.access_user_ids)') &&
+    trashClearRollback.includes('drop function if exists public.purge_all_trash_items') &&
     trashApi.includes("supabase.rpc('list_trash_items_v2'") &&
     trashApi.includes("supabase.rpc('restore_trash_items'") &&
     trashApi.includes("supabase.rpc('purge_trash_items'") &&
+    trashApi.includes("supabase.rpc('purge_all_trash_items'") &&
     trashScreen.includes('delayLongPress={450}') &&
     trashScreen.includes('<SelectionToolbar') &&
     trashScreen.includes('<TrashFiltersPanel') &&
-    trashScreen.includes("headerOptions={{ title: t('trash_title') }}") &&
+    trashScreen.includes("title: t('trash_title')") &&
+    trashScreen.includes("title={t('trash_clear_action')}") &&
+    trashScreen.includes("setConfirmation({ action: 'purgeAll' })") &&
+    trashScreen.includes("variant=\"secondary\"") &&
     trashScreen.includes("setConfirmation({ action: 'purge', ids: [id]") &&
     trashFiltersPanel.includes('mode="trash"') &&
     selectionToolbar.includes('onToggleAll') &&
@@ -602,7 +618,7 @@ check(
     filtersPanel.includes("const isTrashMode = mode === 'trash'") &&
     filtersPanel.includes("case 'trash_entityTypes'") &&
     filtersPanel.includes("case 'trash_deletedDate'"),
-  'Trash must preserve server-side filtering, atomic bulk actions, long-press selection, and card purge confirmation',
+  'Trash must preserve server-side filtering, atomic bulk/clear actions, long-press selection, and purge confirmation',
 );
 check(fs.existsSync(path.join(root, 'supabase/migrations/20260712190000_harden_error_logs.sql')), 'Error log schema migration is required');
 check(
