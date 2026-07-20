@@ -1,22 +1,58 @@
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
-import StatusSelectModal from '../../components/filters/StatusSelectModal';
+import TrashFiltersPanel from '../../components/filters/TrashFiltersPanel';
+import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
+import SelectionToolbar from '../../components/ui/SelectionToolbar';
+import { useToast } from '../../components/ui/ToastProvider';
+import { ConfirmModal } from '../../components/ui/modals';
 import { usePermissions } from '../../lib/permissions';
 import { getCachedSupabaseAccessToken } from '../../lib/supabaseSessionCache';
-import { buildTrashMediaUrl, listTrashItems } from '../../src/features/trash/api';
+import {
+  buildTrashMediaUrl,
+  getTrashFilterOptions,
+  listTrashItemIds,
+  listTrashItems,
+  purgeTrashItems,
+  restoreTrashItems,
+} from '../../src/features/trash/api';
+import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTheme } from '../../theme';
 
-const TYPES = ['', 'order', 'client', 'client_object', 'media'];
 const SORTS = ['purge_at', 'deleted_desc', 'title'];
+const TRASH_FILTER_DEFAULTS = Object.freeze({
+  entityTypes: [],
+  deletedByIds: [],
+  deletedDateFrom: null,
+  deletedDateTo: null,
+  statuses: [],
+  workTypes: [],
+  clientIds: [],
+  executorIds: [],
+  clientTags: [],
+  objectTags: [],
+  cities: [],
+  streets: [],
+  mediaOwnerTypes: [],
+  departureDateFrom: null,
+  departureDateTo: null,
+  departureTimeFrom: null,
+  departureTimeTo: null,
+  createdDateFrom: null,
+  createdDateTo: null,
+  createdTimeFrom: null,
+  createdTimeTo: null,
+  sumMin: '',
+  sumMax: '',
+});
 
 const formatMessage = (t, key, values = {}) => {
   let message = String(t(key, key));
@@ -33,9 +69,7 @@ const decodeTrashText = (value, { filename = false } = {}) => {
   try {
     decoded = decodeURIComponent(raw.replace(/^yadisk:\/\//i, ''));
   } catch {}
-  if (filename && /[\\/]/.test(decoded)) {
-    decoded = decoded.split(/[\\/]/).filter(Boolean).pop() || decoded;
-  }
+  if (filename && /[\\/]/.test(decoded)) decoded = decoded.split(/[\\/]/).filter(Boolean).pop() || decoded;
   return decoded.trim();
 };
 
@@ -49,6 +83,23 @@ const displaySubtitle = (item, t) => {
   const value = decodeTrashText(item?.subtitle);
   return isBrokenText(value) && item?.entity_type === 'media' ? t('trash_media_photo') : value;
 };
+
+const toDateBoundaryIso = (value, endOfDay = false) => {
+  const normalized = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+  const date = new Date(`${normalized}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const buildApiFilters = (values) => ({
+  ...values,
+  deletedDateFrom: toDateBoundaryIso(values.deletedDateFrom),
+  deletedDateTo: toDateBoundaryIso(values.deletedDateTo, true),
+  departureDateFrom: toDateBoundaryIso(values.departureDateFrom),
+  departureDateTo: toDateBoundaryIso(values.departureDateTo, true),
+  createdDateFrom: toDateBoundaryIso(values.createdDateFrom),
+  createdDateTo: toDateBoundaryIso(values.createdDateTo, true),
+});
 
 function timeLeft(value, t) {
   const ms = new Date(value).getTime() - Date.now();
@@ -65,14 +116,23 @@ export default function TrashScreen() {
   const { t } = useTranslation();
   const { has } = usePermissions();
   const router = useRouter();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const filters = useFilters({ screenKey: 'trash', defaults: TRASH_FILTER_DEFAULTS });
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [entityType, setEntityType] = useState('');
   const [sort, setSort] = useState('purge_at');
-  const [filtersVisible, setFiltersVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
   const [accessToken, setAccessToken] = useState('');
   const [failedThumbIds, setFailedThumbIds] = useState(() => new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [confirmation, setConfirmation] = useState(null);
+  const lastLongPressRef = useRef({ id: '', at: 0 });
+  const canViewTrash = has('canViewTrash');
+  const canRestoreTrash = has('canRestoreTrash');
+  const canPurgeTrash = has('canPurgeTrash');
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -87,85 +147,327 @@ export default function TrashScreen() {
     return () => { active = false; };
   }, []);
 
-  const params = useMemo(() => ({ search: debouncedSearch, entityType, sort }), [debouncedSearch, entityType, sort]);
-  const typeOptions = useMemo(() => TYPES.map((value) => ({
-    id: value,
-    label: value ? t(`trash_entity_${value}`) : t('trash_all'),
-  })), [t]);
-  const sortOptions = useMemo(() => SORTS.map((value) => ({
-    id: value,
-    label: t(`trash_sort_${value}`),
-  })), [t]);
+  const apiFilters = useMemo(() => buildApiFilters(filters.values), [filters.values]);
+  const params = useMemo(
+    () => ({ search: debouncedSearch, filters: apiFilters, sort }),
+    [apiFilters, debouncedSearch, sort],
+  );
+  const optionsQuery = useQuery({
+    queryKey: queryKeys.trash.filterOptions(),
+    queryFn: getTrashFilterOptions,
+    enabled: canViewTrash,
+    staleTime: 30 * 1000,
+  });
   const listQuery = useInfiniteQuery({
     queryKey: queryKeys.trash.list(params),
     queryFn: ({ pageParam }) => listTrashItems({ ...params, limit: 50, offset: pageParam }),
     initialPageParam: 0,
     getNextPageParam: (lastPage, pages) => lastPage.length === 50 ? pages.length * 50 : undefined,
-    enabled: has('canViewTrash'),
+    enabled: canViewTrash,
   });
-  if (!has('canViewTrash')) return <Screen scroll={false}><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
+
+  const invalidate = async () => {
+    await Promise.all(['trash', 'requests', 'clients', 'objects'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
+  };
+  const finishSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+  const restoreMutation = useMutation({
+    mutationFn: restoreTrashItems,
+    onSuccess: async (result) => {
+      await invalidate();
+      finishSelection();
+      toast.success(t(result?.queued ? 'trash_restore_queued' : 'trash_bulk_restored'));
+    },
+    onError: () => toast.error(t('trash_action_error')),
+  });
+  const purgeMutation = useMutation({
+    mutationFn: purgeTrashItems,
+    onSuccess: async () => {
+      await invalidate();
+      finishSelection();
+      toast.success(t('trash_bulk_purged'));
+    },
+    onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
+  });
+
+  const listItems = listQuery.data?.pages?.flatMap((page) => page) || [];
+  const totalCount = Number(listItems[0]?.total_count || 0);
+  const allSelected = totalCount > 0 && selectedIds.size === totalCount;
+  const busy = selectingAll || restoreMutation.isPending || purgeMutation.isPending;
+
+  const optionLabels = useMemo(() => {
+    const result = {};
+    Object.entries(optionsQuery.data || {}).forEach(([key, items]) => {
+      result[key] = new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.id || ''), String(item?.label || item?.id || '')]));
+    });
+    return result;
+  }, [optionsQuery.data]);
+  const filterSummaryData = useMemo(() => {
+    const parts = [];
+    const add = (label, values, optionKey, resolver) => {
+      if (!Array.isArray(values) || !values.length) return;
+      const labels = values.map((id) => resolver?.(id) || optionLabels[optionKey]?.get(String(id)) || String(id));
+      parts.push(summarizeFilterPart({ label, values: labels, countWhenMany: true }));
+    };
+    add(t('trash_filter_entity'), filters.values.entityTypes, 'entityTypes', (id) => t(`trash_entity_${id}`));
+    add(t('trash_filter_deleted_by'), filters.values.deletedByIds, 'deletedBy');
+    add(t('orders_filter_status'), filters.values.statuses, 'statuses');
+    add(t('order_field_work_type'), filters.values.workTypes, 'workTypes');
+    add(t('common_client'), filters.values.clientIds, 'clients');
+    add(t('orders_filter_executor'), filters.values.executorIds, 'executors');
+    add(t('common_city'), filters.values.cities, 'cities');
+    add(t('common_street'), filters.values.streets, 'streets');
+    add(t('tags_clients_label'), filters.values.clientTags, 'clientTags');
+    add(t('tags_objects_label'), filters.values.objectTags, 'objectTags');
+    add(t('trash_filter_media_source'), filters.values.mediaOwnerTypes, 'mediaOwnerTypes', (id) => t(`trash_media_owner_${id}`));
+    if (filters.values.deletedDateFrom || filters.values.deletedDateTo) {
+      parts.push(summarizeFilterPart({ label: t('trash_filter_deleted_date'), value: `${filters.values.deletedDateFrom || '—'}–${filters.values.deletedDateTo || '—'}` }));
+    }
+    if (filters.values.departureDateFrom || filters.values.departureDateTo) {
+      parts.push(summarizeFilterPart({ label: t('order_field_departure_date'), value: `${filters.values.departureDateFrom || '—'}–${filters.values.departureDateTo || '—'}` }));
+    }
+    if (filters.values.departureTimeFrom || filters.values.departureTimeTo) {
+      parts.push(summarizeFilterPart({ label: t('order_field_departure_time'), value: `${filters.values.departureTimeFrom || '—'}–${filters.values.departureTimeTo || '—'}` }));
+    }
+    if (filters.values.createdDateFrom || filters.values.createdDateTo) {
+      parts.push(summarizeFilterPart({ label: t('orders_filter_created_date'), value: `${filters.values.createdDateFrom || '—'}–${filters.values.createdDateTo || '—'}` }));
+    }
+    if (filters.values.createdTimeFrom || filters.values.createdTimeTo) {
+      parts.push(summarizeFilterPart({ label: t('orders_filter_created_time'), value: `${filters.values.createdTimeFrom || '—'}–${filters.values.createdTimeTo || '—'}` }));
+    }
+    if (filters.values.sumMin || filters.values.sumMax) {
+      parts.push(summarizeFilterPart({ label: t('order_details_amount'), value: `${filters.values.sumMin || '—'}–${filters.values.sumMax || '—'}` }));
+    }
+    return joinFilterSummary(parts, t('common_bullet'));
+  }, [filters.values, optionLabels, t]);
+
+  if (!canViewTrash) {
+    return <Screen scroll={false}><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
+  }
 
   const openItem = (item) => {
     if (item?.entity_type === 'order') {
       router.push({ pathname: `/orders/${item.entity_id}`, params: { trashId: item.id, returnTo: '/app_settings/trash' } });
-      return;
-    }
-    if (item?.entity_type === 'client') {
+    } else if (item?.entity_type === 'client') {
       router.push({ pathname: `/clients/${item.entity_id}`, params: { trashId: item.id, returnTo: '/app_settings/trash' } });
-      return;
-    }
-    if (item?.entity_type === 'client_object') {
+    } else if (item?.entity_type === 'client_object') {
       router.push({ pathname: `/objects/${item.entity_id}`, params: { trashId: item.id, returnTo: '/app_settings/trash' } });
+    } else {
+      router.push(`/app_settings/trash/${item.id}`);
+    }
+  };
+  const toggleSelection = (id) => {
+    const normalizedId = String(id || '');
+    if (!normalizedId) return;
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(normalizedId)) next.delete(normalizedId);
+      else next.add(normalizedId);
+      return next;
+    });
+  };
+  const enterSelection = (item) => {
+    const id = String(item?.id || '');
+    if (!id) return;
+    lastLongPressRef.current = { id, at: Date.now() };
+    setSelectionMode(true);
+    setSelectedIds((current) => new Set(current).add(id));
+  };
+  const handleCardPress = (item) => {
+    const id = String(item?.id || '');
+    const lastLongPress = lastLongPressRef.current;
+    if (lastLongPress.id === id && Date.now() - lastLongPress.at < 1200) {
+      lastLongPressRef.current = { id: '', at: 0 };
       return;
     }
-    router.push(`/app_settings/trash/${item.id}`);
+    if (selectionMode) toggleSelection(id);
+    else openItem(item);
+  };
+  const toggleAll = async () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectingAll(true);
+    try {
+      const ids = await listTrashItemIds({ search: debouncedSearch, filters: apiFilters });
+      setSelectedIds(new Set(ids));
+    } catch {
+      toast.error(t('trash_action_error'));
+    } finally {
+      setSelectingAll(false);
+    }
   };
 
   const renderItem = ({ item }) => {
+    const id = String(item.id || '');
+    const selected = selectedIds.has(id);
     const thumbnailUri = buildTrashMediaUrl(item) || String(item.thumbnail_url || '');
-    const canLoadThumbnail = Boolean(thumbnailUri) && (item.entity_type !== 'media' || Boolean(accessToken)) && !failedThumbIds.has(item.id);
+    const canLoadThumbnail = Boolean(thumbnailUri) && (item.entity_type !== 'media' || Boolean(accessToken)) && !failedThumbIds.has(id);
     const thumbnailSource = canLoadThumbnail ? {
       uri: thumbnailUri,
       ...(item.entity_type === 'media' ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
     } : null;
-    return <Pressable accessibilityRole="button" onPress={() => openItem(item)} style={styles.card}>
-      {thumbnailSource ? <Image source={thumbnailSource} onError={() => setFailedThumbIds((current) => new Set(current).add(item.id))} style={styles.thumb} contentFit="cover" /> : <View style={styles.thumbEmpty}><Feather name="trash-2" size={22} color={theme.colors.danger} /></View>}
-      <View style={styles.grow}>
-        <View style={styles.between}><Text style={styles.type}>{t(`trash_entity_${item.entity_type}`)}</Text><Feather name="trash-2" size={14} color={theme.colors.danger} /></View>
-        <Text numberOfLines={1} style={styles.title}>{displayTitle(item)}</Text>
-        {displaySubtitle(item, t) ? <Text numberOfLines={2} style={styles.muted}>{displaySubtitle(item, t)}</Text> : null}
-        <Text style={styles.countdown}>{timeLeft(item.purge_at, t)}</Text>
-        <Text style={styles.small}>{formatMessage(t, 'trash_purge_at', { date: new Date(item.purge_at).toLocaleString() })}</Text>
+    return (
+      <View style={[styles.card, selected && styles.cardSelected]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected }}
+          delayLongPress={450}
+          onLongPress={() => enterSelection(item)}
+          onPress={() => handleCardPress(item)}
+          style={({ pressed }) => [styles.cardContent, pressed && styles.cardPressed]}
+        >
+          {thumbnailSource ? (
+            <Image source={thumbnailSource} onError={() => setFailedThumbIds((current) => new Set(current).add(id))} style={styles.thumb} contentFit="cover" />
+          ) : (
+            <View style={styles.thumbEmpty}><Feather name="trash-2" size={22} color={theme.colors.danger} /></View>
+          )}
+          <View style={styles.grow}>
+            <Text style={styles.type}>{t(`trash_entity_${item.entity_type}`)}</Text>
+            <Text numberOfLines={1} style={styles.title}>{displayTitle(item)}</Text>
+            {displaySubtitle(item, t) ? <Text numberOfLines={2} style={styles.muted}>{displaySubtitle(item, t)}</Text> : null}
+            <Text style={styles.countdown}>{timeLeft(item.purge_at, t)}</Text>
+            <Text style={styles.small}>{formatMessage(t, 'trash_purge_at', { date: new Date(item.purge_at).toLocaleString() })}</Text>
+          </View>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={selectionMode ? t('trash_toggle_selection') : t('trash_purge')}
+          disabled={!selectionMode && !canPurgeTrash}
+          hitSlop={8}
+          onPress={() => {
+            if (selectionMode) toggleSelection(id);
+            else setConfirmation({ action: 'purge', ids: [id], title: displayTitle(item) });
+          }}
+          style={({ pressed }) => [styles.cardAction, pressed && styles.cardPressed]}
+        >
+          {selectionMode ? (
+            <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
+              {selected ? <Feather name="check" size={15} color={theme.colors.onPrimary} /> : null}
+            </View>
+          ) : (
+            <Feather name="trash-2" size={18} color={canPurgeTrash ? theme.colors.danger : theme.colors.textSecondary} />
+          )}
+        </Pressable>
       </View>
-    </Pressable>
+    );
   };
 
-  const listItems = listQuery.data?.pages?.flatMap((page) => page) || [];
-  const filterSummary = entityType ? `${t('trash_filter_entity')}: ${t(`trash_entity_${entityType}`)}` : '';
-
-  return <Screen scroll={false}>
-    <View style={styles.container}>
-      <SearchFiltersBar
-        value={search}
-        onChangeText={setSearch}
-        onClear={() => setSearch('')}
-        placeholder={t('trash_search')}
-        onOpenFilters={() => setFiltersVisible(true)}
-        onOpenSort={() => setSortVisible(true)}
-        filtersActive={Boolean(entityType)}
-        filterSummary={filterSummary}
-        onResetFilters={() => setEntityType('')}
-        metaText={`${t('common_shown')} ${listItems.length}`}
-        style={styles.searchBar}
+  return (
+    <Screen scroll={false}>
+      <View style={styles.container}>
+        {selectionMode ? (
+          <SelectionToolbar
+            selectedCount={selectedIds.size}
+            totalCount={totalCount}
+            allSelected={allSelected}
+            selectedLabel={t('trash_selected')}
+            selectAllLabel={t('trash_select_all')}
+            clearAllLabel={t('trash_clear_all')}
+            onToggleAll={toggleAll}
+            onClose={finishSelection}
+            busy={busy}
+            actions={[
+              ...(canRestoreTrash ? [{ id: 'restore', label: t('trash_restore'), icon: 'rotate-ccw', loading: restoreMutation.isPending, onPress: () => setConfirmation({ action: 'restore', ids: [...selectedIds] }) }] : []),
+              ...(canPurgeTrash ? [{ id: 'purge', label: t('trash_delete_short'), icon: 'trash-2', variant: 'destructive', loading: purgeMutation.isPending, onPress: () => setConfirmation({ action: 'purge', ids: [...selectedIds] }) }] : []),
+            ]}
+          />
+        ) : (
+          <SearchFiltersBar
+            value={search}
+            onChangeText={setSearch}
+            onClear={() => setSearch('')}
+            placeholder={t('trash_search')}
+            onOpenFilters={filters.open}
+            onOpenSort={() => setSortVisible(true)}
+            filtersActive={Boolean(filterSummaryData)}
+            filterSummary={filterSummaryData}
+            onResetFilters={async () => {
+              const reset = filters.reset();
+              await filters.apply(reset);
+            }}
+            metaText={`${t('common_total')}: ${totalCount}`}
+            style={styles.searchBar}
+          />
+        )}
+        {listQuery.isLoading ? (
+          <ActivityIndicator style={styles.loader} color={theme.colors.primary} />
+        ) : (
+          <FlatList
+            data={listItems}
+            renderItem={renderItem}
+            extraData={{ selectionMode, selectedIds }}
+            keyExtractor={(item) => item.id}
+            style={styles.flatList}
+            contentContainerStyle={[styles.list, listItems.length === 0 && styles.listEmpty]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshing={listQuery.isRefetching}
+            onRefresh={listQuery.refetch}
+            onEndReached={() => { if (listQuery.hasNextPage && !listQuery.isFetchingNextPage) listQuery.fetchNextPage(); }}
+            onEndReachedThreshold={0.4}
+            ListFooterComponent={listQuery.isFetchingNextPage ? <ActivityIndicator color={theme.colors.primary} /> : null}
+            ListEmptyComponent={<View style={styles.empty}><Feather name="trash-2" size={32} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_empty')}</Text><Text style={styles.muted}>{t('trash_empty_hint')}</Text></View>}
+          />
+        )}
+      </View>
+      <TrashFiltersPanel
+        visible={filters.visible}
+        onClose={filters.close}
+        options={optionsQuery.data || {}}
+        values={filters.values}
+        defaults={TRASH_FILTER_DEFAULTS}
+        setValue={filters.setValue}
+        onApply={(nextValues) => filters.apply(nextValues)}
+        onReset={() => filters.reset()}
       />
-      {listQuery.isLoading ? <ActivityIndicator style={styles.loader} color={theme.colors.primary} /> : <FlatList data={listItems} renderItem={renderItem} keyExtractor={(item) => item.id} style={styles.flatList} contentContainerStyle={[styles.list, listItems.length === 0 && styles.listEmpty]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" refreshing={listQuery.isRefetching} onRefresh={listQuery.refetch} onEndReached={() => { if (listQuery.hasNextPage && !listQuery.isFetchingNextPage) listQuery.fetchNextPage(); }} onEndReachedThreshold={0.4} ListFooterComponent={listQuery.isFetchingNextPage ? <ActivityIndicator color={theme.colors.primary} /> : null} ListEmptyComponent={<View style={styles.empty}><Feather name="trash-2" size={32} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_empty')}</Text><Text style={styles.muted}>{t('trash_empty_hint')}</Text></View>} />}
-    </View>
-    <StatusSelectModal visible={filtersVisible} onClose={() => setFiltersVisible(false)} options={typeOptions} value={entityType} onChange={(value) => setEntityType(value || '')} title={t('trash_filter_title')} />
-    <SortSelectModal visible={sortVisible} onClose={() => setSortVisible(false)} options={sortOptions} value={sort} onChange={(value) => { if (value) setSort(value); }} title={t('common_sort')} />
-  </Screen>;
+      <SortSelectModal visible={sortVisible} onClose={() => setSortVisible(false)} options={SORTS.map((value) => ({ id: value, label: t(`trash_sort_${value}`) }))} value={sort} onChange={(value) => { if (value) setSort(value); }} title={t('common_sort')} />
+      <ConfirmModal
+        visible={Boolean(confirmation)}
+        title={t(confirmation?.action === 'restore' ? 'trash_bulk_restore_title' : 'trash_bulk_purge_title')}
+        message={confirmation?.ids?.length === 1 && confirmation?.title
+          ? formatMessage(t, 'trash_purge_message', { title: confirmation.title })
+          : formatMessage(t, confirmation?.action === 'restore' ? 'trash_bulk_restore_message' : 'trash_bulk_purge_message', { count: confirmation?.ids?.length || 0 })}
+        confirmLabel={t(confirmation?.action === 'restore' ? 'trash_restore' : 'trash_purge')}
+        cancelLabel={t('common_cancel')}
+        confirmVariant={confirmation?.action === 'purge' ? 'destructive' : 'primary'}
+        loading={restoreMutation.isPending || purgeMutation.isPending}
+        onClose={() => setConfirmation(null)}
+        onConfirm={() => {
+          const ids = confirmation?.ids || [];
+          if (confirmation?.action === 'restore') restoreMutation.mutate(ids);
+          else purgeMutation.mutate(ids);
+        }}
+      />
+    </Screen>
+  );
 }
 
 const createStyles = (theme) => StyleSheet.create({
-  container: { flex: 1 }, grow: { flex: 1, minWidth: 0 }, between: { flexDirection: 'row', justifyContent: 'space-between' }, flatList: { flex: 1 }, list: { gap: 10, paddingHorizontal: theme.spacing.lg, paddingBottom: 32 }, listEmpty: { flexGrow: 1 }, loader: { marginTop: 40 }, searchBar: { paddingTop: theme.spacing.sm },
-  card: { flexDirection: 'row', gap: 12, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 16, padding: 12 }, thumb: { width: 84, height: 84, borderRadius: 12 }, thumbEmpty: { width: 84, height: 84, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background }, type: { color: theme.colors.danger, fontSize: 12, fontWeight: '700' }, title: { color: theme.colors.text, fontSize: 17, fontWeight: '700', marginTop: 3 }, muted: { color: theme.colors.textSecondary, marginTop: 3 }, countdown: { color: theme.colors.danger, fontWeight: '700', marginTop: 7 }, small: { color: theme.colors.textSecondary, fontSize: 12 }, empty: { alignItems: 'center', justifyContent: 'center', padding: 40, gap: 8 }, emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700', textAlign: 'center' },
+  container: { flex: 1 },
+  grow: { flex: 1, minWidth: 0 },
+  flatList: { flex: 1 },
+  list: { gap: 10, paddingHorizontal: theme.spacing.lg, paddingBottom: 32 },
+  listEmpty: { flexGrow: 1 },
+  loader: { marginTop: 40 },
+  searchBar: { paddingTop: theme.spacing.sm },
+  card: { flexDirection: 'row', alignItems: 'stretch', borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 16, overflow: 'hidden' },
+  cardSelected: { borderColor: theme.colors.primary, backgroundColor: theme.colors.surface },
+  cardContent: { flex: 1, minWidth: 0, flexDirection: 'row', gap: 12, padding: 12, paddingRight: 4 },
+  cardAction: { width: 48, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 16, paddingRight: 8 },
+  cardPressed: { opacity: 0.82 },
+  thumb: { width: 84, height: 84, borderRadius: 12 },
+  thumbEmpty: { width: 84, height: 84, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background },
+  type: { color: theme.colors.danger, fontSize: 12, fontWeight: '700' },
+  title: { color: theme.colors.text, fontSize: 17, fontWeight: '700', marginTop: 3 },
+  muted: { color: theme.colors.textSecondary, marginTop: 3 },
+  countdown: { color: theme.colors.danger, fontWeight: '700', marginTop: 7 },
+  small: { color: theme.colors.textSecondary, fontSize: 12 },
+  checkbox: { width: 24, height: 24, borderRadius: 7, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.background, alignItems: 'center', justifyContent: 'center' },
+  checkboxSelected: { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40, gap: 8 },
+  emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700', textAlign: 'center' },
 });
