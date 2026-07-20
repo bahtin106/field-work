@@ -3,6 +3,7 @@
     "name": "Монитор",
     "slug": "work-orders-app",
     "version": "1.0.4",
+    "orientation": "default",
     "scheme": "workorders",
     "icon": "./assets/icon.png",
     "splash": {
@@ -19,6 +20,7 @@
     "android": {
       "package": "com.monitorapp.monitor",
       "versionCode": 9,
+      "edgeToEdgeEnabled": true,
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "android.permission.CAMERA",
@@ -42,13 +44,11 @@
       "**/*"
     ],
     "androidStatusBar": {
-      "barStyle": "dark-content",
-      "backgroundColor": "#F2F2F7",
-      "translucent": false
+      "barStyle": "dark-content"
     },
     "androidNavigationBar": {
       "barStyle": "dark-content",
-      "backgroundColor": "#FFFFFF"
+      "enforceContrast": false
     },
     "extra": {
       "eas": {

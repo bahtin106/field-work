@@ -114,22 +114,6 @@ const ACCESS_BOOTSTRAP_DELAY_MS = 1800;
 const PUSH_BOOTSTRAP_DELAY_MS = 4500;
 const NOTIFICATION_LISTENERS_DELAY_MS = 2800;
 
-function isHuaweiLikeAndroidDevice() {
-  if (Platform.OS !== 'android') return false;
-  const constants = Platform.constants || {};
-  const identity = [
-    constants.Brand,
-    constants.Manufacturer,
-    constants.Model,
-    constants.Device,
-  ]
-    .map((value) => String(value || '').trim().toLowerCase())
-    .filter(Boolean)
-    .join(' ');
-
-  return identity.includes('huawei') || identity.includes('honor');
-}
-
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
   SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -224,8 +208,7 @@ function RootLayoutInner() {
     (inAuthGroup && authScreen === 'blocked') ||
     normalizedPathname === '/blocked' ||
     normalizedPathname === '/(auth)/blocked';
-  // Some EMUI/HarmonyOS builds add a duplicated top inset with a non-translucent status bar.
-  const rootSafeEdges = isHuaweiLikeAndroidDevice() ? ['left', 'right'] : ['top', 'left', 'right'];
+  const rootSafeEdges = ['top', 'left', 'right'];
 
   const isSamePath = useCallback((targetPath) => {
     const current = String(pathname || '').trim().replace(/\/+$/, '') || '/';

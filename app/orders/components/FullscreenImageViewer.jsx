@@ -949,7 +949,6 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         transparent: false,
         animationType: 'fade',
         presentationStyle: 'fullScreen',
-        statusBarTranslucent: true,
         hardwareAccelerated: true,
         onRequestClose: requestClose,
       };
@@ -960,7 +959,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     <>
       <ViewerContainer {...viewerContainerProps}>
         <GestureHandlerRootView style={styles.rootFill}>
-          <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
+          <StatusBar barStyle="light-content" />
           <View style={ds.modalRoot}>
             <View style={ds.gallery}>
               <ZoomGallery

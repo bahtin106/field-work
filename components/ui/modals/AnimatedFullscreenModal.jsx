@@ -142,7 +142,6 @@ export default function AnimatedFullscreenModal({
       visible={mounted}
       transparent
       animationType="none"
-      statusBarTranslucent
       presentationStyle="overFullScreen"
       onRequestClose={onRequestClose}
       onShow={runOpenAnimation}

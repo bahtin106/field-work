@@ -285,7 +285,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   if (!permission) {
     return (
       <View style={[s.root, s.cameraLoadingRoot]}>
-        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+        <StatusBar barStyle="light-content" />
         <ActivityIndicator size="large" color={theme.colors.onPrimary} />
       </View>
     );
@@ -295,7 +295,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     const canAskAgain = permission?.canAskAgain !== false;
     return (
       <View style={[s.root, s.permissionRoot]}>
-        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        <StatusBar barStyle="dark-content" />
         <View style={s.permContent}>
           <Feather name="camera-off" size={theme.icons.lg * 2} color={theme.colors.textSecondary} />
           <Text style={s.permHint}>
@@ -334,7 +334,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   // ── Main camera UI ─────────────────────────────────────────
   return (
     <>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="light-content" />
       <View style={s.root}>
         {!previewVisible ? (
           <>

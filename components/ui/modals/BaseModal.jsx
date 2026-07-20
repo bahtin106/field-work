@@ -507,8 +507,6 @@ const BaseModalImpl = (
         transparent: true,
         presentationStyle: 'overFullScreen',
         animationType: 'none',
-        statusBarTranslucent: true,
-        navigationBarTranslucent: true,
         onRequestClose: () => handleContainerRequestCloseRef.current(),
         onShow: () => {
           runOpenAnimation();

@@ -15,8 +15,11 @@ const packageJson = json('package.json');
 const appJson = json('app.json').expo;
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 const androidStrings = read('android/app/src/main/res/values/strings.xml');
+const androidStyles = read('android/app/src/main/res/values/styles.xml');
+const androidNightStyles = read('android/app/src/main/res/values-night/styles.xml');
 const gradle = read('android/app/build.gradle');
 const gradleProperties = read('android/gradle.properties');
+const systemBars = read('lib/systemBars.js');
 const externalUrls = read('config/externalUrls.js');
 const appRuntime = read('config/appRuntime.js');
 const financeQueue = read('src/features/finance/queries.js');
@@ -183,6 +186,29 @@ check(
 check(appJson.android?.runtimeVersion === appJson.version, 'Android runtimeVersion must match app version');
 check(appJson.ios?.runtimeVersion === appJson.version, 'iOS runtimeVersion must match app version');
 check(Number.isInteger(versionCode) && versionCode > 0, 'Android versionCode must be a positive integer');
+check(appJson.orientation === 'default', 'Android release must support user-selected orientation');
+check(appJson.android?.edgeToEdgeEnabled === true, 'Android edge-to-edge must be enabled');
+check(
+  !manifest.includes('android:screenOrientation=') &&
+    manifest.includes('com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity') &&
+    manifest.includes('tools:remove="android:screenOrientation"'),
+  'Android release must remove orientation locks from app and merged code-scanner activities',
+);
+check(
+  /(?:^|\n)expo\.edgeToEdgeEnabled=true(?:\r?\n|$)/.test(gradleProperties) &&
+    /(?:^|\n)edgeToEdgeEnabled=true(?:\r?\n|$)/.test(gradleProperties),
+  'Expo and React Native edge-to-edge Gradle flags must be enabled',
+);
+check(
+  !`${androidStyles}\n${androidNightStyles}`.match(
+    /windowOptOutEdgeToEdgeEnforcement|android:(?:statusBarColor|navigationBarColor|windowTranslucentNavigation)/,
+  ),
+  'Android themes must not opt out of edge-to-edge or set deprecated system bar colors',
+);
+check(
+  !systemBars.match(/StatusBar\.set(?:Translucent|BackgroundColor)|NavigationBar\.set(?:Behavior|BackgroundColor)Async/),
+  'System bar integration must not call APIs unsupported by edge-to-edge',
+);
 
 check(externalUrls.includes('https://monitorapp.ru/data-deletion'), 'Public account deletion URL is required');
 check(

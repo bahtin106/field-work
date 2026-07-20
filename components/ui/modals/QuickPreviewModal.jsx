@@ -152,7 +152,6 @@ export default function QuickPreviewModal({
       visible
       transparent
       animationType="none"
-      statusBarTranslucent
       presentationStyle="overFullScreen"
       onRequestClose={onClose}
     >
