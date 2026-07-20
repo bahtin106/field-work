@@ -2,7 +2,7 @@
   "expo": {
     "name": "Монитор",
     "slug": "work-orders-app",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "scheme": "workorders",
     "icon": "./assets/icon.png",
     "splash": {
@@ -18,7 +18,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.monitorapp.monitor",
-      "versionCode": 8,
+      "versionCode": 9,
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "android.permission.CAMERA",
@@ -35,7 +35,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F2F2F7"
       },
-      "runtimeVersion": "1.0.3"
+      "runtimeVersion": "1.0.4"
     },
     "jsEngine": "hermes",
     "assetBundlePatterns": [
@@ -99,7 +99,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.monitorapp.monitor",
-      "runtimeVersion": "1.0.3",
+      "runtimeVersion": "1.0.4",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "yandexmaps",

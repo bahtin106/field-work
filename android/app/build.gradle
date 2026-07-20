@@ -96,8 +96,8 @@ android {
         applicationId = 'com.monitorapp.monitor'
         minSdk = rootProject.ext.minSdkVersion
         targetSdk = rootProject.ext.targetSdkVersion
-        versionCode = 8
-        versionName = "1.0.3"
+        versionCode = 9
+        versionName = "1.0.4"
         externalNativeBuild {
             cmake {
                 // Keep object paths under Windows MAX_PATH without over-constraining CMake.
