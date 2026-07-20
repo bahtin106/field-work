@@ -17,7 +17,8 @@ import { getOfflineSnapshot, setOfflineNetState } from '../src/shared/offline/of
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS =
   'id, first_name, middle_name, last_name, full_name, role, avatar_url, company_id, department_id';
-const PROFILE_LOAD_TIMEOUT_MS = 4000;
+const PROFILE_UI_WAIT_TIMEOUT_MS = 4000;
+const PROFILE_REQUEST_TIMEOUT_MS = 12000;
 const PROFILE_RECOVERY_ATTEMPTS = 4;
 const PROFILE_RECOVERY_BASE_DELAY_MS = 1200;
 const SIGN_OUT_SESSION_TIMEOUT_MS = 1000;
@@ -277,7 +278,7 @@ export function SimpleAuthProvider({ children }) {
         profileAbortControllersRef.current.set(userId, controller);
 
         try {
-          const timeoutId = setTimeout(() => controller.abort(), PROFILE_LOAD_TIMEOUT_MS);
+          const timeoutId = setTimeout(() => controller.abort(), PROFILE_REQUEST_TIMEOUT_MS);
 
           let data;
           let error;
@@ -326,10 +327,10 @@ export function SimpleAuthProvider({ children }) {
           const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
           const isNetworkError = isNetworkRequestError(error);
           const elapsedMs = Date.now() - loadStartedAt;
-          const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_LOAD_TIMEOUT_MS - 300;
+          const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_REQUEST_TIMEOUT_MS - 300;
 
           if (isTimeout || isTimeoutLikeNetwork) {
-            log.warn('Profile load timed out');
+            debugLog('Profile request timed out; recovery will retry', { elapsedMs });
             throw new Error('profile-load-timeout');
           } else if (isNetworkError) {
             log.warn('Profile network error:', error);
@@ -581,7 +582,12 @@ export function SimpleAuthProvider({ children }) {
       }));
 
       try {
-        const profile = await loadProfile(user);
+        const profileAttempt = await settleWithin(loadProfile(user), PROFILE_UI_WAIT_TIMEOUT_MS);
+        if (profileAttempt.timedOut) {
+          debugLog('Profile request exceeded UI wait; continuing in background');
+          throw new Error('profile-load-wait-timeout');
+        }
+        const profile = profileAttempt.value;
         if (requestId !== authRequestIdRef.current) return;
 
         if (!cacheClearedForAuthScope && hasProfileScopeChanged(cachedProfileBeforeAuth, profile, nextUserId)) {
@@ -604,7 +610,9 @@ export function SimpleAuthProvider({ children }) {
         }));
       } catch (error) {
         if (requestId !== authRequestIdRef.current) return;
-        const isTimeout = error?.message === 'profile-load-timeout';
+        const isTimeout =
+          error?.message === 'profile-load-timeout' ||
+          error?.message === 'profile-load-wait-timeout';
         const isNetworkError = error?.message === 'profile-load-network-error';
         const hasExistingProfile = !!profileRef.current;
 
