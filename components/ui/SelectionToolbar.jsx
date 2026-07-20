@@ -2,7 +2,6 @@ import Feather from '@expo/vector-icons/Feather';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useMemo } from 'react';
 import { useTheme } from '../../theme';
-import { withAlpha } from '../../theme/colors';
 
 export default function SelectionToolbar({
   selectedCount = 0,
@@ -20,6 +19,8 @@ export default function SelectionToolbar({
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const toggleLabel = allSelected ? clearAllLabel : selectAllLabel;
+  const primaryContent = theme.colors.onPrimary || '#fff';
+  const destructiveContent = theme.colors.onDanger || '#fff';
 
   return (
     <View style={[styles.container, style]}>
@@ -39,19 +40,24 @@ export default function SelectionToolbar({
           <Feather name="x" size={theme.icons?.md ?? 22} color={theme.colors.text} />
         </Pressable>
       </View>
-      <View style={styles.actionsRow}>
-        <Pressable
-          accessibilityRole="button"
-          disabled={busy || totalCount === 0}
-          onPress={onToggleAll}
-          style={({ pressed }) => [styles.toggleButton, pressed && styles.pressed, (busy || totalCount === 0) && styles.disabled]}
-        >
-          <Feather name={allSelected ? 'check-square' : 'square'} size={18} color={theme.colors.primary} />
-          <Text numberOfLines={1} style={styles.toggleText}>{toggleLabel}</Text>
-        </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ checked: allSelected }}
+        disabled={busy || totalCount === 0}
+        onPress={onToggleAll}
+        style={({ pressed }) => [styles.toggleButton, pressed && styles.pressed, (busy || totalCount === 0) && styles.disabled]}
+      >
+        <View style={[styles.toggleCheckbox, allSelected && styles.toggleCheckboxSelected]}>
+          {allSelected ? <Feather name="check" size={15} color={primaryContent} /> : null}
+        </View>
+        <Text numberOfLines={1} style={styles.toggleText}>{toggleLabel}</Text>
+        <Text style={styles.toggleCount}>{totalCount}</Text>
+      </Pressable>
+      {actions.length ? <View style={styles.actionsRow}>
         {actions.map((action) => {
           const destructive = action.variant === 'destructive';
           const actionDisabled = busy || action.disabled || selectedCount === 0;
+          const contentColor = destructive ? destructiveContent : primaryContent;
           return (
             <Pressable
               key={action.id || action.label}
@@ -67,17 +73,17 @@ export default function SelectionToolbar({
               ]}
             >
               {busy && action.loading ? (
-                <ActivityIndicator size="small" color={destructive ? theme.colors.danger : theme.colors.primary} />
+                <ActivityIndicator size="small" color={contentColor} />
               ) : (
-                <Feather name={action.icon || 'check'} size={18} color={destructive ? theme.colors.danger : theme.colors.primary} />
+                <Feather name={action.icon || 'check'} size={18} color={contentColor} />
               )}
-              <Text numberOfLines={1} style={[styles.actionText, destructive ? styles.destructiveText : styles.primaryText]}>
+              <Text numberOfLines={1} style={[styles.actionText, { color: contentColor }]}>
                 {action.label}
               </Text>
             </Pressable>
           );
         })}
-      </View>
+      </View> : null}
     </View>
   );
 }
@@ -95,37 +101,35 @@ const createStyles = (theme) => StyleSheet.create({
   summaryText: { color: theme.colors.text, fontSize: theme.typography.sizes.lg, fontWeight: theme.typography.weight.bold },
   counter: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.semibold },
   closeButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  actionsRow: { flexDirection: 'row', alignItems: 'stretch', gap: theme.spacing.xs },
+  actionsRow: { flexDirection: 'row', alignItems: 'stretch', gap: theme.spacing.sm },
   toggleButton: {
-    flex: 1.2,
     minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: theme.spacing.xs,
+    gap: theme.spacing.sm,
     borderWidth: 1,
-    borderColor: theme.colors.primary,
+    borderColor: theme.colors.border,
     borderRadius: theme.radii.lg,
-    backgroundColor: withAlpha(theme.colors.primary, 0.1),
-    paddingHorizontal: theme.spacing.sm,
+    backgroundColor: theme.colors.card,
+    paddingHorizontal: theme.spacing.md,
   },
-  toggleText: { color: theme.colors.primary, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.semibold },
+  toggleCheckbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.background, alignItems: 'center', justifyContent: 'center' },
+  toggleCheckboxSelected: { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary },
+  toggleText: { flex: 1, color: theme.colors.text, fontSize: theme.typography.sizes.md, fontWeight: theme.typography.weight.semibold },
+  toggleCount: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.semibold },
   actionButton: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: theme.spacing.xs,
-    borderWidth: 1,
     borderRadius: theme.radii.lg,
-    paddingHorizontal: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.md,
   },
-  primaryButton: { borderColor: theme.colors.primary, backgroundColor: withAlpha(theme.colors.primary, 0.08) },
-  destructiveButton: { borderColor: theme.colors.danger, backgroundColor: withAlpha(theme.colors.danger, 0.1) },
-  actionText: { fontSize: theme.typography.sizes.sm, fontWeight: theme.typography.weight.semibold },
-  primaryText: { color: theme.colors.primary },
-  destructiveText: { color: theme.colors.danger },
-  pressed: { opacity: theme.components?.button?.pressedOpacity ?? 0.86 },
+  primaryButton: { backgroundColor: theme.colors.primary },
+  destructiveButton: { backgroundColor: theme.colors.danger },
+  actionText: { fontSize: theme.typography.sizes.md, fontWeight: theme.typography.weight.bold },
+  pressed: { opacity: theme.components?.button?.pressedOpacity ?? 0.88, transform: [{ scale: theme.components?.interactive?.pressedScale ?? 0.98 }] },
   disabled: { opacity: 0.45 },
 });

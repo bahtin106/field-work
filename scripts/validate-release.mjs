@@ -592,9 +592,13 @@ check(
     trashScreen.includes('delayLongPress={450}') &&
     trashScreen.includes('<SelectionToolbar') &&
     trashScreen.includes('<TrashFiltersPanel') &&
+    trashScreen.includes("headerOptions={{ title: t('trash_title') }}") &&
     trashScreen.includes("setConfirmation({ action: 'purge', ids: [id]") &&
     trashFiltersPanel.includes('mode="trash"') &&
     selectionToolbar.includes('onToggleAll') &&
+    selectionToolbar.includes('styles.toggleCheckbox') &&
+    selectionToolbar.includes('backgroundColor: theme.colors.primary') &&
+    selectionToolbar.includes('backgroundColor: theme.colors.danger') &&
     filtersPanel.includes("const isTrashMode = mode === 'trash'") &&
     filtersPanel.includes("case 'trash_entityTypes'") &&
     filtersPanel.includes("case 'trash_deletedDate'"),

@@ -244,7 +244,7 @@ export default function TrashScreen() {
   }, [filters.values, optionLabels, t]);
 
   if (!canViewTrash) {
-    return <Screen scroll={false}><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
+    return <Screen scroll={false} headerOptions={{ title: t('trash_title') }}><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
   }
 
   const openItem = (item) => {
@@ -357,7 +357,7 @@ export default function TrashScreen() {
   };
 
   return (
-    <Screen scroll={false}>
+    <Screen scroll={false} headerOptions={{ title: t('trash_title') }}>
       <View style={styles.container}>
         {selectionMode ? (
           <SelectionToolbar
