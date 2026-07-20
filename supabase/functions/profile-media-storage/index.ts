@@ -672,10 +672,24 @@ async function getCallerContext(admin: SupabaseAdminClient, token: string) {
   if (error || !profile?.id) throw new Error('Profile not found');
   if (!profile.company_id) throw new Error('Company not found');
 
+  const normalizedRole = String(profile.role || '').trim().toLowerCase();
+  let isSuperAdmin = normalizedRole === 'superadmin' || normalizedRole === 'super_admin';
+  if (!isSuperAdmin) {
+    const { data: superAdminRows, error: superAdminError } = await admin
+      .from('super_admins')
+      .select('id')
+      .eq('is_active', true)
+      .or(`user_id.eq.${user.id},profile_id.eq.${profile.id}`)
+      .limit(1);
+    if (superAdminError) throw superAdminError;
+    isSuperAdmin = Array.isArray(superAdminRows) && superAdminRows.length > 0;
+  }
+
   return {
     userId: String(profile.id),
     companyId: String(profile.company_id),
-    role: String(profile.role || '').toLowerCase(),
+    role: normalizedRole,
+    isSuperAdmin,
   };
 }
 
@@ -1338,11 +1352,15 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         return json(200, { success: true, cleaned_urls: [] });
       }
 
-      const { data: rows, error } = await admin
+      let mediaMapQuery = admin
         .from('profile_media_external_map')
         .select('id, entity_type, entity_id, provider, db_url, external_path')
-        .eq('company_id', caller.companyId)
         .in('db_url', urls);
+      mediaMapQuery = caller.isSuperAdmin
+        ? mediaMapQuery.or(`company_id.eq.${caller.companyId},entity_type.eq.employee`)
+        : mediaMapQuery.eq('company_id', caller.companyId);
+
+      const { data: rows, error } = await mediaMapQuery;
       if (error) throw error;
 
       const mapByUrl = new Map<string, any>();
