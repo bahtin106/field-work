@@ -95,9 +95,9 @@ as $$
   select coalesce(array_agg(p.id), '{}'::uuid[])
   from public.profiles p
   where p.company_id = p_company_id
-    and (
-      p_entity_type <> 'order'
-      or coalesce(
+    and case p_entity_type
+      when 'order' then (
+        coalesce(
         (
           select arp.value
           from public.app_role_permissions arp
@@ -107,19 +107,43 @@ as $$
           limit 1
         ),
         public.order_permission_default(p.role, 'canViewAllOrders')
-      )
-      or p.id = nullif(p_record ->> 'assigned_to', '')::uuid
-      or p.id = nullif(p_record ->> 'created_by_user_id', '')::uuid
-      or (
-        p_record ->> 'status' = 'feed'
-        and exists (
-          select 1 from public.companies c
-          where c.id = p_company_id
-            and c.use_order_statuses = true
-            and c.feed_status_enabled = true
+        )
+        or p.id = nullif(p_record ->> 'assigned_to', '')::uuid
+        or p.id = nullif(p_record ->> 'created_by_user_id', '')::uuid
+        or (
+          p_record ->> 'status' = 'feed'
+          and exists (
+            select 1 from public.companies c
+            where c.id = p_company_id
+              and c.use_order_statuses = true
+              and c.feed_status_enabled = true
+          )
         )
       )
-    );
+      when 'client' then coalesce(
+        (
+          select arp.value
+          from public.app_role_permissions arp
+          where arp.company_id = p_company_id
+            and arp.role = lower(coalesce(p.role, ''))
+            and arp.key = 'canViewClients'
+          limit 1
+        ),
+        public.clients_permission_default(p.role, 'canViewClients')
+      )
+      when 'client_object' then coalesce(
+        (
+          select arp.value
+          from public.app_role_permissions arp
+          where arp.company_id = p_company_id
+            and arp.role = lower(coalesce(p.role, ''))
+            and arp.key = 'canViewObjects'
+          limit 1
+        ),
+        public.object_permission_default(p.role, 'canViewObjects')
+      )
+      else false
+    end;
 $$;
 
 revoke all on function public.trash_access_snapshot(uuid, text, jsonb) from public, anon, authenticated;
@@ -144,6 +168,7 @@ declare
   v_access uuid[];
   v_child record;
   v_child_data jsonb;
+  v_child_access uuid[];
 begin
   if current_setting('app.trash_hard_delete', true) = 'on' then
     return old;
@@ -157,6 +182,21 @@ begin
   end;
   if v_entity_type is null or v_company_id is null or v_entity_id is null then
     raise exception 'Unsupported trash entity: %', tg_table_name using errcode = '22023';
+  end if;
+
+  if v_entity_type = 'client' and exists (
+    select 1
+    from public.orders o
+    where o.company_id = v_company_id
+      and (
+        o.client_id = v_entity_id
+        or o.object_id in (
+          select co.id from public.client_objects co
+          where co.company_id = v_company_id and co.client_id = v_entity_id
+        )
+      )
+  ) then
+    raise exception 'Client has active requests' using errcode = '23503';
   end if;
 
   v_title := case v_entity_type
@@ -198,6 +238,10 @@ begin
       where o.client_id = v_entity_id and o.company_id = v_company_id
     loop
       v_child_data := to_jsonb(v_child);
+      v_child_access := public.trash_access_snapshot(v_company_id, 'client_object', v_child_data);
+      if auth.uid() is not null and not (auth.uid() = any(v_child_access)) then
+        v_child_access := array_append(v_child_access, auth.uid());
+      end if;
       insert into public.trash_entries (
         company_id, entity_type, entity_id, deletion_batch_id, parent_entry_id, is_root,
         title, subtitle, thumbnail_url, record_data, access_user_ids, deleted_by
@@ -205,7 +249,7 @@ begin
         v_company_id, 'client_object', v_child.id, v_batch_id, v_root_id, false,
         coalesce(nullif(v_child_data ->> 'name', ''), 'Объект'),
         nullif(concat_ws(', ', v_child_data ->> 'city', v_child_data ->> 'street', v_child_data ->> 'house'), ''),
-        nullif(v_child_data ->> 'photo_url', ''), v_child_data, v_access, auth.uid()
+        nullif(v_child_data ->> 'photo_url', ''), v_child_data, v_child_access, auth.uid()
       )
       on conflict (entity_type, entity_id) do nothing;
     end loop;
@@ -238,6 +282,9 @@ set search_path = pg_catalog, public
 as $$
 declare v_entity_type text;
 begin
+  if coalesce(current_setting('request.jwt.claim.role', true), '') = 'service_role' then
+    return new;
+  end if;
   v_entity_type := case tg_table_name
     when 'orders' then 'order'
     when 'clients' then 'client'
@@ -248,6 +295,15 @@ begin
     select 1 from public.trash_entries t
     where t.entity_type = v_entity_type and t.entity_id = old.id
   ) then
+    -- Deleting company dictionaries must still be able to detach a now-invalid
+    -- reference. The user-visible snapshot remains immutable in record_data.
+    if v_entity_type = 'order'
+       and (to_jsonb(old) - array['work_type_id','department_id','updated_at','updated_by'])
+           = (to_jsonb(new) - array['work_type_id','department_id','updated_at','updated_by'])
+       and (new.work_type_id is null or new.work_type_id is not distinct from old.work_type_id)
+       and (new.department_id is null or new.department_id is not distinct from old.department_id) then
+      return new;
+    end if;
     raise exception 'Deleted entities are read-only' using errcode = '55000';
   end if;
   return new;

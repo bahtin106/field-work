@@ -699,141 +699,17 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       const sourceUrl = String(body.url || '').trim();
       if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
 
-      let { data: row, error: rowErr } = await admin
-        .from('finance_entry_media_external_map')
-        .select('id, external_path, source_url, display_url')
-        .eq('company_id', ctx.companyId)
-        .eq('finance_entry_id', ctx.financeEntryId)
-        .eq('provider', 'beget_s3')
-        .eq('source_url', sourceUrl)
-        .maybeSingle();
-      if (rowErr) throw rowErr;
-
-      if (!row) {
-        const { data: displayRow, error: displayErr } = await admin
-          .from('finance_entry_media_external_map')
-          .select('id, external_path, source_url, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('finance_entry_id', ctx.financeEntryId)
-          .eq('provider', 'beget_s3')
-          .eq('display_url', sourceUrl)
-          .maybeSingle();
-        if (displayErr) throw displayErr;
-        row = displayRow;
-      }
-
-      if (!row) {
-        const derivedKey = keyFromBegetUrl(sourceUrl);
-        const canonicalSourceUrl = canonicalUrl(sourceUrl);
-        const { data: candidates, error: listErr } = await admin
-          .from('finance_entry_media_external_map')
-          .select('id, external_path, source_url, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('finance_entry_id', ctx.financeEntryId)
-          .eq('provider', 'beget_s3');
-        if (listErr) throw listErr;
-        row =
-          (candidates || []).find((candidate) => {
-            const candidateKey = String(candidate?.external_path || '').trim();
-            const candidateSource = String(candidate?.source_url || '').trim();
-            const candidateDisplay = String((candidate as { display_url?: string | null })?.display_url || '').trim();
-            return (
-              (derivedKey && candidateKey === derivedKey) ||
-              (canonicalSourceUrl &&
-                (canonicalUrl(candidateSource) === canonicalSourceUrl ||
-                  canonicalUrl(candidateDisplay) === canonicalSourceUrl))
-            );
-          }) || null;
-      }
-
-      const fallbackObjectKey = keyFromBegetUrl(sourceUrl);
-      const objectKey = String(row?.external_path || fallbackObjectKey || '').trim();
-      const preferredSourceUrl = String(row?.source_url || '').trim() || sourceUrl;
-      let atomic:
-        | {
-            photo_urls: string[];
-            updated_at: string | null;
-          }
-        | null = null;
-      try {
-        atomic = await removeFinanceEntryPhotoUrlAtomicCanonical(
-          admin,
-          ctx.financeEntryId,
-          ctx.companyId,
-          preferredSourceUrl,
-          ctx.userId,
-        );
-        if (
-          atomic &&
-          Array.isArray(atomic.photo_urls) &&
-          atomic.photo_urls.includes(preferredSourceUrl) &&
-          sourceUrl !== preferredSourceUrl
-        ) {
-          atomic = await removeFinanceEntryPhotoUrlAtomicCanonical(
-            admin,
-            ctx.financeEntryId,
-            ctx.companyId,
-            sourceUrl,
-            ctx.userId,
-          );
-        }
-      } catch (atomicError) {
-        console.warn(
-          '[finance-entry-media-storage] atomic remove fallback:',
-          toErrorMessage(atomicError),
-        );
-        atomic = await removeFinanceEntryPhotoUrlFallback(
-          admin,
-          ctx.financeEntryId,
-          ctx.companyId,
-          sourceUrl,
-          ctx.userId,
-        );
-      }
-
-      try {
-        if (row?.id != null) {
-          await admin.from('finance_entry_media_external_map').delete().eq('id', Number(row.id));
-        } else {
-          let deleteQuery = admin
-            .from('finance_entry_media_external_map')
-            .delete()
-            .eq('company_id', ctx.companyId)
-            .eq('finance_entry_id', ctx.financeEntryId)
-            .eq('provider', 'beget_s3');
-          const orConditions = [`source_url.eq.${sourceUrl}`, `display_url.eq.${sourceUrl}`];
-          if (objectKey) orConditions.push(`external_path.eq.${objectKey}`);
-          deleteQuery = deleteQuery.or(orConditions.join(','));
-          await deleteQuery;
-        }
-      } catch (mapDeleteError) {
-        console.warn('[finance-entry-media-storage] map delete warning:', toErrorMessage(mapDeleteError));
-      }
-
-      if (objectKey) {
-        try {
-          await deleteBegetKeys([objectKey]);
-        } catch (storageError) {
-          console.warn('[finance-entry-media-storage] beget delete warning:', toErrorMessage(storageError));
-        }
-      }
-
-      const orphanFolder = parentKeyPrefix(objectKey);
-      if (orphanFolder) {
-        try {
-          await purgeBegetFinanceEntryOrphans(admin, {
-            companyId: ctx.companyId,
-            financeEntryId: ctx.financeEntryId,
-            folderPrefix: orphanFolder,
-          });
-        } catch (cleanupError) {
-          console.warn('[finance-entry-media-storage] beget orphan cleanup warning:', toErrorMessage(cleanupError));
-        }
-      }
+      const { data: atomic, error: trashError } = await admin.rpc('trash_finance_media_asset_v1', {
+        p_finance_entry_id: ctx.financeEntryId,
+        p_company_id: ctx.companyId,
+        p_url: sourceUrl,
+        p_deleted_by: ctx.userId,
+      });
+      if (trashError) throw trashError;
 
       return json(200, {
         success: true,
-        provider: 'beget_s3',
+        provider: 'trash',
         photo_urls: Array.isArray(atomic?.photo_urls) ? atomic.photo_urls : [],
         finance_entry_updated_at: atomic?.updated_at ?? null,
       });

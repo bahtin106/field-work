@@ -1,4 +1,9 @@
 import { supabase } from '../../../lib/supabase';
+import {
+  enqueueTrashRestore,
+  getOfflineSnapshot,
+  isOfflineLikeError,
+} from '../../shared/offline/offlineStatus';
 
 export type TrashEntityType = 'order' | 'client' | 'client_object' | 'media';
 
@@ -42,12 +47,21 @@ export async function getTrashItem(id: string) {
 }
 
 export async function restoreTrashItem(id: string) {
+  if (!getOfflineSnapshot().isOnline) {
+    await enqueueTrashRestore(id);
+    return { queued: true };
+  }
   const { error } = await supabase.rpc('restore_trash_item', { p_id: id });
-  if (error) throw error;
-  return true;
+  if (!error) return { queued: false };
+  if (!isOfflineLikeError(error)) throw error;
+  await enqueueTrashRestore(id);
+  return { queued: true };
 }
 
 export async function purgeTrashItem(id: string) {
+  if (!getOfflineSnapshot().isOnline) {
+    throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
+  }
   const { error } = await supabase.rpc('purge_trash_item', { p_id: id });
   if (error) throw error;
   return true;

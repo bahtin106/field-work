@@ -927,68 +927,21 @@ export async function handleObjectMediaStorageRequest(req: Request) {
     if (action === 'delete') {
       const sourceUrl = String(body.url || '').trim();
       if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
-      const sourceCanonical = canonicalUrl(sourceUrl);
 
-      const { data: candidates, error: candidatesErr } = await admin
-        .from('object_media_external_map')
-        .select('id, provider, source_url, display_url, external_path')
-        .eq('company_id', ctx.companyId)
-        .eq('object_id', ctx.object.id)
-        .eq('category', category);
-      if (candidatesErr) throw candidatesErr;
-
-      const row =
-        (candidates || []).find((item) => {
-          const source = canonicalUrl(String(item?.source_url || ''));
-          const display = canonicalUrl(String((item as { display_url?: string | null })?.display_url || ''));
-          return source === sourceCanonical || display === sourceCanonical;
-        }) || null;
-
-      const provider = String(row?.provider || '').trim();
-      const externalPath = String(row?.external_path || '').trim();
-      if (provider === 'yandex_disk' && externalPath) {
-        const yandex = await getValidAccessToken(admin, ctx.companyId);
-        if (!yandex.accessToken) return json(400, { success: false, message: 'Yandex Disk not connected' });
-        await deleteYandexResourceSafe(yandex.accessToken, externalPath);
-      } else {
-        const begetKey = externalPath || keyFromBegetUrl(sourceUrl);
-        if (begetKey) {
-          await deleteBegetKeys([begetKey]).catch(() => null);
-        }
-      }
-
-      if (row?.id != null) {
-        const { error: mapDeleteErr } = await admin
-          .from('object_media_external_map')
-          .delete()
-          .eq('id', Number(row.id));
-        if (mapDeleteErr) throw mapDeleteErr;
-      } else {
-        // If URL matching failed, clear the whole slot mapping to avoid stale rows.
-        const { error: mapDeleteErr } = await admin
-          .from('object_media_external_map')
-          .delete()
-          .eq('company_id', ctx.companyId)
-          .eq('object_id', ctx.object.id)
-          .eq('category', category);
-        if (mapDeleteErr) throw mapDeleteErr;
-      }
-
-      const preferredSourceUrl = String(row?.source_url || '').trim() || sourceUrl;
-      let atomic = await removeObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, preferredSourceUrl);
-      if (
-        atomic &&
-        Array.isArray(atomic.media_urls) &&
-        atomic.media_urls.includes(preferredSourceUrl) &&
-        sourceUrl !== preferredSourceUrl
-      ) {
-        atomic = await removeObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, sourceUrl);
-      }
+      const { data: atomic, error: trashError } = await admin.rpc('trash_media_asset_v1', {
+        p_owner_type: 'object',
+        p_owner_id: ctx.object.id,
+        p_company_id: ctx.companyId,
+        p_category: category,
+        p_url: sourceUrl,
+        p_deleted_by: ctx.userId,
+      });
+      if (trashError) throw trashError;
 
       return json(200, {
         success: true,
-        media_urls: atomic.media_urls,
-        object_updated_at: atomic.updated_at,
+        media_urls: Array.isArray(atomic?.media_urls) ? atomic.media_urls : [],
+        object_updated_at: atomic?.updated_at || new Date().toISOString(),
       });
     }
 

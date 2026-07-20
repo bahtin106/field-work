@@ -135,7 +135,14 @@ import Feather from '@expo/vector-icons/Feather';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useToast } from '../../components/ui/ToastProvider';
 import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
-import { getOfflineSnapshot, useOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
+import {
+  enqueueTrashDelete,
+  getOfflineSnapshot,
+  hasPendingOfflineUpdate,
+  isOfflineLikeError,
+  syncOfflineOutbox,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
 import {
   enqueueOrderPhotoDeletes,
   enqueueOrderPhotoUpload,
@@ -4328,22 +4335,27 @@ function OrderDetailsContent() {
     };
 
     try {
-      const { data, error: delErr } = await supabase
-        .from('orders')
-        .delete()
-        .eq('id', order.id)
-        .select('id');
-
-      if (delErr) {
-        showToast(t('order_toast_delete_error'));
-        return;
-      }
-      if (!Array.isArray(data) || data.length === 0) {
-        // Record is already gone (stale detail screen) - treat as successful delete UX.
-        applyDeletedOrderToLocalCaches();
+      const online = getOfflineSnapshot().isOnline;
+      let queued = false;
+      if (!online || await hasPendingOfflineUpdate('request', deletedOrderId)) {
+        await enqueueTrashDelete({ entity: 'request', id: deletedOrderId, base: order });
+        if (online) syncOfflineOutbox(queryClient).catch(() => {});
+        queued = true;
       } else {
-        applyDeletedOrderToLocalCaches();
+        const { error: delErr } = await supabase
+          .from('orders')
+          .delete()
+          .eq('id', order.id);
+        if (delErr) {
+          if (!isOfflineLikeError(delErr)) {
+            showToast(t('order_toast_delete_error'));
+            return;
+          }
+          await enqueueTrashDelete({ entity: 'request', id: deletedOrderId, base: order });
+          queued = true;
+        }
       }
+      applyDeletedOrderToLocalCaches();
 
       const deletedOrderClientId = String(order?.client_id || resolvedClientId || '').trim();
       if (deletedOrderClientId) {
@@ -4359,7 +4371,7 @@ function OrderDetailsContent() {
         queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(deletedOrderId) });
       }
 
-      showToast(t('order_toast_order_deleted'));
+      showToast(t(queued ? 'trash_delete_queued' : 'order_toast_order_deleted'));
       setDeleteModalVisible(false);
       goBackSmart(
         navigation,

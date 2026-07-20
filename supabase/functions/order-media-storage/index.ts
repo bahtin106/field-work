@@ -827,98 +827,21 @@ export async function handleOrderMediaStorageRequest(req: Request) {
       const sourceUrl = String(body.url || '').trim();
       if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
 
-      let { data: row, error: rowErr } = await admin
-        .from('order_media_external_map')
-        .select('id, external_path, source_url, display_url')
-        .eq('company_id', ctx.companyId)
-        .eq('order_id', ctx.orderId)
-        .eq('category', category)
-        .eq('provider', 'beget_s3')
-        .eq('source_url', sourceUrl)
-        .maybeSingle();
-      if (rowErr) throw rowErr;
-      if (!row) {
-        const { data: displayRow, error: displayErr } = await admin
-          .from('order_media_external_map')
-          .select('id, external_path, source_url, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.orderId)
-          .eq('category', category)
-          .eq('provider', 'beget_s3')
-          .eq('display_url', sourceUrl)
-          .maybeSingle();
-        if (displayErr) throw displayErr;
-        row = displayRow;
-      }
-      if (!row) {
-        const derivedKey = keyFromBegetUrl(sourceUrl);
-        const canonicalSourceUrl = canonicalUrl(sourceUrl);
-        const { data: candidates, error: listErr } = await admin
-          .from('order_media_external_map')
-          .select('id, external_path, source_url, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.orderId)
-          .eq('category', category)
-          .eq('provider', 'beget_s3');
-        if (listErr) throw listErr;
-        row =
-          (candidates || []).find((candidate) => {
-            const candidateKey = String(candidate?.external_path || '').trim();
-            const candidateSource = String(candidate?.source_url || '').trim();
-            const candidateDisplay = String((candidate as { display_url?: string | null })?.display_url || '').trim();
-            return (
-              (derivedKey && candidateKey === derivedKey) ||
-              (canonicalSourceUrl &&
-                (canonicalUrl(candidateSource) === canonicalSourceUrl ||
-                  canonicalUrl(candidateDisplay) === canonicalSourceUrl))
-            );
-          }) || null;
-      }
-      const fallbackObjectKey = keyFromBegetUrl(sourceUrl);
-      if (!row && !fallbackObjectKey) return json(404, { success: false, message: 'Media mapping not found' });
-
-      const objectKey = String(row?.external_path || fallbackObjectKey || '').trim();
-      if (objectKey) {
-        await deleteBegetKeys([objectKey]);
-      }
-
-      const preferredSourceUrl = String(row?.source_url || '').trim() || sourceUrl;
-      let atomic = await removeOrderMediaUrlAtomic(admin, ctx.orderId, ctx.companyId, category, preferredSourceUrl);
-      if (
-        atomic &&
-        Array.isArray(atomic.media_urls) &&
-        atomic.media_urls.includes(preferredSourceUrl) &&
-        sourceUrl !== preferredSourceUrl
-      ) {
-        atomic = await removeOrderMediaUrlAtomic(admin, ctx.orderId, ctx.companyId, category, sourceUrl);
-      }
-      if (row?.id != null) {
-        await admin.from('order_media_external_map').delete().eq('id', Number(row.id));
-      } else {
-        await admin
-          .from('order_media_external_map')
-          .delete()
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.orderId)
-          .eq('category', category)
-          .eq('provider', 'beget_s3')
-          .or(`source_url.eq.${sourceUrl},display_url.eq.${sourceUrl},external_path.eq.${objectKey}`);
-      }
-      const orphanFolder = parentKeyPrefix(objectKey);
-      if (orphanFolder) {
-        await purgeBegetCategoryOrphans(admin, {
-          companyId: ctx.companyId,
-          orderId: ctx.orderId,
-          category,
-          folderPrefix: orphanFolder,
-        });
-      }
+      const { data: atomic, error: trashError } = await admin.rpc('trash_media_asset_v1', {
+        p_owner_type: 'order',
+        p_owner_id: ctx.orderId,
+        p_company_id: ctx.companyId,
+        p_category: category,
+        p_url: sourceUrl,
+        p_deleted_by: ctx.userId,
+      });
+      if (trashError) throw trashError;
 
       return json(200, {
         success: true,
-        provider: 'beget_s3',
-        media_urls: atomic.media_urls,
-        order_updated_at: atomic.updated_at,
+        provider: 'trash',
+        media_urls: Array.isArray(atomic?.media_urls) ? atomic.media_urls : [],
+        order_updated_at: atomic?.updated_at || new Date().toISOString(),
       });
     }
 

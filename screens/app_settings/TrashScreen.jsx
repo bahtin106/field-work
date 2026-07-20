@@ -1,9 +1,9 @@
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Screen from '../../components/layout/Screen';
 import { useToast } from '../../components/ui/ToastProvider';
 import { usePermissions } from '../../lib/permissions';
@@ -12,7 +12,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTheme } from '../../theme';
 
-const TYPES = ['', 'order', 'client', 'client_object'];
+const TYPES = ['', 'order', 'client', 'client_object', 'media'];
 const SORTS = ['purge_at', 'deleted_desc', 'title'];
 const COPY_FIELDS = new Set(['phone', 'additional_phone_1', 'additional_phone_2', 'additional_phone_3']);
 const HIDDEN_FIELDS = new Set(['id', 'company_id', 'created_by', 'updated_by', 'created_by_user_id']);
@@ -45,6 +45,7 @@ export default function TrashScreen() {
   const [entityType, setEntityType] = useState('');
   const [sort, setSort] = useState('purge_at');
   const [selectedId, setSelectedId] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -52,15 +53,21 @@ export default function TrashScreen() {
   }, [search]);
 
   const params = useMemo(() => ({ search: debouncedSearch, entityType, sort }), [debouncedSearch, entityType, sort]);
-  const listQuery = useQuery({ queryKey: queryKeys.trash.list(params), queryFn: () => listTrashItems(params), enabled: has('canViewTrash') });
+  const listQuery = useInfiniteQuery({
+    queryKey: queryKeys.trash.list(params),
+    queryFn: ({ pageParam }) => listTrashItems({ ...params, limit: 50, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, pages) => lastPage.length === 50 ? pages.length * 50 : undefined,
+    enabled: has('canViewTrash'),
+  });
   const detailQuery = useQuery({ queryKey: queryKeys.trash.detail(selectedId), queryFn: () => getTrashItem(selectedId), enabled: Boolean(selectedId) });
 
   const invalidate = async () => {
     setSelectedId(null);
     await Promise.all(['trash', 'requests', 'clients', 'objects'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
   };
-  const restoreMutation = useMutation({ mutationFn: restoreTrashItem, onSuccess: async () => { await invalidate(); toast.success(t('trash_restored')); }, onError: () => toast.error(t('trash_action_error')) });
-  const purgeMutation = useMutation({ mutationFn: purgeTrashItem, onSuccess: async () => { await invalidate(); toast.success(t('trash_purged')); }, onError: () => toast.error(t('trash_action_error')) });
+  const restoreMutation = useMutation({ mutationFn: restoreTrashItem, onSuccess: async (result) => { await invalidate(); toast.success(t(result?.queued ? 'trash_restore_queued' : 'trash_restored')); }, onError: () => toast.error(t('trash_action_error')) });
+  const purgeMutation = useMutation({ mutationFn: purgeTrashItem, onSuccess: async () => { await invalidate(); toast.success(t('trash_purged')); }, onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')) });
 
   const restore = (item) => Alert.alert(t('trash_restore_title'), t('trash_restore_message', { title: item.title }), [
     { text: t('common_cancel'), style: 'cancel' },
@@ -70,6 +77,31 @@ export default function TrashScreen() {
     { text: t('common_cancel'), style: 'cancel' },
     { text: t('trash_purge'), style: 'destructive', onPress: () => purgeMutation.mutate(item.id) },
   ]);
+  const downloadPhoto = async (item) => {
+    if (!item?.thumbnail_url || downloadingId) return;
+    setDownloadingId(item.id);
+    try {
+      const [fileSystemModule, mediaLibrary] = await Promise.all([
+        import('expo-file-system/legacy'),
+        import('expo-media-library'),
+      ]);
+      const fileSystem = fileSystemModule?.default?.downloadAsync ? fileSystemModule.default : fileSystemModule;
+      const permission = await mediaLibrary.requestPermissionsAsync();
+      if (!permission?.granted) throw new Error('MEDIA_LIBRARY_PERMISSION_DENIED');
+      if (!fileSystem?.cacheDirectory) throw new Error('DOWNLOAD_FAILED');
+      const cleanUrl = String(item.thumbnail_url).split('?')[0];
+      const extension = cleanUrl.match(/\.([a-z0-9]{2,5})$/i)?.[1] || 'jpg';
+      const localUri = `${fileSystem.cacheDirectory}trash_${item.id}_${Date.now()}.${extension}`;
+      const downloaded = await fileSystem.downloadAsync(item.thumbnail_url, localUri);
+      if (Number(downloaded?.status || 200) >= 400 || !downloaded?.uri) throw new Error('DOWNLOAD_FAILED');
+      await mediaLibrary.saveToLibraryAsync(downloaded.uri);
+      toast.success(t('trash_photo_saved'));
+    } catch (error) {
+      toast.error(t(String(error?.message || '') === 'MEDIA_LIBRARY_PERMISSION_DENIED' ? 'trash_photo_permission_denied' : 'trash_photo_download_error'));
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   if (!has('canViewTrash')) return <Screen><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
 
@@ -87,6 +119,7 @@ export default function TrashScreen() {
   );
 
   const detail = detailQuery.data;
+  const listItems = listQuery.data?.pages?.flatMap((page) => page) || [];
   const rows = detail?.data ? Object.entries(detail.data).filter(([key, value]) => !HIDDEN_FIELDS.has(key) && textValue(value)) : [];
 
   return <Screen>
@@ -94,7 +127,7 @@ export default function TrashScreen() {
       <View style={styles.searchBox}><Feather name="search" size={18} color={theme.colors.textSecondary} /><TextInput style={styles.search} value={search} onChangeText={setSearch} placeholder={t('trash_search')} placeholderTextColor={theme.colors.textSecondary} /></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{TYPES.map((value) => <Pressable key={value || 'all'} onPress={() => setEntityType(value)} style={[styles.chip, entityType === value && styles.chipActive]}><Text style={[styles.chipText, entityType === value && styles.chipTextActive]}>{value ? t(`trash_entity_${value}`) : t('trash_all')}</Text></Pressable>)}</ScrollView>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{SORTS.map((value) => <Pressable key={value} onPress={() => setSort(value)} style={[styles.sort, sort === value && styles.sortActive]}><Text style={styles.small}>{t(`trash_sort_${value}`)}</Text></Pressable>)}</ScrollView>
-      {listQuery.isLoading ? <ActivityIndicator style={styles.loader} color={theme.colors.primary} /> : <FlatList data={listQuery.data || []} renderItem={renderItem} keyExtractor={(item) => item.id} contentContainerStyle={styles.list} refreshing={listQuery.isFetching} onRefresh={listQuery.refetch} ListEmptyComponent={<View style={styles.empty}><Feather name="trash-2" size={32} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_empty')}</Text><Text style={styles.muted}>{t('trash_empty_hint')}</Text></View>} />}
+      {listQuery.isLoading ? <ActivityIndicator style={styles.loader} color={theme.colors.primary} /> : <FlatList data={listItems} renderItem={renderItem} keyExtractor={(item) => item.id} contentContainerStyle={styles.list} refreshing={listQuery.isRefetching} onRefresh={listQuery.refetch} onEndReached={() => { if (listQuery.hasNextPage && !listQuery.isFetchingNextPage) listQuery.fetchNextPage(); }} onEndReachedThreshold={0.4} ListFooterComponent={listQuery.isFetchingNextPage ? <ActivityIndicator color={theme.colors.primary} /> : null} ListEmptyComponent={<View style={styles.empty}><Feather name="trash-2" size={32} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_empty')}</Text><Text style={styles.muted}>{t('trash_empty_hint')}</Text></View>} />}
     </View>
     <Modal visible={Boolean(selectedId)} animationType="slide" onRequestClose={() => setSelectedId(null)}>
       <Screen><ScrollView contentContainerStyle={styles.detail}>
@@ -104,7 +137,7 @@ export default function TrashScreen() {
           {detail.thumbnail_url ? <Image source={detail.thumbnail_url} style={styles.hero} contentFit="cover" /> : null}
           <Text style={styles.detailTitle}>{detail.title}</Text><Text style={styles.countdown}>{timeLeft(detail.purge_at, t)}</Text>
           {rows.map(([key, value]) => <View key={key} style={styles.field}><View style={styles.grow}><Text style={styles.label}>{t(`trash_field_${key}`, { defaultValue: key })}</Text><Text selectable style={styles.value}>{textValue(value)}</Text></View>{COPY_FIELDS.has(key) ? <Pressable onPress={() => Clipboard.setStringAsync(textValue(value))} style={styles.iconButton}><Feather name="copy" size={18} color={theme.colors.primary} /></Pressable> : null}</View>)}
-          {detail.thumbnail_url ? <Pressable onPress={() => Linking.openURL(detail.thumbnail_url)} style={styles.outlineButton}><Feather name="download" size={18} color={theme.colors.primary} /><Text style={styles.outlineText}>{t('trash_download_photo')}</Text></Pressable> : null}
+          {detail.thumbnail_url ? <Pressable disabled={downloadingId === detail.id} onPress={() => downloadPhoto(detail)} style={styles.outlineButton}>{downloadingId === detail.id ? <ActivityIndicator color={theme.colors.primary} /> : <Feather name="download" size={18} color={theme.colors.primary} />}<Text style={styles.outlineText}>{t('trash_download_photo')}</Text></Pressable> : null}
           {has('canRestoreTrash') ? <Pressable disabled={restoreMutation.isPending} onPress={() => restore(detail)} style={styles.primaryButton}><Feather name="rotate-ccw" size={18} color="#fff" /><Text style={styles.buttonText}>{t('trash_restore')}</Text></Pressable> : null}
           {has('canPurgeTrash') ? <Pressable disabled={purgeMutation.isPending} onPress={() => purge(detail)} style={styles.dangerButton}><Feather name="trash-2" size={18} color="#fff" /><Text style={styles.buttonText}>{t('trash_purge')}</Text></Pressable> : null}
         </> : null}

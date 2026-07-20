@@ -5,7 +5,9 @@ import { queryKeys } from '../../shared/query/queryKeys';
 import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
 import {
   enqueueObjectUpdate,
+  enqueueTrashDelete,
   getOfflineSnapshot,
+  hasPendingOfflineUpdate,
   isOfflineLikeError,
   syncOfflineOutbox,
 } from '../../shared/offline/offlineStatus';
@@ -500,7 +502,24 @@ export function useDeleteClientObjectMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id }: { id: string }) => deleteClientObject(String(id || '')),
+    mutationFn: async ({ id }: { id: string }) => {
+      const entityId = String(id || '');
+      const base = queryClient.getQueryData(queryKeys.objects.detail(entityId)) as Record<string, any> | null;
+      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      if (!online || await hasPendingOfflineUpdate('object', entityId)) {
+        await enqueueTrashDelete({ entity: 'object', id: entityId, base });
+        syncOfflineOutbox(queryClient).catch(() => {});
+        return { queued: true };
+      }
+      try {
+        await deleteClientObject(entityId);
+        return { queued: false };
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        await enqueueTrashDelete({ entity: 'object', id: entityId, base });
+        return { queued: true };
+      }
+    },
     onSuccess: (_result, variables: any) => {
       if (variables?.clientId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(variables.clientId) });
