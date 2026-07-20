@@ -300,8 +300,14 @@ begin
     if v_entity_type = 'order'
        and (to_jsonb(old) - array['work_type_id','department_id','updated_at','updated_by'])
            = (to_jsonb(new) - array['work_type_id','department_id','updated_at','updated_by'])
-       and (new.work_type_id is null or new.work_type_id is not distinct from old.work_type_id)
-       and (new.department_id is null or new.department_id is not distinct from old.department_id) then
+       and (
+         to_jsonb(new) -> 'work_type_id' is not distinct from 'null'::jsonb
+         or to_jsonb(new) -> 'work_type_id' is not distinct from to_jsonb(old) -> 'work_type_id'
+       )
+       and (
+         to_jsonb(new) -> 'department_id' is not distinct from 'null'::jsonb
+         or to_jsonb(new) -> 'department_id' is not distinct from to_jsonb(old) -> 'department_id'
+       ) then
       return new;
     end if;
     raise exception 'Deleted entities are read-only' using errcode = '55000';
