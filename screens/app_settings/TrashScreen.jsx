@@ -9,7 +9,6 @@ import SortSelectModal from '../../components/filters/SortSelectModal';
 import TrashFiltersPanel from '../../components/filters/TrashFiltersPanel';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
-import Button from '../../components/ui/Button';
 import SelectionToolbar from '../../components/ui/SelectionToolbar';
 import { useToast } from '../../components/ui/ToastProvider';
 import { ConfirmModal } from '../../components/ui/modals';
@@ -373,19 +372,10 @@ export default function TrashScreen() {
       scroll={false}
       headerOptions={{
         title: t('trash_title'),
-        headerRight: canPurgeTrash && !selectionMode
-          ? () => (
-            <Button
-              title={t('trash_clear_action')}
-              accessibilityLabel={t('trash_clear_action')}
-              variant="secondary"
-              size="sm"
-              disabled={busy || trashKnownEmpty}
-              loading={clearMutation.isPending}
-              onPress={() => setConfirmation({ action: 'purgeAll' })}
-              style={styles.headerAction}
-            />
-          )
+        rightTextLabel: canPurgeTrash && !selectionMode ? t('trash_clear_action') : undefined,
+        rightDisabled: busy || trashKnownEmpty,
+        onRightPress: canPurgeTrash && !selectionMode
+          ? () => setConfirmation({ action: 'purgeAll' })
           : undefined,
       }}
     >
@@ -495,7 +485,6 @@ const createStyles = (theme) => StyleSheet.create({
   list: { gap: 10, paddingHorizontal: theme.spacing.lg, paddingBottom: 32 },
   listEmpty: { flexGrow: 1 },
   loader: { marginTop: 40 },
-  headerAction: { height: 32, borderRadius: 16, paddingHorizontal: 12 },
   searchBar: { paddingTop: theme.spacing.sm },
   card: { flexDirection: 'row', alignItems: 'stretch', borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 16, overflow: 'hidden' },
   cardSelected: { borderColor: theme.colors.primary, backgroundColor: theme.colors.surface },

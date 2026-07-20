@@ -606,9 +606,10 @@ check(
     trashScreen.includes('<SelectionToolbar') &&
     trashScreen.includes('<TrashFiltersPanel') &&
     trashScreen.includes("title: t('trash_title')") &&
-    trashScreen.includes("title={t('trash_clear_action')}") &&
+    trashScreen.includes("rightTextLabel: canPurgeTrash && !selectionMode ? t('trash_clear_action')") &&
+    trashScreen.includes('rightDisabled: busy || trashKnownEmpty') &&
+    trashScreen.includes('onRightPress: canPurgeTrash && !selectionMode') &&
     trashScreen.includes("setConfirmation({ action: 'purgeAll' })") &&
-    trashScreen.includes("variant=\"secondary\"") &&
     trashScreen.includes("setConfirmation({ action: 'purge', ids: [id]") &&
     trashFiltersPanel.includes('mode="trash"') &&
     selectionToolbar.includes('onToggleAll') &&
