@@ -43,7 +43,7 @@ export function formatClientNameForOrder(client: any) {
   return formatPersonName(client);
 }
 
-function normalizeClient(row: any) {
+export function normalizeClient(row: any) {
   if (!row) return null;
   const firstName = String(row.first_name || '').trim();
   const lastName = String(row.last_name || '').trim();

@@ -56,6 +56,7 @@ import {
 } from '../../lib/feedOrderFieldVisibility';
 
 import AppHeader from '../../components/navigation/AppHeader';
+import TrashReadOnlyNotice from '../../components/trash/TrashReadOnlyNotice';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import ClearButton from '../../components/ui/ClearButton';
@@ -130,10 +131,11 @@ import { isValidOptionalMobilePhone, toE164MobilePhoneOrNull } from '../../src/s
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Feather from '@expo/vector-icons/Feather';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useToast } from '../../components/ui/ToastProvider';
+import { getTrashItem } from '../../src/features/trash/api';
 import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
 import {
   enqueueTrashDelete,
@@ -627,6 +629,7 @@ function OrderDetailsContent() {
   const __params = useLocalSearchParams();
   const idParam = __params?.id;
   const financeEntryIdParam = __params?.financeEntryId;
+  const trashIdParam = __params?.trashId;
   const id = useMemo(() => {
     const fromParams = Array.isArray(idParam) ? idParam[0] : idParam;
     const normalizedFromParams = normalizeOrderRouteId(fromParams);
@@ -647,6 +650,11 @@ function OrderDetailsContent() {
     () => String(Array.isArray(financeEntryIdParam) ? financeEntryIdParam[0] || '' : financeEntryIdParam || '').trim(),
     [financeEntryIdParam],
   );
+  const trashId = useMemo(
+    () => String(Array.isArray(trashIdParam) ? trashIdParam[0] || '' : trashIdParam || '').trim(),
+    [trashIdParam],
+  );
+  const isTrashMode = Boolean(trashId);
   const openedFinanceEntryRouteRef = useRef('');
 
   const authCanVerifySession =
@@ -677,10 +685,10 @@ function OrderDetailsContent() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!id) return undefined;
+      if (!id || isTrashMode) return undefined;
       setActiveNotificationOrderId(id);
       return () => clearActiveNotificationOrderId(id);
-    }, [id]),
+    }, [id, isTrashMode]),
   );
 
   const returnTo = useMemo(() => {
@@ -707,12 +715,12 @@ function OrderDetailsContent() {
   const pendingNavigationActionRef = useRef(null);
   const queryClient = useQueryClient();
   const initialCachedOrder = useMemo(() => {
-    if (!id) return null;
+    if (!id || isTrashMode) return null;
     const cached = queryClient.getQueryData(queryKeys.requests.detail(id));
     return cached && typeof cached === 'object' && isEntityBoundToOrder(cached, id)
       ? { ...cached, time_window_start: cached.time_window_start ?? null }
       : null;
-  }, [id, queryClient]);
+  }, [id, isTrashMode, queryClient]);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: !!id && protectedDataReady,
   });
@@ -823,13 +831,13 @@ function OrderDetailsContent() {
   const isOrderFinanceEnabled = isOrderFinanceEnabledFromMap(orderFieldsByKey);
   const isOrderFinanceEntriesEnabled = isOrderFinanceEntriesEnabledFromMap(orderFieldsByKey);
   const canViewFinanceSection = canViewFinanceAll && isOrderFinanceEnabled && showFeedFinanceField;
-  const canManageFinanceEntries = has('canEditFinanceEntries');
+  const canManageFinanceEntries = !isTrashMode && has('canEditFinanceEntries');
   const canAddFinanceEntries =
-    has('canEditFinanceEntries') && isOrderFinanceEntriesEnabled && showFeedFinanceField;
-  const canEditFinances = has('canEditFinanceEntries') && isOrderFinanceEnabled && showFeedFinanceField;
+    !isTrashMode && has('canEditFinanceEntries') && isOrderFinanceEntriesEnabled && showFeedFinanceField;
+  const canEditFinances = !isTrashMode && has('canEditFinanceEntries') && isOrderFinanceEnabled && showFeedFinanceField;
   const canViewOrderPhotos = has('canViewOrderPhotos');
-  const canAddOrderPhotosFromGallery = has('canAddGalleryPhotos');
-  const canAddOrderPhotosFromCamera = has('canAddCameraPhotos');
+  const canAddOrderPhotosFromGallery = !isTrashMode && has('canAddGalleryPhotos');
+  const canAddOrderPhotosFromCamera = !isTrashMode && has('canAddCameraPhotos');
   const canAddOrderPhotos = canAddOrderPhotosFromGallery || canAddOrderPhotosFromCamera;
   const isAdminUser = String(role || authRole || '').toLowerCase() === 'admin';
   const cloudFallbackActive =
@@ -1162,11 +1170,33 @@ function OrderDetailsContent() {
     });
   }, [id]);
 
-  const { data: requestData, refetch: refetchRequestData } = useRequest(id, {
-    enabled: !!id && protectedDataReady,
+  const { data: activeRequestData, refetch: refetchActiveRequestData } = useRequest(id, {
+    enabled: !!id && protectedDataReady && !isTrashMode,
     staleTime: 45 * 1000,
     refetchOnMount: false,
   });
+  const { data: trashItem, refetch: refetchTrashItem, isError: trashLoadFailed } = useQuery({
+    queryKey: [...queryKeys.trash.detail(trashId), 'order-screen'],
+    queryFn: () => getTrashItem(trashId),
+    enabled: isTrashMode && protectedDataReady && has('canViewTrash'),
+  });
+  const requestData = useMemo(
+    () => isTrashMode && trashItem?.data
+      ? markRequestDetailLoaded({ ...trashItem.data, id: trashItem.entity_id || trashItem.data.id })
+      : activeRequestData,
+    [activeRequestData, isTrashMode, trashItem],
+  );
+  const refetchRequestData = useCallback(async () => {
+    if (!isTrashMode) return refetchActiveRequestData();
+    const result = await refetchTrashItem();
+    const next = result?.data;
+    return {
+      ...result,
+      data: next?.data
+        ? markRequestDetailLoaded({ ...next.data, id: next.entity_id || next.data.id })
+        : null,
+    };
+  }, [isTrashMode, refetchActiveRequestData, refetchTrashItem]);
   const requestDataRef = useRef(requestData);
   useEffect(() => {
     requestDataRef.current = isEntityBoundToOrder(requestData, id) ? requestData : null;
@@ -1714,7 +1744,9 @@ function OrderDetailsContent() {
       setRole(currentRole);
 
       // в”Ђв”Ђ 2. Order data: show cache instantly, then refetch в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-      const cachedOrderRaw = queryClient.getQueryData(queryKeys.requests.detail(id));
+      const cachedOrderRaw = isTrashMode
+        ? requestDataRef.current
+        : queryClient.getQueryData(queryKeys.requests.detail(id));
 
       let fetchedOrderRaw =
         isEntityBoundToOrder(cachedOrderRaw, id) && isOrderSnapshotReadyForDisplay(cachedOrderRaw)
@@ -1735,7 +1767,7 @@ function OrderDetailsContent() {
             ? fetchedOrderRaw.status === 'new'
             : fetchedOrderRaw.status === mapStatusToDb('new')),
       );
-      if (fetchedOrderRaw) {
+      if (fetchedOrderRaw && !isTrashMode) {
         // The automatic status mutation below already returns a fresh detail row.
         // Do not race it with a stale-while-revalidate response for the same row.
         if (!cachedOrderNeedsStatusAdvance) {
@@ -1765,7 +1797,7 @@ function OrderDetailsContent() {
         } catch {
           // fallback below
         }
-        if (!fetchedOrderRaw) {
+        if (!fetchedOrderRaw && !isTrashMode) {
           fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
         }
       }
@@ -1785,7 +1817,7 @@ function OrderDetailsContent() {
       const isNewStatus = statusSystem.isEnabled
         ? fetchedOrder.status === 'new'
         : fetchedOrder.status === mapStatusToDb('new');
-      const shouldAdvanceStatus = uid && isNewStatus && fetchedOrder.assigned_to === uid;
+      const shouldAdvanceStatus = !isTrashMode && uid && isNewStatus && fetchedOrder.assigned_to === uid;
       const nextStatus = shouldAdvanceStatus
         ? statusSystem.isEnabled
           ? hasProgressStatus
@@ -1959,6 +1991,7 @@ function OrderDetailsContent() {
     }
   }, [
     id,
+    isTrashMode,
     protectedDataReady,
     authUserId,
     authRole,
@@ -1972,8 +2005,8 @@ function OrderDetailsContent() {
   ]);
 
   const canEditByRole = useCallback(
-    () => has('canEditOrders') && !companySettings?.recalc_in_progress,
-    [has, companySettings],
+    () => !isTrashMode && has('canEditOrders') && !companySettings?.recalc_in_progress,
+    [has, companySettings, isTrashMode],
   );
   const canEdit = useCallback(
     () => canEditByRole() && !isReadOnlyBySubscription,
@@ -4659,7 +4692,7 @@ function OrderDetailsContent() {
     markFirstContent('RequestView');
   }, [order, order?.id]);
 
-  useRequestRealtimeSync({ enabled: !!id && protectedDataReady, companyId });
+  useRequestRealtimeSync({ enabled: !!id && protectedDataReady && !isTrashMode, companyId });
 
   useEffect(() => {
     applyNavBar();
@@ -4834,7 +4867,7 @@ function OrderDetailsContent() {
   );
 
   useEffect(() => {
-    if (!order?.id) return undefined;
+    if (!order?.id || isTrashMode) return undefined;
     // Persisted request media is already available with the request itself.
     // Offline queue hydration augments it in the background and must never
     // block opening the media UI.
@@ -4877,7 +4910,7 @@ function OrderDetailsContent() {
     return () => {
       active = false;
     };
-  }, [order?.id]);
+  }, [isTrashMode, order?.id]);
 
   useEffect(() => {
     setLocalPendingMap((previous) => {
@@ -4901,7 +4934,7 @@ function OrderDetailsContent() {
   }, [order]);
 
   useEffect(() => {
-    if (!id || !order?.id) return;
+    if (!id || !order?.id || isTrashMode) return;
     if (!isOnlineForPhotoQueue) return;
 
     let active = true;
@@ -4969,13 +5002,13 @@ function OrderDetailsContent() {
     return () => {
       active = false;
     };
-  }, [id, isOnlineForPhotoQueue, order?.id, queryClient, refetchRequestData]);
+  }, [id, isOnlineForPhotoQueue, isTrashMode, order?.id, queryClient, refetchRequestData]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || isTrashMode) return;
     if (!getOfflineSnapshot().isOnline) return;
     syncOfflineFinanceOutbox(queryClient, id).catch(() => {});
-  }, [id, queryClient]);
+  }, [id, isTrashMode, queryClient]);
 
   useEffect(() => {
     const fields = toLegacySchemaFields(orderFieldSettings).filter(
@@ -5313,6 +5346,7 @@ function OrderDetailsContent() {
   const isAssignedToCurrentUser =
     !!order?.assigned_to && String(order.assigned_to) === String(authUserId || '');
   const canCompleteOrder =
+    !isTrashMode &&
     !isReadOnlyBySubscription &&
     !!order?.assigned_to &&
     (isAssignedToCurrentUser ? has('canCompleteOwnOrders') : has('canCompleteOtherOrders'));
@@ -5394,6 +5428,17 @@ function OrderDetailsContent() {
       },
     });
   }, [canViewObjects, linkedObjectId, order?.id, router]);
+
+  if (isTrashMode && (!has('canViewTrash') || trashLoadFailed)) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }} edges={['left', 'right']}>
+        <AppHeader back options={{ title: t('trash_entity_order') }} />
+        <View style={styles.centered}>
+          <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>{t('trash_item_unavailable')}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (permsLoading || loading || !order) {
     return (
@@ -5535,8 +5580,8 @@ function OrderDetailsContent() {
         imageMetadata={financeViewerPhotoMetadata}
         initialIndex={financeViewerIndex}
         onClose={closeFinanceEntryViewer}
-        onDelete={handleFinanceViewerDelete}
-        onRotateSave={handleFinanceViewerRotateSave}
+        onDelete={isTrashMode ? undefined : handleFinanceViewerDelete}
+        onRotateSave={isTrashMode ? undefined : handleFinanceViewerRotateSave}
         categoryLabel={financeViewerCategoryLabel}
       />
     </Suspense>
@@ -5600,6 +5645,7 @@ function OrderDetailsContent() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+            {isTrashMode ? <TrashReadOnlyNotice item={trashItem} /> : null}
             {isReadOnlyBySubscription ? (
               <>
                 <Card style={{ marginBottom: theme.spacing?.sm ?? 8 }}>
@@ -6334,8 +6380,8 @@ function OrderDetailsContent() {
                   imageMetadata={viewerPhotoMetadata}
                   initialIndex={viewerIndex}
                   onClose={closeViewer}
-                  onDelete={handleViewerDelete}
-                  onRotateSave={handleViewerRotateSave}
+                  onDelete={isTrashMode ? undefined : handleViewerDelete}
+                  onRotateSave={isTrashMode ? undefined : handleViewerRotateSave}
                   categoryLabel={viewerCategoryLabel}
                 />
               </Suspense>

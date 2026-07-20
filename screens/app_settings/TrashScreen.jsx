@@ -105,6 +105,22 @@ export default function TrashScreen() {
   });
   if (!has('canViewTrash')) return <Screen scroll={false}><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
 
+  const openItem = (item) => {
+    if (item?.entity_type === 'order') {
+      router.push({ pathname: `/orders/${item.entity_id}`, params: { trashId: item.id, returnTo: '/app_settings/trash' } });
+      return;
+    }
+    if (item?.entity_type === 'client') {
+      router.push({ pathname: `/clients/${item.entity_id}`, params: { trashId: item.id, returnTo: '/app_settings/trash' } });
+      return;
+    }
+    if (item?.entity_type === 'client_object') {
+      router.push({ pathname: `/objects/${item.entity_id}`, params: { trashId: item.id, returnTo: '/app_settings/trash' } });
+      return;
+    }
+    router.push(`/app_settings/trash/${item.id}`);
+  };
+
   const renderItem = ({ item }) => {
     const thumbnailUri = buildTrashMediaUrl(item) || String(item.thumbnail_url || '');
     const canLoadThumbnail = Boolean(thumbnailUri) && (item.entity_type !== 'media' || Boolean(accessToken)) && !failedThumbIds.has(item.id);
@@ -112,7 +128,7 @@ export default function TrashScreen() {
       uri: thumbnailUri,
       ...(item.entity_type === 'media' ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
     } : null;
-    return <Pressable accessibilityRole="button" onPress={() => router.push(`/app_settings/trash/${item.id}`)} style={styles.card}>
+    return <Pressable accessibilityRole="button" onPress={() => openItem(item)} style={styles.card}>
       {thumbnailSource ? <Image source={thumbnailSource} onError={() => setFailedThumbIds((current) => new Set(current).add(item.id))} style={styles.thumb} contentFit="cover" /> : <View style={styles.thumbEmpty}><Feather name="trash-2" size={22} color={theme.colors.danger} /></View>}
       <View style={styles.grow}>
         <View style={styles.between}><Text style={styles.type}>{t(`trash_entity_${item.entity_type}`)}</Text><Feather name="trash-2" size={14} color={theme.colors.danger} /></View>

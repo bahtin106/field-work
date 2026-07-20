@@ -2,8 +2,9 @@
 // paint the destination before this module is evaluated.
 import React from 'react';
 import Feather from '@expo/vector-icons/Feather';
+import { useQuery } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -16,12 +17,16 @@ import EntityPhotoPreview from '../../../components/media/EntityPhotoPreview';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TagList from '../../../components/tags/TagList';
+import TrashReadOnlyNotice from '../../../components/trash/TrashReadOnlyNotice';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
 import { useClientObject } from '../../../src/features/objects/queries';
 import { useClient } from '../../../src/features/clients/queries';
+import { normalizeClientObject } from '../../../src/features/objects/addressing';
+import { getTrashItem } from '../../../src/features/trash/api';
+import { queryKeys } from '../../../src/shared/query/queryKeys';
 import {
   isRenderableObjectMediaUrl,
   mergeObjectMediaUrlMapPreservingLocal,
@@ -104,6 +109,8 @@ export default function ObjectViewScreen() {
   const rawReturnTo = params?.returnTo;
   const rawReturnParams = params?.returnParams;
   const objectId = Array.isArray(id) ? id[0] : id;
+  const trashId = String(Array.isArray(params?.trashId) ? params.trashId[0] || '' : params?.trashId || '').trim();
+  const isTrashMode = Boolean(trashId);
   const returnTo = React.useMemo(() => {
     const value = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
     return value ? String(value) : '/objects';
@@ -119,13 +126,23 @@ export default function ObjectViewScreen() {
     }
   }, [rawReturnParams]);
 
-  const canViewObjects = has('canViewObjects');
+  const canViewObjects = isTrashMode ? has('canViewTrash') : has('canViewObjects');
   const canViewClients = has('canViewClients');
-  const canEditObjects = has('canEditObjects');
+  const canEditObjects = !isTrashMode && has('canEditObjects');
   const canViewObjectPhones = has('canViewObjectPhones');
-  const { data: objectItem } = useClientObject(objectId, {
-    enabled: !!objectId && canViewObjects,
+  const activeObjectQuery = useClientObject(objectId, {
+    enabled: !!objectId && canViewObjects && !isTrashMode,
   });
+  const trashQuery = useQuery({
+    queryKey: [...queryKeys.trash.detail(trashId), 'object-screen'],
+    queryFn: () => getTrashItem(trashId),
+    enabled: isTrashMode && canViewObjects,
+  });
+  const trashItem = trashQuery.data;
+  const objectItem = React.useMemo(
+    () => isTrashMode ? normalizeClientObject(trashItem?.data) : activeObjectQuery.data,
+    [activeObjectQuery.data, isTrashMode, trashItem?.data],
+  );
   const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
     enabled: !!objectId,
   });
@@ -413,6 +430,17 @@ export default function ObjectViewScreen() {
     );
   }
 
+  if (isTrashMode && (trashQuery.isLoading || !objectItem)) {
+    return (
+      <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
+        <AppHeader back options={{ title: t('routes_objects_object') }} />
+        <View style={styles.centered}>
+          {trashQuery.isError ? <Text style={styles.mutedText}>{t('trash_item_unavailable')}</Text> : <ActivityIndicator color={theme.colors.primary} />}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
       <AppHeader
@@ -434,6 +462,7 @@ export default function ObjectViewScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.contentWrap}>
+        {isTrashMode ? <TrashReadOnlyNotice item={trashItem} /> : null}
         <EntityPhotoPreview
           imageUrl={objectItem?.photoThumbUrl || objectItem?.photoDisplayUrl || objectItem?.photoUrl || null}
           previewUrl={objectItem?.photoDisplayUrl || objectItem?.photoUrl || null}

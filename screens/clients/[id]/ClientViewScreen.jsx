@@ -2,8 +2,9 @@
 // paint the destination before this module is evaluated.
 import React from 'react';
 import Feather from '@expo/vector-icons/Feather';
+import { useQuery } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../../components/navigation/AppHeader';
@@ -13,11 +14,15 @@ import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import IconButton from '../../../components/ui/IconButton';
 import TagList from '../../../components/tags/TagList';
+import TrashReadOnlyNotice from '../../../components/trash/TrashReadOnlyNotice';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
 import { useClient, useClientOrderCount } from '../../../src/features/clients/queries';
+import { normalizeClient } from '../../../src/features/clients/api';
+import { getTrashItem } from '../../../src/features/trash/api';
+import { queryKeys } from '../../../src/shared/query/queryKeys';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -44,6 +49,8 @@ export default function ClientViewScreen() {
   const rawReturnTo = params?.returnTo;
   const rawReturnParams = params?.returnParams;
   const clientId = Array.isArray(id) ? id[0] : id;
+  const trashId = String(Array.isArray(params?.trashId) ? params.trashId[0] || '' : params?.trashId || '').trim();
+  const isTrashMode = Boolean(trashId);
   const returnTo = React.useMemo(() => {
     const value = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
     return value ? String(value) : '/clients';
@@ -60,18 +67,28 @@ export default function ClientViewScreen() {
   }, [rawReturnParams]);
   const { has } = usePermissions();
 
-  const canViewClients = has('canViewClients');
-  const canEditClients = has('canEditClients');
+  const canViewClients = isTrashMode ? has('canViewTrash') : has('canViewClients');
+  const canEditClients = !isTrashMode && has('canEditClients');
   const canViewObjects = has('canViewObjects');
   const canViewClientPhones = has('canViewClientPhones');
 
-  const { data: client } = useClient(clientId, { enabled: !!clientId && canViewClients });
+  const activeClientQuery = useClient(clientId, { enabled: !!clientId && canViewClients && !isTrashMode });
+  const trashQuery = useQuery({
+    queryKey: [...queryKeys.trash.detail(trashId), 'client-screen'],
+    queryFn: () => getTrashItem(trashId),
+    enabled: isTrashMode && canViewClients,
+  });
+  const trashItem = trashQuery.data;
+  const client = React.useMemo(
+    () => isTrashMode ? normalizeClient(trashItem?.data) : activeClientQuery.data,
+    [activeClientQuery.data, isTrashMode, trashItem?.data],
+  );
   const { data: clientFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT, {
     enabled: !!clientId && canViewClients,
   });
   const { settings } = useCompanySettings();
   useClientOrderCount(clientId, {
-    enabled: !!clientId && canViewClients,
+    enabled: !!clientId && canViewClients && !isTrashMode,
   });
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const toast = useToast();
@@ -215,6 +232,17 @@ export default function ClientViewScreen() {
     );
   }
 
+  if (isTrashMode && (trashQuery.isLoading || !client)) {
+    return (
+      <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
+        <AppHeader back options={{ title: t('routes_clients_client') }} />
+        <View style={styles.centered}>
+          {trashQuery.isError ? <Text style={styles.mutedText}>{t('trash_item_unavailable')}</Text> : <ActivityIndicator color={theme.colors.primary} />}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
       <AppHeader
@@ -236,6 +264,7 @@ export default function ClientViewScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.contentWrap}>
+        {isTrashMode ? <TrashReadOnlyNotice item={trashItem} /> : null}
         <EntityPhotoPreview
           imageUrl={canShowAvatarImage ? clientAvatarUrl : null}
           previewUrl={canShowAvatarImage ? clientAvatarUrl : null}
