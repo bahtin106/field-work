@@ -26,7 +26,7 @@ function timeLeft(value, t) {
     : formatMessage(t, 'trash_hours_left', { count: Math.max(1, Math.ceil(ms / 3600000)) });
 }
 
-export default function TrashReadOnlyNotice({ item, compact = false }) {
+export default function TrashReadOnlyNotice({ item, compact = false, itemTitle }) {
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { t } = useTranslation();
@@ -34,7 +34,7 @@ export default function TrashReadOnlyNotice({ item, compact = false }) {
   const toast = useToast();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const title = String(item?.title || '').trim();
+  const title = String(itemTitle || item?.title || '').trim();
   const id = String(item?.id || '').trim();
   const bannerTitle = t(`trash_deleted_${item?.entity_type}_banner`, t('trash_deleted_banner'));
 

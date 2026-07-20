@@ -1,10 +1,11 @@
 import { Feather } from '@expo/vector-icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../components/layout/Screen';
+import TrashReadOnlyNotice from '../../components/trash/TrashReadOnlyNotice';
 import Card from '../../components/ui/Card';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import SectionHeader from '../../components/ui/SectionHeader';
@@ -15,8 +16,6 @@ import {
   buildTrashMediaUrl,
   getTrashItem,
   getTrashMediaOrigin,
-  purgeTrashItem,
-  restoreTrashItem,
 } from '../../src/features/trash/api';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
@@ -47,28 +46,6 @@ const decodeTrashText = (value, { filename = false } = {}) => {
 
 const displayTitle = (item) => decodeTrashText(item?.title, { filename: item?.entity_type === 'media' });
 
-function timeLeft(value, t) {
-  const ms = new Date(value).getTime() - Date.now();
-  if (ms <= 0) return t('trash_due_now');
-  const days = Math.floor(ms / 86400000);
-  return days > 0
-    ? formatMessage(t, 'trash_days_left', { count: days })
-    : formatMessage(t, 'trash_hours_left', { count: Math.max(1, Math.ceil(ms / 3600000)) });
-}
-
-function DeletedBanner({ detail, styles, theme, t }) {
-  const bannerTitle = t(`trash_deleted_${detail?.entity_type}_banner`, t('trash_deleted_banner'));
-  return (
-    <View style={styles.banner}>
-      <Feather name="trash-2" size={30} color={theme.colors.danger} />
-      <View style={styles.grow}>
-        <Text style={styles.bannerTitle}>{bannerTitle}</Text>
-        <Text style={styles.bannerText}>{t('trash_read_only')}</Text>
-      </View>
-    </View>
-  );
-}
-
 export default function TrashDetailScreen() {
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -77,7 +54,6 @@ export default function TrashDetailScreen() {
   const toast = useToast();
   const router = useRouter();
   const params = useLocalSearchParams();
-  const queryClient = useQueryClient();
   const id = normalizeParam(params?.id);
   const [accessToken, setAccessToken] = useState('');
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
@@ -118,45 +94,6 @@ export default function TrashDetailScreen() {
       router.replace({ pathname: `/objects/${detail.entity_id}`, params: routeParams });
     }
   }, [detail, router]);
-
-  const invalidate = async () => {
-    await Promise.all(['trash', 'requests', 'clients', 'objects'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
-  };
-  const restoreMutation = useMutation({
-    mutationFn: restoreTrashItem,
-    onSuccess: async (result) => {
-      await invalidate();
-      toast.success(t(result?.queued ? 'trash_restore_queued' : 'trash_restored'));
-      router.back();
-    },
-    onError: () => toast.error(t('trash_action_error')),
-  });
-  const purgeMutation = useMutation({
-    mutationFn: purgeTrashItem,
-    onSuccess: async () => {
-      await invalidate();
-      toast.success(t('trash_purged'));
-      router.back();
-    },
-    onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
-  });
-
-  const confirmRestore = () => Alert.alert(
-    t('trash_restore_title'),
-    formatMessage(t, 'trash_restore_message', { title: displayTitle(detail) }),
-    [
-      { text: t('common_cancel'), style: 'cancel' },
-      { text: t('trash_restore'), onPress: () => restoreMutation.mutate(id) },
-    ],
-  );
-  const confirmPurge = () => Alert.alert(
-    t('trash_purge_title'),
-    formatMessage(t, 'trash_purge_message', { title: displayTitle(detail) }),
-    [
-      { text: t('common_cancel'), style: 'cancel' },
-      { text: t('trash_purge'), style: 'destructive', onPress: () => purgeMutation.mutate(id) },
-    ],
-  );
 
   const downloadPhoto = async () => {
     if (!detail || downloading) return;
@@ -245,7 +182,7 @@ export default function TrashDetailScreen() {
       headerOptions={{ title: t(`trash_entity_${detail.entity_type}`, t('trash_title')) }}
       contentContainerStyle={styles.content}
     >
-      <DeletedBanner detail={detail} styles={styles} theme={theme} t={t} />
+      <TrashReadOnlyNotice item={detail} itemTitle={displayTitle(detail)} />
 
       {mediaSource ? (
         <Image source={mediaSource} onError={() => setThumbnailFailed(true)} style={styles.hero} contentFit="cover" />
@@ -254,10 +191,6 @@ export default function TrashDetailScreen() {
       ) : null}
 
       <Text selectable style={styles.title}>{displayTitle(detail)}</Text>
-      <View style={styles.retention}>
-        <Text style={styles.countdown}>{timeLeft(detail.purge_at, t)}</Text>
-        <Text style={styles.purgeAt}>{formatMessage(t, 'trash_purge_at', { date: new Date(detail.purge_at).toLocaleString() })}</Text>
-      </View>
 
       <SectionHeader>{t('trash_section_origin')}</SectionHeader>
       <Card separated paddedXOnly>
@@ -276,48 +209,22 @@ export default function TrashDetailScreen() {
         {downloading ? <ActivityIndicator color={theme.colors.primary} /> : <Feather name="download" size={18} color={theme.colors.primary} />}
         <Text style={styles.outlineText}>{t('trash_download_photo')}</Text>
       </Pressable>
-
-      <View style={styles.actions}>
-        {has('canRestoreTrash') ? (
-          <Pressable disabled={restoreMutation.isPending || purgeMutation.isPending} onPress={confirmRestore} style={styles.primaryButton}>
-            {restoreMutation.isPending ? <ActivityIndicator color="#fff" /> : <Feather name="rotate-ccw" size={18} color="#fff" />}
-            <Text style={styles.buttonText}>{t('trash_restore')}</Text>
-          </Pressable>
-        ) : null}
-        {has('canPurgeTrash') ? (
-          <Pressable disabled={purgeMutation.isPending || restoreMutation.isPending} onPress={confirmPurge} style={styles.dangerButton}>
-            {purgeMutation.isPending ? <ActivityIndicator color="#fff" /> : <Feather name="trash-2" size={18} color="#fff" />}
-            <Text style={styles.buttonText}>{t('trash_purge')}</Text>
-          </Pressable>
-        ) : null}
-      </View>
     </Screen>
   );
 }
 
 const createStyles = (theme) => StyleSheet.create({
   content: { paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.sm, paddingBottom: 44 },
-  grow: { flex: 1, minWidth: 0 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40, gap: 10 },
   emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   emptyText: { color: theme.colors.textSecondary, textAlign: 'center', marginTop: 18 },
-  banner: { flexDirection: 'row', gap: 12, alignItems: 'center', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.danger, backgroundColor: theme.colors.card, marginBottom: 18 },
-  bannerTitle: { color: theme.colors.danger, fontSize: 19, fontWeight: '800' },
-  bannerText: { color: theme.colors.textSecondary, marginTop: 3 },
   hero: { width: '100%', aspectRatio: 1.45, borderRadius: 18, backgroundColor: theme.colors.card },
   heroFallback: { width: '100%', aspectRatio: 1.45, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.card },
   title: { color: theme.colors.text, fontSize: 26, fontWeight: '800', marginTop: 18 },
-  retention: { marginTop: 13, padding: 14, borderRadius: 14, backgroundColor: theme.colors.card },
-  countdown: { color: theme.colors.danger, fontWeight: '800', fontSize: 16 },
-  purgeAt: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 },
   originLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, maxWidth: '100%' },
   originText: { color: theme.colors.primary, fontWeight: '600', textAlign: 'right', flexShrink: 1 },
   originTextDisabled: { color: theme.colors.textSecondary },
   copyButton: { padding: 8, marginVertical: -8, marginRight: -6 },
-  actions: { gap: 10, marginTop: 24 },
-  primaryButton: { minHeight: 48, borderRadius: 14, backgroundColor: theme.colors.primary, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' },
-  dangerButton: { minHeight: 48, borderRadius: 14, backgroundColor: theme.colors.danger, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' },
-  buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   outlineButton: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.primary, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', marginTop: 14 },
   outlineText: { color: theme.colors.primary, fontWeight: '700' },
 });
