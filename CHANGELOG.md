@@ -6,6 +6,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Restored client lists across the application: the protected client query can again read the three non-sensitive object location fields it embeds. Client phone numbers, media, and other restricted object data remain protected.
+
 ## [1.0.3] - 2026-07-20
 
 ### Added
