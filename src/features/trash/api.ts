@@ -1,4 +1,5 @@
 import { supabase } from '../../../lib/supabase';
+import { APP_RUNTIME_CONFIG } from '../../../config/appRuntime';
 import {
   enqueueTrashRestore,
   getOfflineSnapshot,
@@ -21,6 +22,23 @@ export type TrashListItem = {
   child_count?: number;
   total_count?: number;
 };
+
+export function buildTrashMediaUrl(item: Pick<TrashListItem, 'id' | 'entity_type'> | null | undefined, {
+  raw = false,
+  width = 512,
+  height = 512,
+} = {}) {
+  const id = String(item?.id || '').trim();
+  if (!id || item?.entity_type !== 'media' || !APP_RUNTIME_CONFIG.supabaseUrl) return '';
+  const params = new URLSearchParams({
+    trash_id: id,
+    w: String(width),
+    h: String(height),
+    fit: 'fill',
+  });
+  if (raw) params.set('raw', '1');
+  return `${APP_RUNTIME_CONFIG.supabaseUrl}/functions/v1/media-thumbnail?${params.toString()}`;
+}
 
 export async function listTrashItems({ search = '', entityType = '', sort = 'purge_at', limit = 100, offset = 0 }: {
   search?: string;

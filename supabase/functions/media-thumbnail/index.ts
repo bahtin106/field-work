@@ -26,6 +26,15 @@ function isHttpUrl(value: string) {
   return /^https?:\/\/[^\s]+$/i.test(String(value || '').trim());
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function bearerToken(req: Request) {
+  const authorization = String(req.headers.get('authorization') || '').trim();
+  return authorization.replace(/^Bearer\s+/i, '').trim();
+}
+
 function encodePlainSourceUrl(value: string) {
   return encodeURIComponent(value);
 }
@@ -171,31 +180,67 @@ export async function handleMediaThumbnailRequest(req: Request) {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
   const serviceRole = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || '';
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || serviceRole;
   const imgproxyUrl = (Deno.env.get('IMGPROXY_URL') || 'http://imgproxy:5001').replace(/\/+$/, '');
   if (!supabaseUrl || !serviceRole) return json(500, { success: false, message: 'Server is not configured' });
 
   const url = new URL(req.url);
   const id = String(url.searchParams.get('id') || '').trim();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+  const trashId = String(url.searchParams.get('trash_id') || '').trim();
+  if ((!id && !trashId) || (id && !isUuid(id)) || (trashId && !isUuid(trashId))) {
     return json(400, { success: false, message: 'Invalid media id' });
   }
 
   const width = clampInt(url.searchParams.get('w'), 512, 64, 1024);
   const height = clampInt(url.searchParams.get('h'), width, 64, 1024);
   const fit = String(url.searchParams.get('fit') || 'fill').trim() === 'fit' ? 'fit' : 'fill';
+  const raw = String(url.searchParams.get('raw') || '') === '1';
 
   const admin = createClient(supabaseUrl, serviceRole, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const { data: asset, error } = await admin
-    .from('media_assets')
-    .select('id, company_id, entity_type, entity_id, category, source_url, display_url, thumb_url, status, provider, storage_path')
-    .eq('id', id)
-    .neq('status', 'deleted')
-    .maybeSingle();
-
-  if (error || !asset) return json(404, { success: false, message: 'Media not found' });
+  let asset: any = null;
+  let trashExternalPath = '';
+  if (trashId) {
+    const token = bearerToken(req);
+    if (!token) return json(401, { success: false, message: 'Authorization required' });
+    const caller = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: detail, error: detailError } = await caller.rpc('get_trash_item', { p_id: trashId });
+    if (detailError || !detail || String(detail.entity_type || '') !== 'media') {
+      return json(404, { success: false, message: 'Media not found' });
+    }
+    const record = detail.data && typeof detail.data === 'object' ? detail.data : {};
+    const map = record.map && typeof record.map === 'object' ? record.map : {};
+    const snapshot = record.asset && typeof record.asset === 'object' ? record.asset : {};
+    trashExternalPath = String(map.external_path || snapshot.storage_path || '').trim();
+    asset = {
+      ...snapshot,
+      id: detail.entity_id,
+      company_id: record.company_id || map.company_id || snapshot.company_id,
+      entity_type: record.owner_type || snapshot.entity_type,
+      entity_id: record.owner_id || snapshot.entity_id,
+      category: record.category || map.category || snapshot.category,
+      source_url: record.source_url || map.source_url || snapshot.source_url,
+      display_url: snapshot.display_url || map.display_url,
+      thumb_url: snapshot.thumb_url,
+      provider: map.provider || snapshot.provider || 'unknown',
+      storage_path: snapshot.storage_path || map.external_path,
+    };
+  } else {
+    const { data, error } = await admin
+      .from('media_assets')
+      .select('id, company_id, entity_type, entity_id, category, source_url, display_url, thumb_url, status, provider, storage_path')
+      .eq('id', id)
+      .neq('status', 'deleted')
+      .maybeSingle();
+    if (error || !data) return json(404, { success: false, message: 'Media not found' });
+    asset = data;
+  }
+  if (!asset) return json(404, { success: false, message: 'Media not found' });
 
   let sourceUrl = String(asset.thumb_url || asset.display_url || asset.source_url || '').trim();
   const storagePath = String(asset.storage_path || '').replace(/^\/+/, '').trim();
@@ -208,7 +253,7 @@ export async function handleMediaThumbnailRequest(req: Request) {
     sourceUrl = String(signed.url || '').trim() || sourceUrl;
   }
   if (String(asset.provider || '') === 'yandex_disk') {
-    const externalPath = await getYandexExternalPath(admin, asset).catch(() => '');
+    const externalPath = trashExternalPath || await getYandexExternalPath(admin, asset).catch(() => '');
     if (externalPath) {
       const accessToken = await getYandexAccessToken(admin, String(asset.company_id || '')).catch(() => '');
       sourceUrl = (await getYandexPathDownloadUrl(accessToken, externalPath).catch(() => '')) || sourceUrl;
@@ -218,6 +263,20 @@ export async function handleMediaThumbnailRequest(req: Request) {
     }
   }
   if (!isHttpUrl(sourceUrl)) return json(422, { success: false, message: 'Media source is not renderable' });
+
+  if (raw) {
+    const upstream = await fetch(sourceUrl, {
+      headers: { Accept: 'image/avif,image/webp,image/jpeg,image/*,*/*' },
+    });
+    if (!upstream.ok || !upstream.body) {
+      return json(upstream.status || 502, { success: false, message: 'Media download failed' });
+    }
+    const headers = new Headers(corsHeaders);
+    headers.set('Content-Type', upstream.headers.get('Content-Type') || 'application/octet-stream');
+    headers.set('Cache-Control', trashId ? 'private, max-age=300' : 'public, max-age=300');
+    if (trashId) headers.set('Vary', 'Authorization');
+    return new Response(upstream.body, { status: 200, headers });
+  }
 
   const imgproxyRequest = `${imgproxyUrl}/unsafe/rs:${fit}:${width}:${height}:1/plain/${encodePlainSourceUrl(sourceUrl)}@webp`;
   const upstream = await fetch(imgproxyRequest, {
@@ -232,8 +291,10 @@ export async function handleMediaThumbnailRequest(req: Request) {
 
   const headers = new Headers(corsHeaders);
   headers.set('Content-Type', upstream.headers.get('Content-Type') || 'image/webp');
-  headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
-  headers.set('Vary', 'Accept');
+  headers.set('Cache-Control', trashId
+    ? 'private, max-age=300, stale-while-revalidate=3600'
+    : 'public, max-age=86400, stale-while-revalidate=604800');
+  headers.set('Vary', trashId ? 'Accept, Authorization' : 'Accept');
   const etag = upstream.headers.get('ETag');
   if (etag) headers.set('ETag', etag);
 

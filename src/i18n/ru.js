@@ -2424,6 +2424,7 @@
   "trash_entity_client": "Клиент",
   "trash_entity_client_object": "Объект",
   "trash_entity_media": "Медиа",
+  "trash_media_photo": "Фотография",
   "trash_sort_purge_at": "По сроку удаления",
   "trash_sort_deleted_desc": "Недавно удалённые",
   "trash_sort_title": "По названию",
@@ -2459,5 +2460,10 @@
   "trash_field_city": "Город",
   "trash_field_street": "Улица",
   "trash_field_house": "Дом",
+  "trash_field_owner_type": "Тип владельца",
+  "trash_field_owner_id": "Идентификатор владельца",
+  "trash_field_parent_order_id": "Заявка",
+  "trash_field_category": "Раздел",
+  "trash_field_source_url": "Источник файла",
   "validation_max_length": "Можно ввести не более {max} символов",
 };

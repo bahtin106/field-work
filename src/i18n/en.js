@@ -2493,6 +2493,7 @@ export default {
   "trash_entity_client": "Client",
   "trash_entity_client_object": "Object",
   "trash_entity_media": "Media",
+  "trash_media_photo": "Photo",
   "trash_sort_purge_at": "Expiring first",
   "trash_sort_deleted_desc": "Recently deleted",
   "trash_sort_title": "By name",
@@ -2528,5 +2529,10 @@ export default {
   "trash_field_city": "City",
   "trash_field_street": "Street",
   "trash_field_house": "House",
+  "trash_field_owner_type": "Owner type",
+  "trash_field_owner_id": "Owner ID",
+  "trash_field_parent_order_id": "Request",
+  "trash_field_category": "Section",
+  "trash_field_source_url": "File source",
   "validation_max_length": "Enter no more than {max} characters",
 };
