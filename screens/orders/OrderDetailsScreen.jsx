@@ -5299,8 +5299,8 @@ function OrderDetailsContent() {
     if (!useCoordinatesForOrderAddress) return;
     await copyTextToClipboard(`${orderMapLat}, ${orderMapLng}`);
   }, [copyTextToClipboard, orderMapLat, orderMapLng, useCoordinatesForOrderAddress]);
-  const copyOrderShortAddress = useCallback(async () => {
-    const text = String(shortOrderAddress || fullOrderAddress || '').trim();
+  const copyOrderAddress = useCallback(async () => {
+    const text = String(fullOrderAddress || shortOrderAddress || '').trim();
     if (!text) return;
     await copyTextToClipboard(text);
   }, [copyTextToClipboard, fullOrderAddress, shortOrderAddress]);
@@ -5922,7 +5922,7 @@ function OrderDetailsContent() {
                               }
                             : null
                         }
-                        onCollapsedLongPress={copyOrderShortAddress}
+                        onValueLongPress={copyOrderAddress}
                         forceShow
                       />
                     )

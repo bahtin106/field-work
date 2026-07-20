@@ -317,8 +317,8 @@ export default function ObjectViewScreen() {
       return false;
     }
   }, [hasMapPoint, mapLat, mapLng, t, toast]);
-  const copyShortAddress = React.useCallback(async () => {
-    const value = String(shortAddress || fullAddress || '').trim();
+  const copyAddress = React.useCallback(async () => {
+    const value = String(fullAddress || shortAddress || '').trim();
     if (!value) return false;
     try {
       await Clipboard.setStringAsync(value);
@@ -569,7 +569,7 @@ export default function ObjectViewScreen() {
               expandedLabelBold
               onValuePress={openNavigatorAddress}
               onCollapsedPress={openNavigatorAddress}
-              onCollapsedLongPress={copyShortAddress}
+              onValueLongPress={copyAddress}
               collapsedValueStyle={navigatorAddress ? styles.clientLink : null}
             />
           )}
