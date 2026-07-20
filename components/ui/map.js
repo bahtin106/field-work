@@ -11,6 +11,25 @@ const MAP_APP_IDS = new Set([
   'apple_maps',
 ]);
 
+const ANDROID_MAP_APP_LABEL_KEYS = Object.freeze({
+  'com.google.android.apps.maps': 'map_app_google_maps',
+  'com.google.android.apps.mapslite': 'map_app_google_maps_go',
+  'ru.yandex.yandexmaps': 'map_app_yandex_maps',
+  'ru.yandex.yandexmaps.beta': 'map_app_yandex_maps_beta',
+  'ru.yandex.yandexnavi': 'map_app_yandex_navigator',
+  'ru.dublgis.dgismobile': 'map_app_2gis',
+  'ru.dublgis.dgismobile4preview': 'map_app_2gis_beta',
+  'com.waze': 'map_app_waze',
+  'app.organicmaps': 'map_app_organic_maps',
+  'net.osmand': 'map_app_osmand',
+  'net.osmand.plus': 'map_app_osmand_plus',
+  'com.here.app.maps': 'map_app_here_wego',
+  'com.here.app.wego': 'map_app_here_wego_beta',
+  'com.mapswithme.maps.pro': 'map_app_maps_me',
+  'com.sygic.aura': 'map_app_sygic',
+  'com.huawei.maps.app': 'map_app_petal_maps',
+});
+
 const ANDROID_MAP_APP_ID_PATTERN = /^android:[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
 
 const MAP_PROBE_TARGET = Object.freeze({
@@ -50,6 +69,27 @@ function getTargetQuery(target) {
 
 function isValidMapAppId(appId) {
   return MAP_APP_IDS.has(appId) || ANDROID_MAP_APP_ID_PATTERN.test(appId);
+}
+
+function getAndroidMapAppLabelKey(packageName) {
+  return ANDROID_MAP_APP_LABEL_KEYS[String(packageName || '').trim().toLowerCase()] || null;
+}
+
+function disambiguateUnknownMapAppLabels(options) {
+  const labelCounts = new Map();
+  options.forEach((option) => {
+    if (option.labelKey) return;
+    const normalizedLabel = String(option.label || '').trim().toLocaleLowerCase();
+    if (!normalizedLabel) return;
+    labelCounts.set(normalizedLabel, (labelCounts.get(normalizedLabel) || 0) + 1);
+  });
+
+  return options.map((option) => {
+    if (option.labelKey) return option;
+    const normalizedLabel = String(option.label || '').trim().toLocaleLowerCase();
+    if ((labelCounts.get(normalizedLabel) || 0) < 2) return option;
+    return { ...option, label: `${option.label} · ${option.packageName}` };
+  });
 }
 
 function buildAndroidGeoUrl(target) {
@@ -146,15 +186,23 @@ export async function buildInstalledMapOptions(target = MAP_PROBE_TARGET) {
       const installedApps = await MonitorMapApps.getInstalledMapAppsAsync();
       if (Array.isArray(installedApps)) {
         const geoUrl = buildAndroidGeoUrl(normalized);
-        return installedApps
+        const options = installedApps
           .map((app) => {
             const packageName = String(app?.packageName || '').trim();
             const id = String(app?.id || `android:${packageName}`).trim();
             const label = String(app?.label || '').trim();
             if (!packageName || !label || !isValidMapAppId(id)) return null;
-            return { id, label, packageName, url: geoUrl };
+            const labelKey = getAndroidMapAppLabelKey(packageName);
+            return {
+              id,
+              label: labelKey ? null : label,
+              labelKey,
+              packageName,
+              url: geoUrl,
+            };
           })
           .filter(Boolean);
+        return disambiguateUnknownMapAppLabels(options);
       }
     } catch {
       // Native discovery may be unavailable in Expo Go. Known URL schemes below
