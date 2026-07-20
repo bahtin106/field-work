@@ -973,14 +973,12 @@ function OrderDetailsContent() {
       String(
         order?.work_type_name ||
           order?.work_type?.name ||
-          requestData?.work_type_name ||
-          requestData?.work_type?.name ||
           '',
       ).trim() || null;
     if (!normalized) return fallbackName;
     const found = workTypes.find((w) => normalizeId(w?.id) === normalized);
     return found?.name || fallbackName;
-  }, [normalizeId, order?.work_type, order?.work_type_name, requestData?.work_type, requestData?.work_type_name, workTypeId, workTypes]);
+  }, [normalizeId, order?.work_type, order?.work_type_name, workTypeId, workTypes]);
   const shouldShowWorkTypeRow = useMemo(
     () => isOrderFieldVisible('work_type_id') && (useWorkTypes || !!workTypeId || !!workTypeName),
     [isOrderFieldVisible, useWorkTypes, workTypeId, workTypeName],
