@@ -3,7 +3,10 @@ import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
+import SortSelectModal from '../../components/filters/SortSelectModal';
+import StatusSelectModal from '../../components/filters/StatusSelectModal';
 import Screen from '../../components/layout/Screen';
 import { useToast } from '../../components/ui/ToastProvider';
 import { usePermissions } from '../../lib/permissions';
@@ -44,6 +47,8 @@ export default function TrashScreen() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [entityType, setEntityType] = useState('');
   const [sort, setSort] = useState('purge_at');
+  const [filtersVisible, setFiltersVisible] = useState(false);
+  const [sortVisible, setSortVisible] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
 
@@ -53,6 +58,14 @@ export default function TrashScreen() {
   }, [search]);
 
   const params = useMemo(() => ({ search: debouncedSearch, entityType, sort }), [debouncedSearch, entityType, sort]);
+  const typeOptions = useMemo(() => TYPES.map((value) => ({
+    id: value,
+    label: value ? t(`trash_entity_${value}`) : t('trash_all'),
+  })), [t]);
+  const sortOptions = useMemo(() => SORTS.map((value) => ({
+    id: value,
+    label: t(`trash_sort_${value}`),
+  })), [t]);
   const listQuery = useInfiniteQuery({
     queryKey: queryKeys.trash.list(params),
     queryFn: ({ pageParam }) => listTrashItems({ ...params, limit: 50, offset: pageParam }),
@@ -103,7 +116,7 @@ export default function TrashScreen() {
     }
   };
 
-  if (!has('canViewTrash')) return <Screen><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
+  if (!has('canViewTrash')) return <Screen scroll={false}><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
 
   const renderItem = ({ item }) => (
     <Pressable accessibilityRole="button" onPress={() => setSelectedId(item.id)} style={styles.card}>
@@ -121,16 +134,29 @@ export default function TrashScreen() {
   const detail = detailQuery.data;
   const listItems = listQuery.data?.pages?.flatMap((page) => page) || [];
   const rows = detail?.data ? Object.entries(detail.data).filter(([key, value]) => !HIDDEN_FIELDS.has(key) && textValue(value)) : [];
+  const filterSummary = entityType ? `${t('trash_filter_entity')}: ${t(`trash_entity_${entityType}`)}` : '';
 
-  return <Screen>
+  return <Screen scroll={false}>
     <View style={styles.container}>
-      <View style={styles.searchBox}><Feather name="search" size={18} color={theme.colors.textSecondary} /><TextInput style={styles.search} value={search} onChangeText={setSearch} placeholder={t('trash_search')} placeholderTextColor={theme.colors.textSecondary} /></View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{TYPES.map((value) => <Pressable key={value || 'all'} onPress={() => setEntityType(value)} style={[styles.chip, entityType === value && styles.chipActive]}><Text style={[styles.chipText, entityType === value && styles.chipTextActive]}>{value ? t(`trash_entity_${value}`) : t('trash_all')}</Text></Pressable>)}</ScrollView>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{SORTS.map((value) => <Pressable key={value} onPress={() => setSort(value)} style={[styles.sort, sort === value && styles.sortActive]}><Text style={styles.small}>{t(`trash_sort_${value}`)}</Text></Pressable>)}</ScrollView>
-      {listQuery.isLoading ? <ActivityIndicator style={styles.loader} color={theme.colors.primary} /> : <FlatList data={listItems} renderItem={renderItem} keyExtractor={(item) => item.id} contentContainerStyle={styles.list} refreshing={listQuery.isRefetching} onRefresh={listQuery.refetch} onEndReached={() => { if (listQuery.hasNextPage && !listQuery.isFetchingNextPage) listQuery.fetchNextPage(); }} onEndReachedThreshold={0.4} ListFooterComponent={listQuery.isFetchingNextPage ? <ActivityIndicator color={theme.colors.primary} /> : null} ListEmptyComponent={<View style={styles.empty}><Feather name="trash-2" size={32} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_empty')}</Text><Text style={styles.muted}>{t('trash_empty_hint')}</Text></View>} />}
+      <SearchFiltersBar
+        value={search}
+        onChangeText={setSearch}
+        onClear={() => setSearch('')}
+        placeholder={t('trash_search')}
+        onOpenFilters={() => setFiltersVisible(true)}
+        onOpenSort={() => setSortVisible(true)}
+        filtersActive={Boolean(entityType)}
+        filterSummary={filterSummary}
+        onResetFilters={() => setEntityType('')}
+        metaText={`${t('common_shown')} ${listItems.length}`}
+        style={styles.searchBar}
+      />
+      {listQuery.isLoading ? <ActivityIndicator style={styles.loader} color={theme.colors.primary} /> : <FlatList data={listItems} renderItem={renderItem} keyExtractor={(item) => item.id} style={styles.flatList} contentContainerStyle={[styles.list, listItems.length === 0 && styles.listEmpty]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" refreshing={listQuery.isRefetching} onRefresh={listQuery.refetch} onEndReached={() => { if (listQuery.hasNextPage && !listQuery.isFetchingNextPage) listQuery.fetchNextPage(); }} onEndReachedThreshold={0.4} ListFooterComponent={listQuery.isFetchingNextPage ? <ActivityIndicator color={theme.colors.primary} /> : null} ListEmptyComponent={<View style={styles.empty}><Feather name="trash-2" size={32} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_empty')}</Text><Text style={styles.muted}>{t('trash_empty_hint')}</Text></View>} />}
     </View>
+    <StatusSelectModal visible={filtersVisible} onClose={() => setFiltersVisible(false)} options={typeOptions} value={entityType} onChange={(value) => setEntityType(value || '')} title={t('trash_filter_title')} />
+    <SortSelectModal visible={sortVisible} onClose={() => setSortVisible(false)} options={sortOptions} value={sort} onChange={(value) => { if (value) setSort(value); }} title={t('common_sort')} />
     <Modal visible={Boolean(selectedId)} animationType="slide" onRequestClose={() => setSelectedId(null)}>
-      <Screen><ScrollView contentContainerStyle={styles.detail}>
+      <Screen scroll={false}><ScrollView contentContainerStyle={styles.detail}>
         <Pressable accessibilityLabel={t('common_close')} onPress={() => setSelectedId(null)} style={styles.close}><Feather name="x" size={24} color={theme.colors.text} /></Pressable>
         {detailQuery.isLoading ? <ActivityIndicator color={theme.colors.primary} /> : detail ? <>
           <View style={styles.banner}><Feather name="trash-2" size={28} color={theme.colors.danger} /><View style={styles.grow}><Text style={styles.bannerTitle}>{t('trash_deleted_banner')}</Text><Text style={styles.muted}>{t('trash_read_only')}</Text></View></View>
@@ -147,8 +173,7 @@ export default function TrashScreen() {
 }
 
 const createStyles = (theme) => StyleSheet.create({
-  container: { flex: 1, gap: 10 }, grow: { flex: 1, minWidth: 0 }, between: { flexDirection: 'row', justifyContent: 'space-between' }, list: { gap: 10, paddingBottom: 32 }, loader: { marginTop: 40 },
-  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 14, paddingHorizontal: 12 }, search: { flex: 1, minHeight: 46, color: theme.colors.text, fontSize: 16 }, chips: { gap: 8 }, chip: { borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 8 }, chipActive: { backgroundColor: theme.colors.primary }, chipText: { color: theme.colors.text, fontWeight: '600' }, chipTextActive: { color: '#fff' }, sort: { padding: 7 }, sortActive: { borderBottomWidth: 2, borderBottomColor: theme.colors.primary },
+  container: { flex: 1 }, grow: { flex: 1, minWidth: 0 }, between: { flexDirection: 'row', justifyContent: 'space-between' }, flatList: { flex: 1 }, list: { gap: 10, paddingHorizontal: theme.spacing.lg, paddingBottom: 32 }, listEmpty: { flexGrow: 1 }, loader: { marginTop: 40 }, searchBar: { paddingTop: theme.spacing.sm },
   card: { flexDirection: 'row', gap: 12, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 16, padding: 12 }, thumb: { width: 84, height: 84, borderRadius: 12 }, thumbEmpty: { width: 84, height: 84, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background }, type: { color: theme.colors.danger, fontSize: 12, fontWeight: '700' }, title: { color: theme.colors.text, fontSize: 17, fontWeight: '700', marginTop: 3 }, muted: { color: theme.colors.textSecondary, marginTop: 3 }, countdown: { color: theme.colors.danger, fontWeight: '700', marginTop: 7 }, small: { color: theme.colors.textSecondary, fontSize: 12 }, empty: { alignItems: 'center', justifyContent: 'center', padding: 40, gap: 8 }, emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   detail: { padding: 18, paddingBottom: 44, gap: 14 }, close: { alignSelf: 'flex-end', padding: 8 }, banner: { flexDirection: 'row', gap: 12, alignItems: 'center', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.danger, backgroundColor: theme.colors.card }, bannerTitle: { color: theme.colors.danger, fontSize: 19, fontWeight: '800' }, hero: { width: '100%', aspectRatio: 1.6, borderRadius: 16 }, detailTitle: { color: theme.colors.text, fontSize: 26, fontWeight: '800' }, field: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border, paddingVertical: 10 }, label: { color: theme.colors.textSecondary, fontSize: 12 }, value: { color: theme.colors.text, fontSize: 16, marginTop: 2 }, iconButton: { padding: 10 },
   primaryButton: { minHeight: 48, borderRadius: 14, backgroundColor: theme.colors.primary, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' }, dangerButton: { minHeight: 48, borderRadius: 14, backgroundColor: theme.colors.danger, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' }, buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 }, outlineButton: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.primary, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' }, outlineText: { color: theme.colors.primary, fontWeight: '700' },
