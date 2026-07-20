@@ -1,6 +1,5 @@
 import { Feather } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -12,7 +11,6 @@ import SectionHeader from '../../components/ui/SectionHeader';
 import { useToast } from '../../components/ui/ToastProvider';
 import { usePermissions } from '../../lib/permissions';
 import { getCachedSupabaseAccessToken } from '../../lib/supabaseSessionCache';
-import { getEntityFieldCatalog } from '../../src/features/fieldSettings/catalog';
 import {
   buildTrashMediaUrl,
   getTrashItem,
@@ -23,40 +21,6 @@ import {
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTheme } from '../../theme';
-
-const COPY_FIELDS = new Set(['phone', 'additional_phone_1', 'additional_phone_2', 'additional_phone_3', 'email']);
-const HIDDEN_FIELDS = new Set([
-  'id', 'company_id', 'created_by', 'updated_by', 'created_by_user_id', 'deleted_by',
-  'owner_type', 'owner_id', 'parent_order_id', 'source_url', 'category', 'map', 'asset',
-  'finance_entry', 'assigned_to', 'client_id', 'object_id', 'work_type_id', 'department_id',
-  'created_at', 'updated_at', 'deleted_at', 'purge_at', 'avatar_url', 'photo_url',
-  'address_mode', 'creation_source', 'finance_calculated_at',
-]);
-const ADDRESS_FIELDS = new Set(['country', 'region', 'district', 'city', 'street', 'house', 'postal_code', 'office', 'floor', 'entrance', 'apartment', 'geo_lat', 'geo_lng', 'entrance_info', 'parking_notes']);
-const CONTACT_FIELDS = new Set(['phone', 'email', 'contact_email', 'secondary_phone', 'additional_phone_1', 'additional_phone_2', 'additional_phone_3']);
-const SCHEDULING_FIELDS = new Set(['time_window_start', 'time_window_end', 'departure_at', 'departure_time', 'arrival_at', 'completed_at', 'duration_min', 'feed_entered_at']);
-const FINANCE_FIELDS = new Set(['start_price', 'payment_status', 'payment_method', 'currency', 'finance_income_total', 'finance_expense_total', 'finance_discount_total', 'finance_gross_total', 'finance_net_total']);
-const SECTION_LABELS = {
-  general: 'section_general',
-  personal: 'section_personal',
-  relations: 'trash_section_relations',
-  contact: 'clients_contacts_section',
-  scheduling: 'trash_section_scheduling',
-  finance: 'order_section_finances',
-  address: 'order_section_address',
-  additional: 'trash_section_additional',
-  other: 'trash_section_other',
-};
-const EXPLICIT_LABELS = {
-  status: 'trash_field_status',
-  urgent: 'create_order_label_urgent',
-  payment_status: 'order_field_payment_status',
-  payment_method: 'order_field_payment_method',
-  first_name: 'label_first_name',
-  last_name: 'label_last_name',
-  middle_name: 'label_middle_name',
-  tags: 'tags_field_label',
-};
 
 const formatMessage = (t, key, values = {}) => {
   let message = String(t(key, key));
@@ -90,69 +54,6 @@ function timeLeft(value, t) {
   return days > 0
     ? formatMessage(t, 'trash_days_left', { count: days })
     : formatMessage(t, 'trash_hours_left', { count: Math.max(1, Math.ceil(ms / 3600000)) });
-}
-
-function normalizeValue(value, key, t) {
-  if (value === null || value === undefined || value === '') return '';
-  if (typeof value === 'boolean') return value ? t('common_yes', 'Да') : t('common_no', 'Нет');
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
-  if (Array.isArray(value)) {
-    if (value.some((entry) => entry && typeof entry === 'object')) return '';
-    return value.filter((entry) => entry !== null && entry !== undefined && entry !== '').join(', ');
-  }
-  if (typeof value === 'object') return '';
-  const text = decodeTrashText(value);
-  if (!text) return '';
-  if (key === 'status') return t(`order_status_${text}`, text);
-  if (key === 'payment_status') return t(`order_payment_status_${text}`, text);
-  if (key === 'payment_method') return t(`order_payment_method_${text}`, text);
-  if (/(_at|_date|time_window_start|time_window_end)$/.test(key)) {
-    const date = new Date(text);
-    if (!Number.isNaN(date.getTime())) return date.toLocaleString();
-  }
-  return text;
-}
-
-function humanizeKey(key) {
-  const value = String(key || '').replace(/_/g, ' ').trim();
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : '';
-}
-
-function getSnapshotSections(detail, t) {
-  const data = detail?.data && typeof detail.data === 'object' ? detail.data : {};
-  const catalogType = detail?.entity_type === 'client_object' ? 'object' : detail?.entity_type;
-  const catalog = getEntityFieldCatalog(catalogType);
-  const catalogByKey = new Map(catalog.map((field) => [field.fieldKey, field]));
-  const catalogOrder = new Map(catalog.map((field, index) => [field.fieldKey, index]));
-  const rows = Object.entries(data).flatMap(([key, rawValue]) => {
-    if (HIDDEN_FIELDS.has(key) || key.endsWith('_id') || /^media_file_\d+$/.test(key) || /(?:url|token|hash)$/i.test(key)) return [];
-    const value = normalizeValue(rawValue, key, t);
-    if (!value) return [];
-    const field = catalogByKey.get(key);
-    const labelCandidates = [field?.labelKey, EXPLICIT_LABELS[key], `order_field_${key}`, `trash_field_${key}`].filter(Boolean);
-    let label = '';
-    for (const labelKey of labelCandidates) {
-      const translated = String(t(labelKey, labelKey));
-      if (translated !== labelKey) {
-        label = translated;
-        break;
-      }
-    }
-    if (!label) label = humanizeKey(key);
-    let section = field?.sectionKey || 'other';
-    if (key === 'status' || key === 'urgent') section = 'general';
-    if (ADDRESS_FIELDS.has(key)) section = 'address';
-    if (CONTACT_FIELDS.has(key)) section = 'contact';
-    if (SCHEDULING_FIELDS.has(key)) section = 'scheduling';
-    if (FINANCE_FIELDS.has(key)) section = 'finance';
-    return [{ key, label, value, section, order: catalogOrder.get(key) ?? 1000 }];
-  });
-  const sectionOrder = ['general', 'personal', 'relations', 'contact', 'scheduling', 'finance', 'address', 'additional', 'other'];
-  return sectionOrder.map((section) => ({
-    id: section,
-    title: t(SECTION_LABELS[section], humanizeKey(section)),
-    rows: rows.filter((row) => row.section === section).sort((left, right) => left.order - right.order),
-  })).filter((section) => section.rows.length > 0);
 }
 
 function DeletedBanner({ detail, styles, theme, t }) {
@@ -205,7 +106,18 @@ export default function TrashDetailScreen() {
     enabled: Boolean(id) && has('canViewTrash'),
   });
   const detail = detailQuery.data;
-  const sections = useMemo(() => getSnapshotSections(detail, t), [detail, t]);
+
+  useEffect(() => {
+    if (!detail || detail.entity_type === 'media') return;
+    const routeParams = { trashId: detail.id, returnTo: '/app_settings/trash' };
+    if (detail.entity_type === 'order') {
+      router.replace({ pathname: `/orders/${detail.entity_id}`, params: routeParams });
+    } else if (detail.entity_type === 'client') {
+      router.replace({ pathname: `/clients/${detail.entity_id}`, params: routeParams });
+    } else if (detail.entity_type === 'client_object') {
+      router.replace({ pathname: `/objects/${detail.entity_id}`, params: routeParams });
+    }
+  }, [detail, router]);
 
   const invalidate = async () => {
     await Promise.all(['trash', 'requests', 'clients', 'objects'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
@@ -307,6 +219,10 @@ export default function TrashDetailScreen() {
     return <Screen headerOptions={{ title: t('trash_title') }}><View style={styles.center}><Feather name="alert-circle" size={30} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_item_unavailable')}</Text></View></Screen>;
   }
 
+  if (detail.entity_type !== 'media') {
+    return <Screen headerOptions={{ title: t('trash_title') }}><View style={styles.center}><ActivityIndicator color={theme.colors.primary} /></View></Screen>;
+  }
+
   const mediaUri = buildTrashMediaUrl(detail, { width: 1280, height: 960 });
   const mediaSource = detail.entity_type === 'media' && mediaUri && accessToken && !thumbnailFailed
     ? { uri: mediaUri, headers: { Authorization: `Bearer ${accessToken}` } }
@@ -343,46 +259,23 @@ export default function TrashDetailScreen() {
         <Text style={styles.purgeAt}>{formatMessage(t, 'trash_purge_at', { date: new Date(detail.purge_at).toLocaleString() })}</Text>
       </View>
 
-      {detail.entity_type === 'media' ? (
-        <>
-          <SectionHeader>{t('trash_section_origin')}</SectionHeader>
-          <Card separated paddedXOnly>
-            <LabelValueRow
-              label={t('trash_removed_from')}
-              hideWhenEmpty={false}
-              valueComponent={(
-                <Pressable accessibilityRole={originCanOpen ? 'link' : undefined} disabled={!originCanOpen} onPress={openOrigin} style={styles.originLink}>
-                  <Text style={[styles.originText, !originCanOpen && styles.originTextDisabled]}>{originText}</Text>
-                  {originCanOpen ? <Feather name="chevron-right" size={18} color={theme.colors.primary} /> : null}
-                </Pressable>
-              )}
-            />
-          </Card>
-          <Pressable disabled={downloading} onPress={downloadPhoto} style={styles.outlineButton}>
-            {downloading ? <ActivityIndicator color={theme.colors.primary} /> : <Feather name="download" size={18} color={theme.colors.primary} />}
-            <Text style={styles.outlineText}>{t('trash_download_photo')}</Text>
-          </Pressable>
-        </>
-      ) : sections.length ? sections.map((section) => (
-        <View key={section.id}>
-          <SectionHeader>{section.title}</SectionHeader>
-          <Card separated paddedXOnly>
-            {section.rows.map((row) => (
-              <LabelValueRow
-                key={row.key}
-                label={row.label}
-                value={row.value}
-                fullRow={row.key === 'comment' || row.key === 'description'}
-                rightActions={COPY_FIELDS.has(row.key) ? (
-                  <Pressable accessibilityLabel={t('common_copy')} onPress={() => Clipboard.setStringAsync(row.value)} style={styles.copyButton}>
-                    <Feather name="copy" size={17} color={theme.colors.primary} />
-                  </Pressable>
-                ) : null}
-              />
-            ))}
-          </Card>
-        </View>
-      )) : <Text style={styles.emptyText}>{t('trash_no_details')}</Text>}
+      <SectionHeader>{t('trash_section_origin')}</SectionHeader>
+      <Card separated paddedXOnly>
+        <LabelValueRow
+          label={t('trash_removed_from')}
+          hideWhenEmpty={false}
+          valueComponent={(
+            <Pressable accessibilityRole={originCanOpen ? 'link' : undefined} disabled={!originCanOpen} onPress={openOrigin} style={styles.originLink}>
+              <Text style={[styles.originText, !originCanOpen && styles.originTextDisabled]}>{originText}</Text>
+              {originCanOpen ? <Feather name="chevron-right" size={18} color={theme.colors.primary} /> : null}
+            </Pressable>
+          )}
+        />
+      </Card>
+      <Pressable disabled={downloading} onPress={downloadPhoto} style={styles.outlineButton}>
+        {downloading ? <ActivityIndicator color={theme.colors.primary} /> : <Feather name="download" size={18} color={theme.colors.primary} />}
+        <Text style={styles.outlineText}>{t('trash_download_photo')}</Text>
+      </Pressable>
 
       <View style={styles.actions}>
         {has('canRestoreTrash') ? (
