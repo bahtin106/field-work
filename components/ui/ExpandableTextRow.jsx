@@ -23,6 +23,7 @@ function ExpandableTextRowComponent({
   expandedKeyValueItems = null,
   onCollapsedPress = null,
   onCollapsedLongPress = null,
+  onValueLongPress = null,
   rowPressDisabled = false,
   // new optional props
   chevronName = 'chevron-down',
@@ -62,6 +63,7 @@ function ExpandableTextRowComponent({
   const hasExpandedItems = Array.isArray(expandedKeyValueItems) && expandedKeyValueItems.length > 0;
   const showExpandedAction = canExpand && expanded && !!normalizedExpandedActionText && typeof onValuePress === 'function';
   const showCollapsedValue = !canExpand || !expanded;
+  const valueLongPress = onValueLongPress || onCollapsedLongPress;
 
   const handleMeasurementTextLayout = useCallback((event) => {
     const nextOverflows = (event?.nativeEvent?.lines?.length ?? 0) > 1;
@@ -74,6 +76,10 @@ function ExpandableTextRowComponent({
     setExpanded((current) => !current);
   };
   const handleRowPress = () => {
+    if (showCollapsedValue && typeof onCollapsedPress === 'function') {
+      onCollapsedPress();
+      return;
+    }
     if (toggleOnChevronOnly) {
       if (!expanded) onValuePress?.();
       return;
@@ -84,20 +90,43 @@ function ExpandableTextRowComponent({
     }
     toggleExpanded();
   };
+  const hasRowPress = typeof onValuePress === 'function' || (
+    showCollapsedValue && typeof onCollapsedPress === 'function'
+  );
 
   const rowOnPress = rowPressDisabled || (toggleOnChevronOnly && expanded) || (
-    typeof onValuePress !== 'function' && (toggleOnChevronOnly || !canExpand)
+    !hasRowPress && (toggleOnChevronOnly || !canExpand)
   )
     ? undefined
     : handleRowPress;
+  const rowOnLongPress = !rowPressDisabled && showCollapsedValue && typeof valueLongPress === 'function'
+    ? valueLongPress
+    : undefined;
+  const expandedContent = hasExpandedItems ? (
+    <View style={styles.expandedList}>
+      {expandedKeyValueItems.map((item, index) => {
+        const key = `${item?.label || 'label'}-${index}`;
+        return (
+          <Text key={key} style={[styles.expandedValue, expandedValueStyle]}>
+            <Text style={styles.expandedKey}>{String(item?.label || '').trim()}: </Text>
+            {String(item?.value || '').trim()}
+          </Text>
+        );
+      })}
+    </View>
+  ) : (
+    <Text style={[styles.expandedValue, expandedValueStyle]}>{normalizedValue}</Text>
+  );
 
   return (
     <View>
       <Pressable
         style={base.row}
         onPress={rowOnPress}
+        onLongPress={rowOnLongPress}
+        delayLongPress={450}
         hitSlop={theme.components?.interactive?.hitSlop}
-        accessibilityRole={rowOnPress ? 'button' : undefined}
+        accessibilityRole={rowOnPress || rowOnLongPress ? 'button' : undefined}
         accessibilityState={canExpand ? { expanded } : undefined}
       >
         <Text style={[base.label, expanded && expandedLabelBold ? styles.expandedLabel : null]}>
@@ -106,34 +135,15 @@ function ExpandableTextRowComponent({
         <View style={base.middleSpacer} />
         <View style={styles.rightWrap}>
           {showCollapsedValue ? (
-            onCollapsedPress || onCollapsedLongPress ? (
-              <View style={styles.valueWrap}>
-                <Pressable
-                  style={({ pressed }) => [styles.inlineValuePressable, pressed ? styles.inlineValuePressablePressed : null]}
-                  onPress={onCollapsedPress}
-                  onLongPress={onCollapsedLongPress}
-                  hitSlop={theme.components?.interactive?.hitSlop}
-                >
-                  <Text
-                    style={[base.value, styles.collapsedValue, collapsedValueStyle]}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {normalizedCollapsedValue}
-                  </Text>
-                </Pressable>
-              </View>
-            ) : (
-              <View style={styles.valueWrap}>
-                <Text
-                  style={[base.value, styles.collapsedValue, collapsedValueStyle]}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {normalizedCollapsedValue}
-                </Text>
-              </View>
-            )
+            <View style={styles.valueWrap}>
+              <Text
+                style={[base.value, styles.collapsedValue, collapsedValueStyle]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {normalizedCollapsedValue}
+              </Text>
+            </View>
           ) : null}
           {showExpandedAction ? (
             <View style={styles.valueWrap}>
@@ -187,21 +197,15 @@ function ExpandableTextRowComponent({
           exiting={FadeOut.duration(panelToggleMs)}
           style={styles.expandedWrap}
         >
-          {hasExpandedItems ? (
-            <View style={styles.expandedList}>
-              {expandedKeyValueItems.map((item, index) => {
-                const key = `${item?.label || 'label'}-${index}`;
-                return (
-                  <Text key={key} style={[styles.expandedValue, expandedValueStyle]}>
-                    <Text style={styles.expandedKey}>{String(item?.label || '').trim()}: </Text>
-                    {String(item?.value || '').trim()}
-                  </Text>
-                );
-              })}
-            </View>
-          ) : (
-            <Text style={[styles.expandedValue, expandedValueStyle]}>{normalizedValue}</Text>
-          )}
+          {typeof valueLongPress === 'function' ? (
+            <Pressable
+              onLongPress={valueLongPress}
+              delayLongPress={450}
+              style={({ pressed }) => (pressed ? styles.expandedValuePressed : null)}
+            >
+              {expandedContent}
+            </Pressable>
+          ) : expandedContent}
         </Animated.View>
       ) : null}
     </View>
@@ -276,6 +280,9 @@ function createStyles(theme) {
         theme.typography.sizes.sm *
         (theme._raw?.typography?.lineHeights?.normal ?? theme.typography?.lineHeights?.normal ?? 1),
       textAlign: 'left',
+    },
+    expandedValuePressed: {
+      opacity: 0.6,
     },
     expandedKey: {
       fontWeight: theme.typography.weight.semibold,
