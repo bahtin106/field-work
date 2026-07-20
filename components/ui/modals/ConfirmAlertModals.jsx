@@ -1,53 +1,19 @@
 // components/ui/modals/ConfirmAlertModals.jsx
-import React, { useEffect, useRef } from 'react';
-import { Alert, View, Text } from 'react-native';
+import React from 'react';
+import { View, Text } from 'react-native';
 import { useTheme } from '../../../theme';
 import BaseModal from './BaseModal';
 import ModalActionsRow from './ModalActionsRow';
 import { t as T } from '../../../src/i18n';
 
-function NativeAlert({ visible, title, message, buttons, onDismiss }) {
-  const configRef = useRef({ title, message, buttons, onDismiss });
-  configRef.current = { title, message, buttons, onDismiss };
-
-  useEffect(() => {
-    if (!visible) return undefined;
-
-    const config = configRef.current;
-    let handled = false;
-    const finish = (callback) => {
-      if (handled) return;
-      handled = true;
-      try {
-        callback?.();
-      } catch {}
-    };
-
-    // Scheduling prevents React Strict Mode's development-only effect replay
-    // from opening the same native alert twice.
-    const timer = setTimeout(() => {
-      Alert.alert(
-        String(config.title || ''),
-        String(config.message || ''),
-        config.buttons.map((button) => ({
-          text: String(button.text || ''),
-          style: button.style,
-          onPress: () => finish(button.onPress),
-        })),
-        {
-          cancelable: true,
-          onDismiss: () => finish(config.onDismiss),
-        },
-      );
-    }, 0);
-
-    return () => {
-      clearTimeout(timer);
-      handled = true;
-    };
-  }, [visible]);
-
-  return null;
+function ModalMessage({ message, theme }) {
+  if (message == null) return null;
+  if (React.isValidElement(message)) return message;
+  return (
+    <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
+      {String(message)}
+    </Text>
+  );
 }
 
 export function ConfirmModal({
@@ -62,7 +28,6 @@ export function ConfirmModal({
   onClose,
 }) {
   const { theme } = useTheme();
-  const canUseNativeAlert = message == null || ['string', 'number'].includes(typeof message);
   const handleConfirm = () => {
     try {
       onClose?.();
@@ -73,35 +38,6 @@ export function ConfirmModal({
         } catch {}
       });
     }
-  };
-
-  if (canUseNativeAlert) {
-    return (
-      <NativeAlert
-        visible={visible}
-        title={title}
-        message={message}
-        onDismiss={onClose}
-        buttons={[
-          { text: cancelLabel, style: 'cancel', onPress: onClose },
-          {
-            text: confirmLabel,
-            style: confirmVariant === 'destructive' ? 'destructive' : 'default',
-            onPress: handleConfirm,
-          },
-        ]}
-      />
-    );
-  }
-
-  const renderMessage = () => {
-    if (message == null) return null;
-    if (React.isValidElement(message)) return message;
-    return (
-      <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
-        {message}
-      </Text>
-    );
   };
   const footer = (
     <ModalActionsRow
@@ -132,27 +68,15 @@ export function ConfirmModal({
       presentation="dialog"
       footer={footer}
     >
-      <View style={{ marginBottom: theme.spacing.md }}>{renderMessage()}</View>
+      <View style={{ marginBottom: theme.spacing.md }}>
+        <ModalMessage message={message} theme={theme} />
+      </View>
     </BaseModal>
   );
 }
 
 export function AlertModal({ visible, title, message, buttonLabel = T('btn_ok'), onClose }) {
   const { theme } = useTheme();
-  const canUseNativeAlert = message == null || ['string', 'number'].includes(typeof message);
-
-  if (canUseNativeAlert) {
-    return (
-      <NativeAlert
-        visible={visible}
-        title={title}
-        message={message}
-        onDismiss={onClose}
-        buttons={[{ text: buttonLabel, style: 'default', onPress: onClose }]}
-      />
-    );
-  }
-
   const footer = (
     <ModalActionsRow
       actions={[
@@ -175,9 +99,7 @@ export function AlertModal({ visible, title, message, buttonLabel = T('btn_ok'),
       footer={footer}
     >
       <View style={{ marginBottom: theme.spacing.md }}>
-        <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
-          {message}
-        </Text>
+        <ModalMessage message={message} theme={theme} />
       </View>
     </BaseModal>
   );

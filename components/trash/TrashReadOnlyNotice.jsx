@@ -1,12 +1,13 @@
 import { Feather } from '@expo/vector-icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useMemo } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { usePermissions } from '../../lib/permissions';
 import { purgeTrashItem, restoreTrashItem } from '../../src/features/trash/api';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
+import { ConfirmModal } from '../ui/modals';
 import { useToast } from '../ui/ToastProvider';
 
 const formatMessage = (t, key, values = {}) => {
@@ -34,6 +35,7 @@ export default function TrashReadOnlyNotice({ item, compact = false, itemTitle }
   const toast = useToast();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [confirmation, setConfirmation] = useState(null);
   const title = String(itemTitle || item?.title || '').trim();
   const id = String(item?.id || '').trim();
   const bannerTitle = t(`trash_deleted_${item?.entity_type}_banner`, t('trash_deleted_banner'));
@@ -60,22 +62,8 @@ export default function TrashReadOnlyNotice({ item, compact = false, itemTitle }
     onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
   });
 
-  const confirmRestore = () => Alert.alert(
-    t('trash_restore_title'),
-    formatMessage(t, 'trash_restore_message', { title }),
-    [
-      { text: t('common_cancel'), style: 'cancel' },
-      { text: t('trash_restore'), onPress: () => restoreMutation.mutate(id) },
-    ],
-  );
-  const confirmPurge = () => Alert.alert(
-    t('trash_purge_title'),
-    formatMessage(t, 'trash_purge_message', { title }),
-    [
-      { text: t('common_cancel'), style: 'cancel' },
-      { text: t('trash_purge'), style: 'destructive', onPress: () => purgeMutation.mutate(id) },
-    ],
-  );
+  const confirmRestore = () => setConfirmation('restore');
+  const confirmPurge = () => setConfirmation('purge');
 
   if (!item) return null;
   const busy = restoreMutation.isPending || purgeMutation.isPending;
@@ -103,6 +91,27 @@ export default function TrashReadOnlyNotice({ item, compact = false, itemTitle }
           </Pressable>
         ) : null}
       </View>
+      <ConfirmModal
+        visible={confirmation === 'restore'}
+        title={t('trash_restore_title')}
+        message={formatMessage(t, 'trash_restore_message', { title })}
+        confirmLabel={t('trash_restore')}
+        cancelLabel={t('common_cancel')}
+        loading={restoreMutation.isPending}
+        onClose={() => setConfirmation(null)}
+        onConfirm={() => restoreMutation.mutate(id)}
+      />
+      <ConfirmModal
+        visible={confirmation === 'purge'}
+        title={t('trash_purge_title')}
+        message={formatMessage(t, 'trash_purge_message', { title })}
+        confirmLabel={t('trash_purge')}
+        cancelLabel={t('common_cancel')}
+        confirmVariant="destructive"
+        loading={purgeMutation.isPending}
+        onClose={() => setConfirmation(null)}
+        onConfirm={() => purgeMutation.mutate(id)}
+      />
     </View>
   );
 }

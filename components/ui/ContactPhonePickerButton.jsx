@@ -3,7 +3,6 @@ import * as Contacts from 'expo-contacts';
 import React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Keyboard,
   Linking,
   Platform,
@@ -15,6 +14,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 import { useToast } from './ToastProvider';
 import { formatRuMask } from './phone';
+import { ConfirmModal } from './modals';
 import SelectModal from './modals/SelectModal';
 
 const PHONE_EXTENSION_RE = /\s*(?:доб\.?|ext\.?|extension|x)\s*\d+\s*$/i;
@@ -56,6 +56,7 @@ export default function ContactPhonePickerButton({ value, onSelect, disabled = f
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
   const [numberOptions, setNumberOptions] = React.useState([]);
+  const [permissionHelpVisible, setPermissionHelpVisible] = React.useState(false);
   const mountedRef = React.useRef(true);
   const busyRef = React.useRef(false);
 
@@ -78,19 +79,7 @@ export default function ContactPhonePickerButton({ value, onSelect, disabled = f
     [onSelect],
   );
 
-  const showPermissionHelp = React.useCallback(() => {
-    Alert.alert(
-      t('contact_picker_permission_title'),
-      t('contact_picker_permission_message'),
-      [
-        { text: t('btn_cancel'), style: 'cancel' },
-        {
-          text: t('contact_picker_open_settings'),
-          onPress: () => Linking.openSettings().catch(() => {}),
-        },
-      ],
-    );
-  }, [t]);
+  const showPermissionHelp = React.useCallback(() => setPermissionHelpVisible(true), []);
 
   const openContactPicker = React.useCallback(async () => {
     if (disabled || busyRef.current || Platform.OS === 'web') return;
@@ -183,6 +172,15 @@ export default function ContactPhonePickerButton({ value, onSelect, disabled = f
         maxHeightRatio={0.5}
         onSelect={applyNumber}
         onClose={closeNumberPicker}
+      />
+      <ConfirmModal
+        visible={permissionHelpVisible}
+        title={t('contact_picker_permission_title')}
+        message={t('contact_picker_permission_message')}
+        confirmLabel={t('contact_picker_open_settings')}
+        cancelLabel={t('btn_cancel')}
+        onClose={() => setPermissionHelpVisible(false)}
+        onConfirm={() => Linking.openSettings().catch(() => {})}
       />
     </>
   );

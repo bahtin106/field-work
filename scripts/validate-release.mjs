@@ -547,8 +547,11 @@ check(
     baseModal.includes('EmbeddedModalHostContext') &&
     baseModal.includes('registerRequestClose') &&
     baseModal.includes("BackHandler.addEventListener('hardwareBackPress'") &&
-    confirmAlertModals.includes('Alert.alert(') &&
-    confirmAlertModals.includes("style: 'cancel'") &&
+    confirmAlertModals.includes('<BaseModal') &&
+    confirmAlertModals.includes('presentation="dialog"') &&
+    confirmAlertModals.includes('<ModalActionsRow') &&
+    confirmAlertModals.includes('<ModalMessage') &&
+    !confirmAlertModals.includes('Alert.alert(') &&
     selectModal.includes('presentation="sheet"') &&
     multiSelectModal.includes('presentation="sheet"') &&
     dateTimeModal.includes('presentation="sheet"') &&
@@ -560,7 +563,7 @@ check(
     fullscreenImageViewer.includes('presentation="sheet"') &&
     fullscreenImageViewer.includes('<ConfirmModal') &&
     !fullscreenImageViewer.includes('embedded && !capturePreviewMode'),
-  'Product modals must preserve adaptive dialog/sheet presentation, native alerts, and Android Back handling',
+  'Product modals must preserve themed adaptive dialog/sheet presentation and Android Back handling',
 );
 check(fs.existsSync(path.join(root, 'supabase/migrations/20260712190000_harden_error_logs.sql')), 'Error log schema migration is required');
 check(
