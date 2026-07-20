@@ -136,6 +136,10 @@ const SETTINGS_SECTIONS = Object.freeze([
     items: [{ key: 'help_center', type: 'select' }],
   },
   {
+    key: 'data',
+    items: [{ key: 'trash', type: 'select' }],
+  },
+  {
     key: 'quiet',
     items: [
       { key: 'quiet_start', type: 'select', helpTopic: 'quiet_hours' },
@@ -977,6 +981,7 @@ export default function AppSettings() {
       if (sectionKey === 'appearance' && itemKey === 'language') return () => setLangOpen(true);
       if (sectionKey === 'navigation' && itemKey === 'map_app') return openMapAppSettings;
       if (sectionKey === 'notifications' && itemKey === 'events') return () => router.push('/app_settings/sections/events');
+      if (sectionKey === 'data' && itemKey === 'trash') return () => router.push('/app_settings/trash');
       if (sectionKey === 'help' && itemKey === 'help_center') return openHelpSettings;
       if (sectionKey === 'quiet' && itemKey === 'quiet_start') return openTimePicker('start');
       if (sectionKey === 'quiet' && itemKey === 'quiet_end') return openTimePicker('end');

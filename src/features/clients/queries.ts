@@ -6,7 +6,9 @@ import { queryKeys } from '../../shared/query/queryKeys';
 import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
 import {
   enqueueClientUpdate,
+  enqueueTrashDelete,
   getOfflineSnapshot,
+  hasPendingOfflineUpdate,
   isOfflineLikeError,
   syncOfflineOutbox,
 } from '../../shared/offline/offlineStatus';
@@ -420,7 +422,24 @@ export function useDeleteClientMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => deleteClient(String(id || '')),
+    mutationFn: async (id: string) => {
+      const entityId = String(id || '');
+      const base = queryClient.getQueryData(queryKeys.clients.detail(entityId)) as Record<string, any> | null;
+      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      if (!online || await hasPendingOfflineUpdate('client', entityId)) {
+        await enqueueTrashDelete({ entity: 'client', id: entityId, base });
+        syncOfflineOutbox(queryClient).catch(() => {});
+        return { queued: true };
+      }
+      try {
+        await deleteClient(entityId);
+        return { queued: false };
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        await enqueueTrashDelete({ entity: 'client', id: entityId, base });
+        return { queued: true };
+      }
+    },
     onSuccess: (_result, deletedId: string) => {
       if (deletedId) {
         removeClientFromQueryCaches(queryClient, deletedId);

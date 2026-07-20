@@ -24,6 +24,10 @@ export const queryKeys = {
     searchForOrder: (params = {}) => ['objects', 'search-for-order', params],
     detail: (id) => ['objects', 'detail', String(id || '')],
   },
+  trash: {
+    list: (params = {}) => ['trash', 'list', params],
+    detail: (id) => ['trash', 'detail', String(id || '')],
+  },
   fieldSettings: {
     detail: (entityType) => ['field-settings', 'detail', String(entityType || '')],
   },

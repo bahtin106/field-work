@@ -76,6 +76,7 @@ import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 import { hasRelationFilters } from '../../../src/features/requests/relationFilters';
+import { getOfflineSnapshot } from '../../../src/shared/offline/offlineStatus';
 
 const CLIENT_DELETE_BLOCKERS_RECHECK_MAX_AGE_MS = 5000;
 
@@ -617,6 +618,10 @@ export default function EditClientScreen() {
   }, [accessibleBlockingOrdersCount, canViewAllOrders, clientId, deleteBlockers, headerName]);
 
   const getLatestDeleteBlockersForDelete = React.useCallback(async () => {
+    if (!getOfflineSnapshot().isOnline) {
+      if (deleteBlockers) return deleteBlockers;
+      throw new Error('CLIENT_DELETE_REQUIRES_CONNECTION_CHECK');
+    }
     const lastUpdatedAt = Number(deleteBlockersUpdatedAt || 0);
     const isFresh =
       !deleteBlockersError &&
@@ -642,8 +647,8 @@ export default function EditClientScreen() {
         return;
       }
 
-      await deleteMutation.mutateAsync(String(clientId || ''));
-      toast.success(t('clients_deleted_success'));
+      const result = await deleteMutation.mutateAsync(String(clientId || ''));
+      toast.success(t(result?.queued ? 'trash_delete_queued' : 'clients_deleted_success'));
       setDeleteVisible(false);
       allowLeaveRef.current = true;
       dismissToRoute(router, {
@@ -652,6 +657,10 @@ export default function EditClientScreen() {
       });
     } catch (error) {
       const rawMessage = String(error?.message || '');
+      if (rawMessage === 'CLIENT_DELETE_REQUIRES_CONNECTION_CHECK') {
+        toast.error(t('clients_delete_offline_check_required'));
+        return;
+      }
       if (
         rawMessage.includes('orders_client_id_fkey') ||
         rawMessage.includes('orders_object_id_fkey') ||

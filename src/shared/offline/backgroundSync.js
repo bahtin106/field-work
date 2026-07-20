@@ -5,6 +5,7 @@ import {
   flushOrderPhotoQueue,
   recoverInterruptedOrderPhotoQueue,
 } from '../media/orderPhotoQueue';
+import { syncOfflineOutbox } from './offlineStatus';
 import { queryClient } from '../query/queryClient';
 
 export const OFFLINE_BACKGROUND_SYNC_TASK = 'monitor-offline-background-sync-v1';
@@ -13,6 +14,7 @@ async function runBackgroundSync() {
   const results = await Promise.allSettled([
     flushOrderPhotoQueue(),
     syncOfflineFinanceOutbox(queryClient),
+    syncOfflineOutbox(queryClient),
   ]);
   return results.every((result) => result.status === 'fulfilled');
 }

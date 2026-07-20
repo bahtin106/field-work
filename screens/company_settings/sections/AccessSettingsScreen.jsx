@@ -52,6 +52,15 @@ const ACCESS_SECTIONS = [
       { key: 'canDeleteObjects', labelKey: 'access_settings_perm_delete_objects' },
     ],
   },
+  {
+    id: 'trash',
+    titleKey: 'access_settings_section_trash',
+    permissions: [
+      { key: 'canViewTrash', labelKey: 'access_settings_perm_view_trash' },
+      { key: 'canRestoreTrash', labelKey: 'access_settings_perm_restore_trash' },
+      { key: 'canPurgeTrash', labelKey: 'access_settings_perm_purge_trash' },
+    ],
+  },
 ];
 const ROLE_LABEL_KEYS = {
   admin: 'role_admin',

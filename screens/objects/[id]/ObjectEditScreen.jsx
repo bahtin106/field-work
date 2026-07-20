@@ -1623,11 +1623,11 @@ export default function EditObjectScreen() {
         onConfirm={async () => {
           if (!canDeleteObjects) return;
           try {
-            await deleteMutation.mutateAsync({
+            const result = await deleteMutation.mutateAsync({
               id: String(objectId || ''),
               clientId: objectItem?.client_id,
             });
-            toast.success(t('objects_deleted'));
+            toast.success(t(result?.queued ? 'trash_delete_queued' : 'objects_deleted'));
             goAfterDelete();
           } catch (error) {
             toast.error(error?.message || t('clients_save_failed'));

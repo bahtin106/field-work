@@ -18,8 +18,8 @@ const QUALITY_REQUIRED_SAMPLES = 2;
 
 export type OfflineOutboxItem = {
   id: string;
-  entity: 'request' | 'client' | 'object' | 'employee';
-  operation: 'update';
+  entity: 'request' | 'client' | 'object' | 'employee' | 'trash';
+  operation: 'update' | 'trash' | 'restore';
   entityId: string;
   patch: Record<string, any>;
   base: Record<string, any> | null;
@@ -642,6 +642,85 @@ async function enqueueEntityUpdate({
   });
 }
 
+export async function enqueueTrashDelete({
+  entity,
+  id,
+  base = null,
+}: {
+  entity: 'request' | 'client' | 'object';
+  id: string;
+  base?: Record<string, any> | null;
+}) {
+  return enqueueTrashOperation({ entity, operation: 'trash', id, base });
+}
+
+export async function enqueueTrashRestore(id: string) {
+  return enqueueTrashOperation({ entity: 'trash', operation: 'restore', id, base: null });
+}
+
+export async function hasPendingOfflineUpdate(
+  entity: 'request' | 'client' | 'object',
+  id: string,
+) {
+  const [items, owner] = await Promise.all([readOutbox(), getActiveOfflineOwner()]);
+  return items.some((item) =>
+    item.entity === entity &&
+    item.operation === 'update' &&
+    item.entityId === String(id || '').trim() &&
+    isOutboxItemOwnedBy(item, owner),
+  );
+}
+
+async function enqueueTrashOperation({
+  entity,
+  operation,
+  id,
+  base,
+}: {
+  entity: 'request' | 'client' | 'object' | 'trash';
+  operation: 'trash' | 'restore';
+  id: string;
+  base: Record<string, any> | null;
+}) {
+  const entityId = String(id || '').trim();
+  if (!entityId) throw new Error('Entity id is required');
+  const owner = await getActiveOfflineOwner();
+  if (!owner) throw new Error('Authenticated session is required for offline changes');
+
+  return mutateOutbox((items) => {
+    const existing = items.find(
+      (item) =>
+        item.entity === entity &&
+        item.operation === operation &&
+        item.entityId === entityId &&
+        isOutboxItemOwnedBy(item, owner) &&
+        item.status !== 'conflict',
+    );
+    if (existing) return { items, result: existing };
+
+    const stamp = nowIso();
+    const item: OfflineOutboxItem = {
+      id: makeOutboxId(entity, operation, entityId),
+      entity,
+      operation,
+      entityId,
+      patch: {},
+      base,
+      expectedUpdatedAt: null,
+      createdAt: stamp,
+      updatedAt: stamp,
+      attempts: 0,
+      status: 'pending',
+      error: null,
+      latest: null,
+      ownerUserId: owner.userId,
+      ownerCompanyId: owner.companyId,
+    };
+    items.push(item);
+    return { items, result: item };
+  });
+}
+
 function normalizeComparableValue(value: any): any {
   if (value === undefined) return null;
   if (value === null) return null;
@@ -770,6 +849,89 @@ function setEntityQueryData(queryClient: QueryClient, item: OfflineOutboxItem, d
   }
 }
 
+function pruneEntityFromCache(value: any, entityId: string): any {
+  if (Array.isArray(value)) {
+    const next = value
+      .filter((row) => String(row?.id || '') !== entityId)
+      .map((row) => pruneEntityFromCache(row, entityId));
+    return next;
+  }
+  if (!value || typeof value !== 'object') return value;
+  const next: Record<string, any> = { ...value };
+  if (Array.isArray(next.items)) next.items = pruneEntityFromCache(next.items, entityId);
+  if (Array.isArray(next.pages)) next.pages = next.pages.map((page: any) => pruneEntityFromCache(page, entityId));
+  if (Array.isArray(next.objects)) next.objects = pruneEntityFromCache(next.objects, entityId);
+  return next;
+}
+
+function applyOptimisticTrashOperation(queryClient: QueryClient, item: OfflineOutboxItem) {
+  if (item.operation === 'restore') {
+    queryClient.setQueriesData({ queryKey: ['trash', 'list'] }, (old) =>
+      pruneEntityFromCache(old, item.entityId),
+    );
+    queryClient.removeQueries({ queryKey: queryKeys.trash.detail(item.entityId), exact: true });
+    return;
+  }
+  if (item.operation !== 'trash') return;
+
+  const id = item.entityId;
+  if (item.entity === 'request') {
+    queryClient.setQueriesData({ queryKey: ['requests'] }, (old) => pruneEntityFromCache(old, id));
+    queryClient.setQueriesData({ queryKey: ['orders'] }, (old) => pruneEntityFromCache(old, id));
+    queryClient.removeQueries({ queryKey: queryKeys.requests.detail(id), exact: true });
+  } else if (item.entity === 'client') {
+    queryClient.setQueriesData({ queryKey: ['clients'] }, (old) => pruneEntityFromCache(old, id));
+    queryClient.removeQueries({ queryKey: queryKeys.clients.detail(id), exact: true });
+    const objectIds = Array.isArray(item.base?.objects)
+      ? item.base.objects.map((row: any) => String(row?.id || '')).filter(Boolean)
+      : [];
+    objectIds.forEach((objectId: string) => {
+      queryClient.setQueriesData({ queryKey: ['objects'] }, (old) => pruneEntityFromCache(old, objectId));
+      queryClient.removeQueries({ queryKey: queryKeys.objects.detail(objectId), exact: true });
+    });
+  } else if (item.entity === 'object') {
+    queryClient.setQueriesData({ queryKey: ['objects'] }, (old) => pruneEntityFromCache(old, id));
+    queryClient.setQueriesData({ queryKey: ['clients'] }, (old) => pruneEntityFromCache(old, id));
+    queryClient.removeQueries({ queryKey: queryKeys.objects.detail(id), exact: true });
+  }
+}
+
+async function performTrashOperationOnline(item: OfflineOutboxItem) {
+  if (item.operation === 'restore') {
+    const { error } = await supabase.rpc('restore_trash_item', { p_id: item.entityId });
+    if (error) throw error;
+    return;
+  }
+  if (item.operation !== 'trash') return;
+
+  const table = item.entity === 'request'
+    ? 'orders'
+    : item.entity === 'client'
+      ? 'clients'
+      : item.entity === 'object'
+        ? 'client_objects'
+        : null;
+  if (!table) throw new Error(`Unsupported trash entity: ${item.entity}`);
+  let query = supabase.from(table).delete().eq('id', item.entityId);
+  if (item.ownerCompanyId) query = query.eq('company_id', item.ownerCompanyId);
+  const { error } = await query;
+  if (error) throw error;
+}
+
+function invalidateTrashOperationQueries(queryClient: QueryClient, item: OfflineOutboxItem) {
+  queryClient.invalidateQueries({ queryKey: ['trash'] });
+  if (item.operation === 'restore') {
+    queryClient.invalidateQueries({ queryKey: ['requests'] });
+    queryClient.invalidateQueries({ queryKey: ['clients'] });
+    queryClient.invalidateQueries({ queryKey: ['objects'] });
+    return;
+  }
+  if (item.entity === 'request') queryClient.invalidateQueries({ queryKey: ['requests'] });
+  if (item.entity === 'client') queryClient.invalidateQueries({ queryKey: ['clients'] });
+  if (item.entity === 'object') queryClient.invalidateQueries({ queryKey: ['objects'] });
+  queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers'] });
+}
+
 async function fetchLatestForItem(item: OfflineOutboxItem) {
   if (item.entity === 'request') {
     const { getRequestById } = await import('../../features/requests/api');
@@ -861,6 +1023,16 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
       // network/CPU and makes the sync indicator flash without making progress.
       if (item.status !== 'pending' && item.status !== 'failed') continue;
       if (item.attempts >= MAX_ATTEMPTS && item.status === 'failed') continue;
+      if (item.operation === 'trash') {
+        const currentItems = await readOutbox();
+        const waitsForUpdate = currentItems.some((entry) =>
+          entry.entity === item.entity &&
+          entry.entityId === item.entityId &&
+          entry.operation === 'update' &&
+          isOutboxItemOwnedBy(entry, owner),
+        );
+        if (waitsForUpdate) continue;
+      }
 
       const processingItem = await mutateOutbox((currentItems) => {
         const currentIndex = currentItems.findIndex((entry) => entry.id === item.id);
@@ -937,12 +1109,21 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
             }
             changed = true;
           }
+        } else if (processingItem.operation === 'trash' || processingItem.operation === 'restore') {
+          await performTrashOperationOnline(processingItem);
+          const ownerAfterSave = await getActiveOfflineOwner();
+          if (isOutboxItemOwnedBy(processingItem, ownerAfterSave)) {
+            applyOptimisticTrashOperation(queryClient, processingItem);
+            invalidateTrashOperationQueries(queryClient, processingItem);
+            changed = true;
+          }
         }
 
         await mutateOutbox((currentItems) => ({
           items: currentItems.filter((entry) => entry.id !== processingItem.id),
           result: undefined,
         }));
+        if (processingItem.operation === 'update') syncRerunRequested = true;
         transientSyncFailures.delete(processingItem.id);
       } catch (error: any) {
         const transientNetworkFailure = isOfflineLikeError(error);
@@ -973,6 +1154,12 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
             transientSyncFailures.set(processingItem.id, retryOrdinal);
           }
           scheduleOutboxRetry(queryClient, retryOrdinal);
+        }
+        if (failure?.status === 'failed' && processingItem.operation === 'trash') {
+          if (processingItem.base) setEntityQueryData(queryClient, processingItem, processingItem.base);
+          invalidateTrashOperationQueries(queryClient, processingItem);
+        } else if (failure?.status === 'failed' && processingItem.operation === 'restore') {
+          queryClient.invalidateQueries({ queryKey: ['trash'] });
         }
         if (!transientNetworkFailure) transientSyncFailures.delete(processingItem.id);
         if (transientNetworkFailure) break;
@@ -1015,6 +1202,10 @@ export async function restoreOfflineOptimisticState(queryClient: QueryClient) {
   await claimLegacyOutboxForOwner(owner, queryClient);
   const items = (await readOutbox()).filter((item) => isOutboxItemOwnedBy(item, owner));
   items.forEach((item) => {
+    if (item.operation === 'trash' || item.operation === 'restore') {
+      applyOptimisticTrashOperation(queryClient, item);
+      return;
+    }
     if (item.entity === 'request' && item.operation === 'update') {
       applyOptimisticRequest(queryClient, item);
       return;
