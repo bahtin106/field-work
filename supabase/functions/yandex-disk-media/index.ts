@@ -1179,134 +1179,21 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       const sourceUrl = String(body.url || '').trim();
       if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
 
-      let { data: mapRow, error: mapErr } = await admin
-        .from('order_media_external_map')
-        .select('id, source_url, external_path, display_url')
-        .eq('company_id', ctx.companyId)
-        .eq('order_id', ctx.order.id)
-        .eq('category', category)
-        .eq('provider', 'yandex_disk')
-        .eq('source_url', sourceUrl)
-        .maybeSingle();
-      if (mapErr) throw mapErr;
-      if (!mapRow) {
-        const { data: displayRow, error: displayErr } = await admin
-          .from('order_media_external_map')
-          .select('id, source_url, external_path, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.order.id)
-          .eq('category', category)
-          .eq('provider', 'yandex_disk')
-          .eq('display_url', sourceUrl)
-          .maybeSingle();
-        if (displayErr) throw displayErr;
-        mapRow = displayRow;
-      }
-
-      if (!mapRow && accessToken) {
-        const { data: candidates, error: listErr } = await admin
-          .from('order_media_external_map')
-          .select('id, source_url, external_path, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.order.id)
-          .eq('category', category)
-          .eq('provider', 'yandex_disk');
-        if (listErr) throw listErr;
-        const needle = canonicalUrl(sourceUrl);
-        mapRow =
-          (candidates || []).find((row) => {
-            return (
-              canonicalUrl(String(row.source_url || '')) === needle ||
-              canonicalUrl(String((row as any).display_url || '')) === needle
-            );
-          }) || null;
-        if (!mapRow && needle) {
-          for (const row of candidates || []) {
-            const extPath = String((row as any)?.external_path || '').trim();
-            if (!extPath) continue;
-            try {
-              const downloadUrl = await getPathDownloadUrl(accessToken, extPath);
-              if (canonicalUrl(downloadUrl) === needle) {
-                mapRow = row as any;
-                break;
-              }
-            } catch (_e) {}
-          }
-        }
-      }
-
-      if (!mapRow) {
-        const directPath = pathFromInternalUrl(sourceUrl);
-        if (directPath) {
-          mapRow = {
-            id: null,
-            source_url: sourceUrl,
-            external_path: directPath,
-          } as any;
-        }
-      }
-
-      if (!mapRow) {
-        return json(404, { success: false, message: 'Media mapping not found' });
-      }
-
-      const externalPath = String((mapRow as any).external_path || '').trim();
-      if (!externalPath) {
-        return json(404, { success: false, message: 'Media mapping not found' });
-      }
-      if (!accessToken) {
-        return json(400, { success: false, message: 'Yandex Disk not connected' });
-      }
-
-      await deleteYandexResourceSafe(accessToken, externalPath);
-
-      const preferredSourceUrl = String(mapRow.source_url || '').trim() || sourceUrl;
-      let atomicResult = await removeOrderMediaUrlAtomic(
-        admin,
-        ctx.order.id,
-        ctx.companyId,
-        category,
-        preferredSourceUrl,
-      );
-      // Backward compatibility: if row wasn't removed (old/public/download URL mismatch),
-      // retry with the originally requested URL once.
-      if (
-        atomicResult &&
-        Array.isArray(atomicResult.media_urls) &&
-        atomicResult.media_urls.includes(preferredSourceUrl) &&
-        sourceUrl !== preferredSourceUrl
-      ) {
-        atomicResult = await removeOrderMediaUrlAtomic(
-          admin,
-          ctx.order.id,
-          ctx.companyId,
-          category,
-          sourceUrl,
-        );
-      }
-
-      if (mapRow.id != null) {
-        const { error: delMapErr } = await admin
-          .from('order_media_external_map')
-          .delete()
-          .eq('id', Number(mapRow.id));
-        if (delMapErr) throw delMapErr;
-      } else {
-        const { error: delBySourceErr } = await admin
-          .from('order_media_external_map')
-          .delete()
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.order.id)
-          .eq('category', category)
-          .eq('provider', 'yandex_disk')
-          .eq('source_url', sourceUrl);
-        if (delBySourceErr) throw delBySourceErr;
-      }
+      const { data: atomicResult, error: trashError } = await admin.rpc('trash_media_asset_v1', {
+        p_owner_type: 'order',
+        p_owner_id: ctx.order.id,
+        p_company_id: ctx.companyId,
+        p_category: category,
+        p_url: sourceUrl,
+        p_deleted_by: ctx.userId,
+      });
+      if (trashError) throw trashError;
 
       return json(200, {
         success: true,
-        media_urls: atomicResult?.media_urls ?? null,
-        order_updated_at: atomicResult?.updated_at ?? null,
+        provider: 'trash',
+        media_urls: Array.isArray(atomicResult?.media_urls) ? atomicResult.media_urls : [],
+        order_updated_at: atomicResult?.updated_at || new Date().toISOString(),
       });
     }
 

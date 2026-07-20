@@ -1164,144 +1164,19 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
       const sourceUrl = String(body.url || '').trim();
       if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
 
-      let { data: mapRow, error: mapErr } = await admin
-        .from('finance_entry_media_external_map')
-        .select('id, source_url, external_path, display_url')
-        .eq('company_id', ctx.companyId)
-        .eq('finance_entry_id', ctx.financeEntry.id)
-        .eq('provider', 'yandex_disk')
-        .eq('source_url', sourceUrl)
-        .maybeSingle();
-      if (mapErr) throw mapErr;
-      if (!mapRow) {
-        const { data: displayRow, error: displayErr } = await admin
-          .from('finance_entry_media_external_map')
-          .select('id, source_url, external_path, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('finance_entry_id', ctx.financeEntry.id)
-          .eq('provider', 'yandex_disk')
-          .eq('display_url', sourceUrl)
-          .maybeSingle();
-        if (displayErr) throw displayErr;
-        mapRow = displayRow;
-      }
-
-      if (!mapRow && accessToken) {
-        const { data: candidates, error: listErr } = await admin
-          .from('finance_entry_media_external_map')
-          .select('id, source_url, external_path, display_url')
-          .eq('company_id', ctx.companyId)
-          .eq('finance_entry_id', ctx.financeEntry.id)
-          .eq('provider', 'yandex_disk');
-        if (listErr) throw listErr;
-        const needle = canonicalUrl(sourceUrl);
-        mapRow =
-          (candidates || []).find((row) => {
-            return (
-              canonicalUrl(String(row.source_url || '')) === needle ||
-              canonicalUrl(String((row as any).display_url || '')) === needle
-            );
-          }) || null;
-        if (!mapRow && needle) {
-          for (const row of candidates || []) {
-            const extPath = String((row as any)?.external_path || '').trim();
-            if (!extPath) continue;
-            try {
-              const downloadUrl = await getPathDownloadUrl(accessToken, extPath);
-              if (canonicalUrl(downloadUrl) === needle) {
-                mapRow = row as any;
-                break;
-              }
-            } catch (_e) {}
-          }
-        }
-      }
-
-      if (!mapRow) {
-        const directPath = pathFromInternalUrl(sourceUrl);
-        if (directPath) {
-          mapRow = {
-            id: null,
-            source_url: sourceUrl,
-            external_path: directPath,
-          } as any;
-        }
-      }
-
-      if (!mapRow) {
-        const atomicResult = await removeFinanceEntryPhotoUrlAtomicCanonical(
-          admin,
-          ctx.financeEntry.id,
-          ctx.companyId,
-          sourceUrl,
-          ctx.userId,
-        );
-        return json(200, {
-          success: true,
-          remote_delete_skipped: true,
-          mapping_missing: true,
-          photo_urls: atomicResult?.photo_urls ?? null,
-          finance_entry_updated_at: atomicResult?.updated_at ?? null,
-        });
-      }
-
-      const externalPath = String((mapRow as any).external_path || '').trim();
-      if (!externalPath) {
-        return json(404, { success: false, message: 'Media mapping not found' });
-      }
-      let remoteDeleteSkipped = false;
-      if (!accessToken) {
-        remoteDeleteSkipped = true;
-      } else {
-        await deleteYandexResourceSafe(accessToken, externalPath);
-      }
-
-      const preferredSourceUrl = String(mapRow.source_url || '').trim() || sourceUrl;
-      let atomicResult = await removeFinanceEntryPhotoUrlAtomicCanonical(
-        admin,
-        ctx.financeEntry.id,
-        ctx.companyId,
-        preferredSourceUrl,
-        ctx.userId,
-      );
-      // Backward compatibility: if row wasn't removed (old/public/download URL mismatch),
-      // retry with the originally requested URL once.
-      if (
-        atomicResult &&
-        Array.isArray(atomicResult.photo_urls) &&
-        atomicResult.photo_urls.includes(preferredSourceUrl) &&
-        sourceUrl !== preferredSourceUrl
-      ) {
-        atomicResult = await removeFinanceEntryPhotoUrlAtomicCanonical(
-          admin,
-          ctx.financeEntry.id,
-          ctx.companyId,
-          sourceUrl,
-          ctx.userId,
-        );
-      }
-
-      if (mapRow.id != null) {
-        const { error: delMapErr } = await admin
-          .from('finance_entry_media_external_map')
-          .delete()
-          .eq('id', Number(mapRow.id));
-        if (delMapErr) throw delMapErr;
-      } else {
-        const { error: delBySourceErr } = await admin
-          .from('finance_entry_media_external_map')
-          .delete()
-          .eq('company_id', ctx.companyId)
-          .eq('finance_entry_id', ctx.financeEntry.id)
-          .eq('provider', 'yandex_disk')
-          .eq('source_url', sourceUrl);
-        if (delBySourceErr) throw delBySourceErr;
-      }
+      const { data: atomicResult, error: trashError } = await admin.rpc('trash_finance_media_asset_v1', {
+        p_finance_entry_id: ctx.financeEntry.id,
+        p_company_id: ctx.companyId,
+        p_url: sourceUrl,
+        p_deleted_by: ctx.userId,
+      });
+      if (trashError) throw trashError;
 
       return json(200, {
         success: true,
-        remote_delete_skipped: remoteDeleteSkipped,
-        photo_urls: atomicResult?.photo_urls ?? null,
+        provider: 'trash',
+        remote_delete_skipped: true,
+        photo_urls: Array.isArray(atomicResult?.photo_urls) ? atomicResult.photo_urls : [],
         finance_entry_updated_at: atomicResult?.updated_at ?? null,
       });
     }
