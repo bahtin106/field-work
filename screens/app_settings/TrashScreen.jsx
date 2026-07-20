@@ -10,7 +10,8 @@ import StatusSelectModal from '../../components/filters/StatusSelectModal';
 import Screen from '../../components/layout/Screen';
 import { useToast } from '../../components/ui/ToastProvider';
 import { usePermissions } from '../../lib/permissions';
-import { getTrashItem, listTrashItems, purgeTrashItem, restoreTrashItem } from '../../src/features/trash/api';
+import { getCachedSupabaseAccessToken } from '../../lib/supabaseSessionCache';
+import { buildTrashMediaUrl, getTrashItem, listTrashItems, purgeTrashItem, restoreTrashItem } from '../../src/features/trash/api';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTheme } from '../../theme';
@@ -19,6 +20,43 @@ const TYPES = ['', 'order', 'client', 'client_object', 'media'];
 const SORTS = ['purge_at', 'deleted_desc', 'title'];
 const COPY_FIELDS = new Set(['phone', 'additional_phone_1', 'additional_phone_2', 'additional_phone_3']);
 const HIDDEN_FIELDS = new Set(['id', 'company_id', 'created_by', 'updated_by', 'created_by_user_id']);
+
+const formatMessage = (t, key, values = {}) => {
+  let message = String(t(key, key));
+  Object.entries(values).forEach(([name, value]) => {
+    message = message.split(`{${name}}`).join(String(value ?? ''));
+  });
+  return message;
+};
+
+const decodeTrashText = (value, { filename = false } = {}) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw.replace(/^yadisk:\/\//i, ''));
+  } catch {}
+  if (filename && /[\\/]/.test(decoded)) {
+    decoded = decoded.split(/[\\/]/).filter(Boolean).pop() || decoded;
+  }
+  return decoded.trim();
+};
+
+const isBrokenText = (value) => {
+  const text = String(value || '').trim();
+  return !text || /^[?\s]+$/.test(text) || text.includes('\uFFFD');
+};
+
+const displayTitle = (item) => decodeTrashText(item?.title, { filename: item?.entity_type === 'media' });
+const displaySubtitle = (item, t) => {
+  const value = decodeTrashText(item?.subtitle);
+  return isBrokenText(value) && item?.entity_type === 'media' ? t('trash_media_photo') : value;
+};
+
+const fieldLabel = (key, t) => {
+  const fallback = String(key || '').replace(/_/g, ' ').trim();
+  return String(t(`trash_field_${key}`, fallback));
+};
 
 const textValue = (value) => {
   if (value == null || value === '') return null;
@@ -32,8 +70,8 @@ function timeLeft(value, t) {
   if (ms <= 0) return t('trash_due_now');
   const days = Math.floor(ms / 86400000);
   return days > 0
-    ? t('trash_days_left', { count: days })
-    : t('trash_hours_left', { count: Math.max(1, Math.ceil(ms / 3600000)) });
+    ? formatMessage(t, 'trash_days_left', { count: days })
+    : formatMessage(t, 'trash_hours_left', { count: Math.max(1, Math.ceil(ms / 3600000)) });
 }
 
 export default function TrashScreen() {
@@ -51,11 +89,21 @@ export default function TrashScreen() {
   const [sortVisible, setSortVisible] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [accessToken, setAccessToken] = useState('');
+  const [failedThumbIds, setFailedThumbIds] = useState(() => new Set());
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => {
+    let active = true;
+    getCachedSupabaseAccessToken().then((token) => {
+      if (active) setAccessToken(String(token || ''));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const params = useMemo(() => ({ search: debouncedSearch, entityType, sort }), [debouncedSearch, entityType, sort]);
   const typeOptions = useMemo(() => TYPES.map((value) => ({
@@ -82,16 +130,16 @@ export default function TrashScreen() {
   const restoreMutation = useMutation({ mutationFn: restoreTrashItem, onSuccess: async (result) => { await invalidate(); toast.success(t(result?.queued ? 'trash_restore_queued' : 'trash_restored')); }, onError: () => toast.error(t('trash_action_error')) });
   const purgeMutation = useMutation({ mutationFn: purgeTrashItem, onSuccess: async () => { await invalidate(); toast.success(t('trash_purged')); }, onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')) });
 
-  const restore = (item) => Alert.alert(t('trash_restore_title'), t('trash_restore_message', { title: item.title }), [
+  const restore = (item) => Alert.alert(t('trash_restore_title'), formatMessage(t, 'trash_restore_message', { title: displayTitle(item) }), [
     { text: t('common_cancel'), style: 'cancel' },
     { text: t('trash_restore'), onPress: () => restoreMutation.mutate(item.id) },
   ]);
-  const purge = (item) => Alert.alert(t('trash_purge_title'), t('trash_purge_message', { title: item.title }), [
+  const purge = (item) => Alert.alert(t('trash_purge_title'), formatMessage(t, 'trash_purge_message', { title: displayTitle(item) }), [
     { text: t('common_cancel'), style: 'cancel' },
     { text: t('trash_purge'), style: 'destructive', onPress: () => purgeMutation.mutate(item.id) },
   ]);
   const downloadPhoto = async (item) => {
-    if (!item?.thumbnail_url || downloadingId) return;
+    if ((!item?.thumbnail_url && item?.entity_type !== 'media') || downloadingId) return;
     setDownloadingId(item.id);
     try {
       const [fileSystemModule, mediaLibrary] = await Promise.all([
@@ -102,10 +150,15 @@ export default function TrashScreen() {
       const permission = await mediaLibrary.requestPermissionsAsync();
       if (!permission?.granted) throw new Error('MEDIA_LIBRARY_PERMISSION_DENIED');
       if (!fileSystem?.cacheDirectory) throw new Error('DOWNLOAD_FAILED');
-      const cleanUrl = String(item.thumbnail_url).split('?')[0];
+      const token = accessToken || await getCachedSupabaseAccessToken();
+      const downloadUrl = buildTrashMediaUrl(item, { raw: true, width: 1024, height: 1024 }) || String(item.thumbnail_url || '');
+      if (!downloadUrl || (item.entity_type === 'media' && !token)) throw new Error('DOWNLOAD_FAILED');
+      const cleanUrl = displayTitle(item) || String(item.thumbnail_url || '').split('?')[0];
       const extension = cleanUrl.match(/\.([a-z0-9]{2,5})$/i)?.[1] || 'jpg';
       const localUri = `${fileSystem.cacheDirectory}trash_${item.id}_${Date.now()}.${extension}`;
-      const downloaded = await fileSystem.downloadAsync(item.thumbnail_url, localUri);
+      const downloaded = await fileSystem.downloadAsync(downloadUrl, localUri, token ? {
+        headers: { Authorization: `Bearer ${token}` },
+      } : undefined);
       if (Number(downloaded?.status || 200) >= 400 || !downloaded?.uri) throw new Error('DOWNLOAD_FAILED');
       await mediaLibrary.saveToLibraryAsync(downloaded.uri);
       toast.success(t('trash_photo_saved'));
@@ -118,20 +171,31 @@ export default function TrashScreen() {
 
   if (!has('canViewTrash')) return <Screen scroll={false}><View style={styles.empty}><Feather name="lock" size={28} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_no_access')}</Text></View></Screen>;
 
-  const renderItem = ({ item }) => (
-    <Pressable accessibilityRole="button" onPress={() => setSelectedId(item.id)} style={styles.card}>
-      {item.thumbnail_url ? <Image source={item.thumbnail_url} style={styles.thumb} contentFit="cover" /> : <View style={styles.thumbEmpty}><Feather name="trash-2" size={22} color={theme.colors.danger} /></View>}
+  const renderItem = ({ item }) => {
+    const thumbnailUri = buildTrashMediaUrl(item) || String(item.thumbnail_url || '');
+    const canLoadThumbnail = Boolean(thumbnailUri) && (item.entity_type !== 'media' || Boolean(accessToken)) && !failedThumbIds.has(item.id);
+    const thumbnailSource = canLoadThumbnail ? {
+      uri: thumbnailUri,
+      ...(item.entity_type === 'media' ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
+    } : null;
+    return <Pressable accessibilityRole="button" onPress={() => setSelectedId(item.id)} style={styles.card}>
+      {thumbnailSource ? <Image source={thumbnailSource} onError={() => setFailedThumbIds((current) => new Set(current).add(item.id))} style={styles.thumb} contentFit="cover" /> : <View style={styles.thumbEmpty}><Feather name="trash-2" size={22} color={theme.colors.danger} /></View>}
       <View style={styles.grow}>
         <View style={styles.between}><Text style={styles.type}>{t(`trash_entity_${item.entity_type}`)}</Text><Feather name="trash-2" size={14} color={theme.colors.danger} /></View>
-        <Text numberOfLines={1} style={styles.title}>{item.title}</Text>
-        {item.subtitle ? <Text numberOfLines={2} style={styles.muted}>{item.subtitle}</Text> : null}
+        <Text numberOfLines={1} style={styles.title}>{displayTitle(item)}</Text>
+        {displaySubtitle(item, t) ? <Text numberOfLines={2} style={styles.muted}>{displaySubtitle(item, t)}</Text> : null}
         <Text style={styles.countdown}>{timeLeft(item.purge_at, t)}</Text>
-        <Text style={styles.small}>{t('trash_purge_at', { date: new Date(item.purge_at).toLocaleString() })}</Text>
+        <Text style={styles.small}>{formatMessage(t, 'trash_purge_at', { date: new Date(item.purge_at).toLocaleString() })}</Text>
       </View>
     </Pressable>
-  );
+  };
 
   const detail = detailQuery.data;
+  const detailThumbnailUri = buildTrashMediaUrl(detail) || String(detail?.thumbnail_url || '');
+  const detailThumbnailSource = detailThumbnailUri && (detail?.entity_type !== 'media' || accessToken) && !failedThumbIds.has(detail?.id) ? {
+    uri: detailThumbnailUri,
+    ...(detail?.entity_type === 'media' ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
+  } : null;
   const listItems = listQuery.data?.pages?.flatMap((page) => page) || [];
   const rows = detail?.data ? Object.entries(detail.data).filter(([key, value]) => !HIDDEN_FIELDS.has(key) && textValue(value)) : [];
   const filterSummary = entityType ? `${t('trash_filter_entity')}: ${t(`trash_entity_${entityType}`)}` : '';
@@ -160,10 +224,10 @@ export default function TrashScreen() {
         <Pressable accessibilityLabel={t('common_close')} onPress={() => setSelectedId(null)} style={styles.close}><Feather name="x" size={24} color={theme.colors.text} /></Pressable>
         {detailQuery.isLoading ? <ActivityIndicator color={theme.colors.primary} /> : detail ? <>
           <View style={styles.banner}><Feather name="trash-2" size={28} color={theme.colors.danger} /><View style={styles.grow}><Text style={styles.bannerTitle}>{t('trash_deleted_banner')}</Text><Text style={styles.muted}>{t('trash_read_only')}</Text></View></View>
-          {detail.thumbnail_url ? <Image source={detail.thumbnail_url} style={styles.hero} contentFit="cover" /> : null}
-          <Text style={styles.detailTitle}>{detail.title}</Text><Text style={styles.countdown}>{timeLeft(detail.purge_at, t)}</Text>
-          {rows.map(([key, value]) => <View key={key} style={styles.field}><View style={styles.grow}><Text style={styles.label}>{t(`trash_field_${key}`, { defaultValue: key })}</Text><Text selectable style={styles.value}>{textValue(value)}</Text></View>{COPY_FIELDS.has(key) ? <Pressable onPress={() => Clipboard.setStringAsync(textValue(value))} style={styles.iconButton}><Feather name="copy" size={18} color={theme.colors.primary} /></Pressable> : null}</View>)}
-          {detail.thumbnail_url ? <Pressable disabled={downloadingId === detail.id} onPress={() => downloadPhoto(detail)} style={styles.outlineButton}>{downloadingId === detail.id ? <ActivityIndicator color={theme.colors.primary} /> : <Feather name="download" size={18} color={theme.colors.primary} />}<Text style={styles.outlineText}>{t('trash_download_photo')}</Text></Pressable> : null}
+          {detailThumbnailSource ? <Image source={detailThumbnailSource} onError={() => setFailedThumbIds((current) => new Set(current).add(detail.id))} style={styles.hero} contentFit="cover" /> : null}
+          <Text style={styles.detailTitle}>{displayTitle(detail)}</Text><Text style={styles.countdown}>{timeLeft(detail.purge_at, t)}</Text>
+          {rows.map(([key, value]) => <View key={key} style={styles.field}><View style={styles.grow}><Text style={styles.label}>{fieldLabel(key, t)}</Text><Text selectable style={styles.value}>{textValue(value)}</Text></View>{COPY_FIELDS.has(key) ? <Pressable onPress={() => Clipboard.setStringAsync(textValue(value))} style={styles.iconButton}><Feather name="copy" size={18} color={theme.colors.primary} /></Pressable> : null}</View>)}
+          {(detail.thumbnail_url || detail.entity_type === 'media') ? <Pressable disabled={downloadingId === detail.id} onPress={() => downloadPhoto(detail)} style={styles.outlineButton}>{downloadingId === detail.id ? <ActivityIndicator color={theme.colors.primary} /> : <Feather name="download" size={18} color={theme.colors.primary} />}<Text style={styles.outlineText}>{t('trash_download_photo')}</Text></Pressable> : null}
           {has('canRestoreTrash') ? <Pressable disabled={restoreMutation.isPending} onPress={() => restore(detail)} style={styles.primaryButton}><Feather name="rotate-ccw" size={18} color="#fff" /><Text style={styles.buttonText}>{t('trash_restore')}</Text></Pressable> : null}
           {has('canPurgeTrash') ? <Pressable disabled={purgeMutation.isPending} onPress={() => purge(detail)} style={styles.dangerButton}><Feather name="trash-2" size={18} color="#fff" /><Text style={styles.buttonText}>{t('trash_purge')}</Text></Pressable> : null}
         </> : null}
