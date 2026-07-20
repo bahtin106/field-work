@@ -626,6 +626,7 @@ function OrderDetailsContent() {
   const pathname = usePathname();
   const __params = useLocalSearchParams();
   const idParam = __params?.id;
+  const financeEntryIdParam = __params?.financeEntryId;
   const id = useMemo(() => {
     const fromParams = Array.isArray(idParam) ? idParam[0] : idParam;
     const normalizedFromParams = normalizeOrderRouteId(fromParams);
@@ -642,6 +643,11 @@ function OrderDetailsContent() {
     }
     return normalizeOrderRouteId(last);
   }, [idParam, pathname]);
+  const requestedFinanceEntryId = useMemo(
+    () => String(Array.isArray(financeEntryIdParam) ? financeEntryIdParam[0] || '' : financeEntryIdParam || '').trim(),
+    [financeEntryIdParam],
+  );
+  const openedFinanceEntryRouteRef = useRef('');
 
   const authCanVerifySession =
     auth.isAuthenticated === true && auth.isInitializing !== true && !!authUserId;
@@ -2746,6 +2752,18 @@ function OrderDetailsContent() {
     setFinanceEntryViewCommentExpandable(false);
     setFinanceEntryViewModalVisible(true);
   }, [id, order, showWarning, t]);
+
+  useEffect(() => {
+    if (!requestedFinanceEntryId || financeEntriesQuery.isLoading || !order) return;
+    const signature = `${id || ''}:${requestedFinanceEntryId}`;
+    if (openedFinanceEntryRouteRef.current === signature) return;
+    const requestedEntry = financeEntries.find(
+      (entry) => String(entry?.id || '') === requestedFinanceEntryId,
+    );
+    if (!requestedEntry) return;
+    openedFinanceEntryRouteRef.current = signature;
+    openFinanceEntryView(requestedEntry);
+  }, [financeEntries, financeEntriesQuery.isLoading, id, openFinanceEntryView, order, requestedFinanceEntryId]);
 
   const startEditFinanceEntryFromView = useCallback(() => {
     if (!selectedFinanceEntry) return;
