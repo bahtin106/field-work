@@ -157,7 +157,7 @@ const TextField = forwardRef(function TextField(
   useAutoScrollOnInvalid({
     fieldRef: containerRef,
     isInvalid: isErr,
-    shouldAutoScroll: !focused,
+    shouldAutoScroll: true,
   });
   const s = styles(theme, isErr, focused, autoGrowEnabled, minContentHeight, effectiveMultiline);
   const inputRef = useRef(null);

@@ -1,34 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ensureVisibleField } from '../../../lib/ensureVisibleField';
+import { ensureVisibleField, measureNodeInWindow } from '../../../lib/ensureVisibleField';
 
 const FormAutoScrollContext = createContext(null);
 const DEFAULT_FORM_SCOPE = '__default-form-scope__';
 
-function measureFieldTop(field) {
-  return new Promise((resolve) => {
-    const node = field?.fieldRef?.current;
-    if (!node || typeof node.measureInWindow !== 'function') {
-      resolve({ field, top: null });
-      return;
-    }
-
-    let settled = false;
-    const finish = (top) => {
-      if (settled) return;
-      settled = true;
-      resolve({ field, top: Number.isFinite(top) ? top : null });
-    };
-    const timeoutId = setTimeout(() => finish(null), 80);
-    try {
-      node.measureInWindow((_x, top) => {
-        clearTimeout(timeoutId);
-        finish(Number(top));
-      });
-    } catch {
-      clearTimeout(timeoutId);
-      finish(null);
-    }
-  });
+async function measureFieldTop(field) {
+  const measurement = await measureNodeInWindow(field?.fieldRef?.current);
+  return { field, top: measurement?.y ?? null };
 }
 
 export function FormAutoScrollProvider({
@@ -295,7 +273,10 @@ export function useAutoScrollOnInvalid({
     previousAttemptRef.current = validationAttempt;
     updateField?.(fieldIdRef.current, fieldRef, nextInvalid);
 
-    if ((!becameInvalid && !submitAttempted) || !shouldAutoScroll) return;
+    // A submit attempt must always reveal the first invalid field. A focused field can
+    // still report `focused=true` for a frame after Keyboard.dismiss(), so applying the
+    // ordinary auto-scroll guard here made submit scrolling timing-dependent.
+    if (!submitAttempted && (!becameInvalid || !shouldAutoScroll)) return;
     requestScrollToFirstInvalid?.();
   }, [
     fieldRef,
