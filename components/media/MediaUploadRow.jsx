@@ -18,6 +18,37 @@ export default function MediaUploadRow({
   const { theme } = useTheme();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const isDisabled = disabled || (busy && !allowPressWhenBusy);
+  const isInteractive = typeof onPress === 'function';
+
+  const content = (
+    <>
+      <Text style={[base.label, { flexShrink: 1, minWidth: 0, paddingRight: theme.spacing.sm }]} numberOfLines={1}>
+        {label}
+      </Text>
+      <View style={base.rightWrap}>
+        {busy ? (
+          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+        ) : (
+          <Text style={base.value} numberOfLines={1}>
+            {countLabel}
+          </Text>
+        )}
+        {rightActions}
+        {isInteractive ? (
+          <Feather
+            name="chevron-right"
+            size={theme.icons?.sm ?? 18}
+            color={busy ? theme.colors.border : theme.colors.textSecondary}
+            style={{ marginLeft: theme.spacing.xs }}
+          />
+        ) : null}
+      </View>
+    </>
+  );
+
+  if (!isInteractive) {
+    return <View style={base.row}>{content}</View>;
+  }
 
   return (
     <Pressable
@@ -32,25 +63,7 @@ export default function MediaUploadRow({
       ]}
       onPress={onPress}
     >
-      <Text style={[base.label, { flexShrink: 1, minWidth: 0, paddingRight: theme.spacing.sm }]} numberOfLines={1}>
-        {label}
-      </Text>
-      <View style={base.rightWrap}>
-        {busy ? (
-          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-        ) : (
-          <Text style={base.value} numberOfLines={1}>
-            {countLabel}
-          </Text>
-        )}
-        {rightActions}
-        <Feather
-          name="chevron-right"
-          size={theme.icons?.sm ?? 18}
-          color={busy ? theme.colors.border : theme.colors.textSecondary}
-          style={{ marginLeft: theme.spacing.xs }}
-        />
-      </View>
+      {content}
     </Pressable>
   );
 }
