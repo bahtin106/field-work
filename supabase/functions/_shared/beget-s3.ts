@@ -241,7 +241,7 @@ export async function deleteBegetKeys(keys: string[]) {
 
   for (let i = 0; i < safeKeys.length; i += 1000) {
     const batch = safeKeys.slice(i, i + 1000);
-    await client.send(
+    const result = await client.send(
       new DeleteObjectsCommand({
         Bucket: cfg.bucket,
         Delete: {
@@ -250,5 +250,11 @@ export async function deleteBegetKeys(keys: string[]) {
         },
       }),
     );
+    const failures = (result.Errors || [])
+      .map((item) => `${String(item.Key || '').trim()}: ${String(item.Code || item.Message || 'delete_failed')}`)
+      .filter(Boolean);
+    if (failures.length) {
+      throw new Error(`Beget S3 delete failed for ${failures.join(', ')}`);
+    }
   }
 }
