@@ -41,6 +41,7 @@ function ExpandableTextRowComponent({
   );
   const [expanded, setExpanded] = useState(Boolean(initiallyExpanded));
   const [textOverflows, setTextOverflows] = useState(false);
+  const [valuePressed, setValuePressed] = useState(false);
   const measurementValue = normalizedValue || normalizedCollapsedValue;
   const hasControlledExpansion = typeof onChevronPress === 'function';
   const canExpand = hasControlledExpansion || textOverflows;
@@ -102,6 +103,7 @@ function ExpandableTextRowComponent({
   const rowOnLongPress = !rowPressDisabled && showCollapsedValue && typeof valueLongPress === 'function'
     ? valueLongPress
     : undefined;
+  const showValuePressFeedback = showCollapsedValue && !!(rowOnPress || rowOnLongPress);
   const expandedContent = hasExpandedItems ? (
     <View style={styles.expandedList}>
       {expandedKeyValueItems.map((item, index) => {
@@ -124,6 +126,8 @@ function ExpandableTextRowComponent({
         style={base.row}
         onPress={rowOnPress}
         onLongPress={rowOnLongPress}
+        onPressIn={showValuePressFeedback ? () => setValuePressed(true) : undefined}
+        onPressOut={showValuePressFeedback ? () => setValuePressed(false) : undefined}
         delayLongPress={450}
         hitSlop={theme.components?.interactive?.hitSlop}
         accessibilityRole={rowOnPress || rowOnLongPress ? 'button' : undefined}
@@ -135,7 +139,7 @@ function ExpandableTextRowComponent({
         <View style={base.middleSpacer} />
         <View style={styles.rightWrap}>
           {showCollapsedValue ? (
-            <View style={styles.valueWrap}>
+            <View style={[styles.valueWrap, valuePressed ? styles.inlineValuePressablePressed : null]}>
               <Text
                 style={[base.value, styles.collapsedValue, collapsedValueStyle]}
                 numberOfLines={1}
@@ -233,6 +237,7 @@ function createStyles(theme) {
     },
     inlineValuePressablePressed: {
       opacity: 0.6,
+      transform: [{ scale: 0.99 }],
     },
     collapsedValue: {
       flexShrink: 1,
@@ -283,6 +288,7 @@ function createStyles(theme) {
     },
     expandedValuePressed: {
       opacity: 0.6,
+      transform: [{ scale: 0.99 }],
     },
     expandedKey: {
       fontWeight: theme.typography.weight.semibold,
