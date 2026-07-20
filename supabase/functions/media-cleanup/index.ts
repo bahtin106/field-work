@@ -217,7 +217,30 @@ async function deleteYandexResourceSafe(accessToken: string, path: string) {
     `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(normalized)}&permanently=true`,
     { method: 'DELETE', headers: { Authorization: `OAuth ${accessToken}` } },
   );
-  if ([202, 204, 404, 409, 423].includes(res.status)) return;
+  if ([204, 404].includes(res.status)) return;
+  if (res.status === 202) {
+    const operationUrl = String(res.headers.get('location') || '').trim();
+    if (!operationUrl) {
+      throw new Error('Yandex delete is still processing');
+    }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      const operation = await fetch(operationUrl, {
+        headers: { Authorization: `OAuth ${accessToken}` },
+      });
+      if (!operation.ok) {
+        throw new Error(`Yandex delete operation check failed: ${await operation.text()}`);
+      }
+      const state = (await operation.json()) as { status?: string };
+      if (state?.status === 'success') return;
+      if (state?.status === 'failed') {
+        throw new Error('Yandex delete operation failed');
+      }
+    }
+
+    throw new Error('Yandex delete is still processing');
+  }
   throw new Error(`Yandex delete failed: ${await res.text()}`);
 }
 
