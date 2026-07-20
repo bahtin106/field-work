@@ -379,6 +379,12 @@ check(
     mapHelpers.includes('MonitorMapApps.openMapAppAsync(option.packageName, option.url)') &&
     mapHelpers.includes('ANDROID_MAP_APP_ID_PATTERN') &&
     mapHelpers.includes('buildAndroidGeoUrl') &&
+    mapHelpers.includes('ANDROID_MAP_APP_LABEL_KEYS') &&
+    mapHelpers.includes("'com.google.android.apps.maps': 'map_app_google_maps'") &&
+    mapHelpers.includes("'ru.yandex.yandexmaps': 'map_app_yandex_maps'") &&
+    mapHelpers.includes("'ru.yandex.yandexnavi': 'map_app_yandex_navigator'") &&
+    mapHelpers.includes("'ru.dublgis.dgismobile': 'map_app_2gis'") &&
+    mapHelpers.includes('disambiguateUnknownMapAppLabels(options)') &&
     !mapHelpers.includes("'android_system_maps'") &&
     !mapHelpers.includes("'web_maps'") &&
     mapHelpers.includes('Linking.openURL(buildYandexMapsWebUrl(normalized))') &&
@@ -408,7 +414,7 @@ check(
     objectViewScreen.includes('onCollapsedPress={openNavigatorAddress}') &&
     orderDetailsScreen.includes('openAddressInPreferredMap') &&
     !fs.existsSync(path.join(root, 'components/ui/MapAppChooser.jsx')),
-  'Map settings must enumerate named Android geo handlers while retaining a non-selectable web fallback',
+  'Map settings must enumerate and disambiguate named Android geo handlers while retaining a non-selectable web fallback',
 );
 check(
   clientPrefill.includes('PATRONYMIC_SUFFIXES') &&
