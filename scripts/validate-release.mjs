@@ -34,6 +34,10 @@ const orderSort = read('src/features/orders/orderSort.js');
 const orderFacetCounts = read('src/features/orders/facetCounts.js');
 const filtersPanel = read('components/filters/FiltersPanel.jsx');
 const appSettingsScreen = read('screens/app_settings/AppSettingsScreen.jsx');
+const trashScreen = read('screens/app_settings/TrashScreen.jsx');
+const trashFiltersPanel = read('components/filters/TrashFiltersPanel.jsx');
+const selectionToolbar = read('components/ui/SelectionToolbar.jsx');
+const trashApi = read('src/features/trash/api.ts');
 const objectViewScreen = read('screens/objects/[id]/ObjectViewScreen.jsx');
 const orderDetailsScreen = read('screens/orders/OrderDetailsScreen.jsx');
 const createOrderScreen = read('screens/orders/CreateOrderScreen.jsx');
@@ -95,6 +99,12 @@ const mediaUploadTimestampMigration = read(mediaUploadTimestampMigrationPath);
 const mediaCaptureOriginMigrationPath =
   'supabase/migrations/20260719171000_preserve_media_capture_origin.sql';
 const mediaCaptureOriginMigration = read(mediaCaptureOriginMigrationPath);
+const trashBulkMigrationPath =
+  'supabase/migrations/20260720200000_add_trash_filters_and_bulk_actions.sql';
+const trashBulkMigration = read(trashBulkMigrationPath);
+const trashBulkRollbackPath =
+  'supabase/rollback/20260720200000_add_trash_filters_and_bulk_actions_rollback.sql';
+const trashBulkRollback = read(trashBulkRollbackPath);
 
 check(!packageJson.dependencies?.['expo-dev-client'], 'expo-dev-client must not be bundled in production dependencies');
 check(packageJson.dependencies?.['expo-background-task'], 'expo-background-task is required for deferred media delivery');
@@ -564,6 +574,31 @@ check(
     fullscreenImageViewer.includes('<ConfirmModal') &&
     !fullscreenImageViewer.includes('embedded && !capturePreviewMode'),
   'Product modals must preserve themed adaptive dialog/sheet presentation and Android Back handling',
+);
+check(
+  fs.existsSync(path.join(root, trashBulkMigrationPath)) &&
+    fs.existsSync(path.join(root, trashBulkRollbackPath)) &&
+    trashBulkMigration.includes('list_trash_items_v2') &&
+    trashBulkMigration.includes('list_trash_item_ids_v2') &&
+    trashBulkMigration.includes('get_trash_filter_options') &&
+    trashBulkMigration.includes('restore_trash_items') &&
+    trashBulkMigration.includes('purge_trash_items') &&
+    trashBulkMigration.includes('Trash selection changed') &&
+    trashBulkRollback.includes('drop function if exists public.purge_trash_items') &&
+    trashBulkRollback.includes('drop function if exists public.list_trash_items_v2') &&
+    trashApi.includes("supabase.rpc('list_trash_items_v2'") &&
+    trashApi.includes("supabase.rpc('restore_trash_items'") &&
+    trashApi.includes("supabase.rpc('purge_trash_items'") &&
+    trashScreen.includes('delayLongPress={450}') &&
+    trashScreen.includes('<SelectionToolbar') &&
+    trashScreen.includes('<TrashFiltersPanel') &&
+    trashScreen.includes("setConfirmation({ action: 'purge', ids: [id]") &&
+    trashFiltersPanel.includes('mode="trash"') &&
+    selectionToolbar.includes('onToggleAll') &&
+    filtersPanel.includes("const isTrashMode = mode === 'trash'") &&
+    filtersPanel.includes("case 'trash_entityTypes'") &&
+    filtersPanel.includes("case 'trash_deletedDate'"),
+  'Trash must preserve server-side filtering, atomic bulk actions, long-press selection, and card purge confirmation',
 );
 check(fs.existsSync(path.join(root, 'supabase/migrations/20260712190000_harden_error_logs.sql')), 'Error log schema migration is required');
 check(

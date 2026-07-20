@@ -23,6 +23,47 @@ export type TrashListItem = {
   total_count?: number;
 };
 
+export type TrashFilters = {
+  entityTypes?: TrashEntityType[];
+  deletedByIds?: string[];
+  deletedDateFrom?: string | null;
+  deletedDateTo?: string | null;
+  statuses?: string[];
+  workTypes?: string[];
+  clientIds?: string[];
+  executorIds?: string[];
+  clientTags?: string[];
+  objectTags?: string[];
+  cities?: string[];
+  streets?: string[];
+  mediaOwnerTypes?: string[];
+  departureDateFrom?: string | null;
+  departureDateTo?: string | null;
+  departureTimeFrom?: string | null;
+  departureTimeTo?: string | null;
+  createdDateFrom?: string | null;
+  createdDateTo?: string | null;
+  createdTimeFrom?: string | null;
+  createdTimeTo?: string | null;
+  sumMin?: string;
+  sumMax?: string;
+};
+
+export type TrashFilterOption = { id: string; label?: string; count?: number };
+export type TrashFilterOptions = {
+  entityTypes?: TrashFilterOption[];
+  deletedBy?: TrashFilterOption[];
+  statuses?: TrashFilterOption[];
+  workTypes?: TrashFilterOption[];
+  clients?: TrashFilterOption[];
+  executors?: TrashFilterOption[];
+  cities?: TrashFilterOption[];
+  streets?: TrashFilterOption[];
+  clientTags?: TrashFilterOption[];
+  objectTags?: TrashFilterOption[];
+  mediaOwnerTypes?: TrashFilterOption[];
+};
+
 export type TrashMediaOrigin = {
   owner_type: 'order' | 'object' | 'finance_entry' | string;
   owner_id: string | null;
@@ -50,22 +91,46 @@ export function buildTrashMediaUrl(item: Pick<TrashListItem, 'id' | 'entity_type
   return `${APP_RUNTIME_CONFIG.supabaseUrl}/functions/v1/media-thumbnail?${params.toString()}`;
 }
 
-export async function listTrashItems({ search = '', entityType = '', sort = 'purge_at', limit = 100, offset = 0 }: {
+const compactFilters = (filters: TrashFilters = {}) => Object.fromEntries(
+  Object.entries(filters).filter(([, value]) => (
+    Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== ''
+  )),
+);
+
+export async function listTrashItems({ search = '', filters = {}, sort = 'purge_at', limit = 100, offset = 0 }: {
   search?: string;
-  entityType?: TrashEntityType | '';
+  filters?: TrashFilters;
   sort?: 'purge_at' | 'deleted_desc' | 'title';
   limit?: number;
   offset?: number;
 } = {}) {
-  const { data, error } = await supabase.rpc('list_trash_items', {
+  const { data, error } = await supabase.rpc('list_trash_items_v2', {
     p_search: String(search || '').trim() || null,
-    p_entity_type: entityType || null,
+    p_filters: compactFilters(filters),
     p_sort: sort,
     p_limit: limit,
     p_offset: offset,
   });
   if (error) throw error;
   return (Array.isArray(data) ? data : []) as TrashListItem[];
+}
+
+export async function listTrashItemIds({ search = '', filters = {} }: {
+  search?: string;
+  filters?: TrashFilters;
+} = {}) {
+  const { data, error } = await supabase.rpc('list_trash_item_ids_v2', {
+    p_search: String(search || '').trim() || null,
+    p_filters: compactFilters(filters),
+  });
+  if (error) throw error;
+  return (Array.isArray(data) ? data : []).map(String).filter(Boolean);
+}
+
+export async function getTrashFilterOptions() {
+  const { data, error } = await supabase.rpc('get_trash_filter_options');
+  if (error) throw error;
+  return (data && typeof data === 'object' ? data : {}) as TrashFilterOptions;
 }
 
 export async function getTrashItem(id: string) {
@@ -99,4 +164,27 @@ export async function purgeTrashItem(id: string) {
   const { error } = await supabase.rpc('purge_trash_item', { p_id: id });
   if (error) throw error;
   return true;
+}
+
+export async function restoreTrashItems(ids: string[]) {
+  const normalizedIds = Array.from(new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean)));
+  if (!normalizedIds.length) return { queued: false, count: 0 };
+  if (!getOfflineSnapshot().isOnline) {
+    await Promise.all(normalizedIds.map((id) => enqueueTrashRestore(id)));
+    return { queued: true, count: normalizedIds.length };
+  }
+  const { data, error } = await supabase.rpc('restore_trash_items', { p_ids: normalizedIds });
+  if (!error) return { queued: false, count: Number(data || normalizedIds.length) };
+  if (!isOfflineLikeError(error)) throw error;
+  await Promise.all(normalizedIds.map((id) => enqueueTrashRestore(id)));
+  return { queued: true, count: normalizedIds.length };
+}
+
+export async function purgeTrashItems(ids: string[]) {
+  const normalizedIds = Array.from(new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean)));
+  if (!normalizedIds.length) return 0;
+  if (!getOfflineSnapshot().isOnline) throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
+  const { data, error } = await supabase.rpc('purge_trash_items', { p_ids: normalizedIds });
+  if (error) throw error;
+  return Number(data || normalizedIds.length);
 }

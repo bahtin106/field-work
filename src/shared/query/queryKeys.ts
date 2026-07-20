@@ -27,6 +27,7 @@ export const queryKeys = {
   trash: {
     list: (params = {}) => ['trash', 'list', params],
     detail: (id) => ['trash', 'detail', String(id || '')],
+    filterOptions: () => ['trash', 'filter-options'],
   },
   fieldSettings: {
     detail: (entityType) => ['field-settings', 'detail', String(entityType || '')],

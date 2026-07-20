@@ -55,6 +55,42 @@ const normalizeSelectionId = (id) =>
 const normalizeSelectionIds = (ids) =>
   Array.isArray(ids) ? ids.map((id) => normalizeSelectionId(id)).filter(Boolean) : [];
 
+const TRASH_ARRAY_FILTER_KEYS = Object.freeze([
+  'entityTypes',
+  'deletedByIds',
+  'mediaOwnerTypes',
+  'workTypes',
+  'statuses',
+  'clientIds',
+  'clientTags',
+  'objectTags',
+  'executorIds',
+  'cities',
+  'streets',
+]);
+const TRASH_SCALAR_FILTER_KEYS = Object.freeze([
+  'deletedDateFrom',
+  'deletedDateTo',
+  'departureDateFrom',
+  'departureDateTo',
+  'departureTimeFrom',
+  'departureTimeTo',
+  'createdDateFrom',
+  'createdDateTo',
+  'createdTimeFrom',
+  'createdTimeTo',
+  'sumMin',
+  'sumMax',
+]);
+
+const buildTrashFilterSnapshot = (source = EMPTY_OBJECT) => ({
+  ...Object.fromEntries(TRASH_ARRAY_FILTER_KEYS.map((key) => [key, normalizeSelectionIds(source[key])])),
+  ...Object.fromEntries(TRASH_SCALAR_FILTER_KEYS.map((key) => [key, source[key] || null])),
+  sumMin: source.sumMin || '',
+  sumMax: source.sumMax || '',
+  executorId: null,
+});
+
 /**
  * Props:
  *  - visible, onClose
@@ -82,6 +118,7 @@ export default function FiltersPanel({
   mode = 'filters',
   assignment = null,
   ordersFilters = null,
+  trashFilters = null,
   searchItems = EMPTY_ARRAY,
   showSearchCategory = true,
   includeNoDepartment = false,
@@ -97,8 +134,9 @@ export default function FiltersPanel({
   const isClientsMode = mode === 'clients';
   const isObjectsMode = mode === 'objects';
   const isOrdersMode = mode === 'orders';
+  const isTrashMode = mode === 'trash';
   const isOrdersExecutorMulti =
-    isOrdersMode &&
+    (isOrdersMode || isTrashMode) &&
     (ordersFilters?.executorSelectionMode === 'multiple' || ordersFilters?.multipleExecutors === true);
   const isAssignmentMulti = isAssignmentMode && assignment?.multiple === true;
   const assignmentEmployees = useMemo(
@@ -166,6 +204,11 @@ export default function FiltersPanel({
     suspended: values.suspended ?? null,
     cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
     streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
+    entityTypes: Array.isArray(values.entityTypes) ? values.entityTypes.map(String) : [],
+    deletedByIds: Array.isArray(values.deletedByIds) ? values.deletedByIds.map(String) : [],
+    mediaOwnerTypes: Array.isArray(values.mediaOwnerTypes) ? values.mediaOwnerTypes.map(String) : [],
+    deletedDateFrom: values.deletedDateFrom || null,
+    deletedDateTo: values.deletedDateTo || null,
     clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
     clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
     objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
@@ -196,6 +239,11 @@ export default function FiltersPanel({
     suspended: values.suspended ?? null,
     cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
     streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
+    entityTypes: Array.isArray(values.entityTypes) ? values.entityTypes.map(String) : [],
+    deletedByIds: Array.isArray(values.deletedByIds) ? values.deletedByIds.map(String) : [],
+    mediaOwnerTypes: Array.isArray(values.mediaOwnerTypes) ? values.mediaOwnerTypes.map(String) : [],
+    deletedDateFrom: values.deletedDateFrom || null,
+    deletedDateTo: values.deletedDateTo || null,
     clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
     clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
     objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
@@ -242,6 +290,11 @@ export default function FiltersPanel({
         suspended: values.suspended ?? null,
         cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
         streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
+        entityTypes: Array.isArray(values.entityTypes) ? values.entityTypes.map(String) : [],
+        deletedByIds: Array.isArray(values.deletedByIds) ? values.deletedByIds.map(String) : [],
+        mediaOwnerTypes: Array.isArray(values.mediaOwnerTypes) ? values.mediaOwnerTypes.map(String) : [],
+        deletedDateFrom: values.deletedDateFrom || null,
+        deletedDateTo: values.deletedDateTo || null,
         clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
         clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
         objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
@@ -273,6 +326,11 @@ export default function FiltersPanel({
     values.clientIds,
     values.clientTags,
     values.cities,
+    values.entityTypes,
+    values.deletedByIds,
+    values.mediaOwnerTypes,
+    values.deletedDateFrom,
+    values.deletedDateTo,
     values.departments,
     values.roles,
     values.streets,
@@ -485,6 +543,52 @@ export default function FiltersPanel({
       objectCategories.push({ key: 'objects_tags', label: t('tags_objects_label') });
       return showSearchCategory ? [searchCategory, ...objectCategories] : objectCategories;
     }
+    if (isTrashMode) {
+      const hasOrders = (trashFilters?.entityTypes || []).some((item) => String(item?.id || '') === 'order')
+        || (trashFilters?.mediaOwnerTypes || []).some((item) => ['order', 'finance_entry'].includes(String(item?.id || '')));
+      const cats = [
+        { key: 'trash_entityTypes', label: t('trash_filter_entity') },
+        { key: 'trash_deletedDate', label: t('trash_filter_deleted_date') },
+      ];
+      if (Array.isArray(trashFilters?.deletedBy) && trashFilters.deletedBy.length) {
+        cats.push({ key: 'trash_deletedBy', label: t('trash_filter_deleted_by') });
+      }
+      if (Array.isArray(ordersFilters?.statuses) && ordersFilters.statuses.length) {
+        cats.push({ key: 'orders_statuses', label: t('orders_filter_status') });
+      }
+      if (Array.isArray(ordersFilters?.workTypes) && ordersFilters.workTypes.length) {
+        cats.push({ key: 'orders_workTypes', label: t('order_field_work_type') });
+      }
+      if (Array.isArray(ordersFilters?.clients) && ordersFilters.clients.length) {
+        cats.push({ key: 'orders_clients', label: t('common_client') });
+      }
+      if (Array.isArray(ordersFilters?.executors) && ordersFilters.executors.length) {
+        cats.push({ key: 'orders_executors', label: t('orders_filter_executor') });
+      }
+      if (Array.isArray(ordersFilters?.clientTags) && ordersFilters.clientTags.length) {
+        cats.push({ key: 'orders_clientTags', label: t('tags_clients_label') });
+      }
+      if (Array.isArray(ordersFilters?.objectTags) && ordersFilters.objectTags.length) {
+        cats.push({ key: 'orders_objectTags', label: t('tags_objects_label') });
+      }
+      if (Array.isArray(objectFilters?.cities) && objectFilters.cities.length) {
+        cats.push({ key: 'objects_cities', label: t('common_city') });
+      }
+      if (Array.isArray(objectFilters?.streets) && objectFilters.streets.length) {
+        cats.push({ key: 'objects_streets', label: t('common_street') });
+      }
+      if (hasOrders) {
+        cats.push({ key: 'orders_departure_date', label: t('order_field_departure_date') });
+        cats.push({ key: 'orders_departure_time', label: t('order_field_departure_time') });
+        cats.push({ key: 'orders_created_date', label: t('orders_filter_created_date') });
+        cats.push({ key: 'orders_created_time', label: t('orders_filter_created_time') });
+        cats.push({ key: 'orders_amount', label: t('order_details_amount') });
+      }
+      if (Array.isArray(trashFilters?.mediaOwnerTypes) && trashFilters.mediaOwnerTypes.length) {
+        cats.push({ key: 'trash_mediaOwnerTypes', label: t('trash_filter_media_source') });
+      }
+      return showSearchCategory ? [searchCategory, ...cats] : cats;
+    }
     if (isOrdersMode) {
       const ordersStatusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
       const ordersWorkTypes = Array.isArray(ordersFilters?.workTypes) ? ordersFilters.workTypes : [];
@@ -516,7 +620,7 @@ export default function FiltersPanel({
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
     return showSearchCategory ? [searchCategory, ...cats] : cats;
-  }, [assignmentCategories, departmentOptions.length, isAssignmentMode, isClientsMode, isObjectsMode, isOrdersMode, ordersFilters, showSearchCategory]);
+  }, [assignmentCategories, departmentOptions.length, isAssignmentMode, isClientsMode, isObjectsMode, isOrdersMode, isTrashMode, objectFilters, ordersFilters, showSearchCategory, trashFilters]);
 
   const restoredCategoryRef = useRef(false);
   const lastCategoriesKeyRef = useRef('');
@@ -653,6 +757,10 @@ export default function FiltersPanel({
     if (isAssignmentMode) {
       return !eqArrays(assignmentDraftSelection || [], assignmentBaselineSelection || []);
     }
+    if (isTrashMode) {
+      if (TRASH_ARRAY_FILTER_KEYS.some((key) => !eqArrays(draft[key] || [], baseline[key] || []))) return true;
+      return TRASH_SCALAR_FILTER_KEYS.some((key) => String(draft[key] || '') !== String(baseline[key] || ''));
+    }
     if (isClientsMode) {
       if (!eqArrays(draft.clientTags || [], baseline.clientTags || [])) return true;
       if (!eqArrays(draft.objectTags || [], baseline.objectTags || [])) return true;
@@ -698,12 +806,18 @@ export default function FiltersPanel({
     isClientsMode,
     isObjectsMode,
     isOrdersMode,
+    isTrashMode,
   ]);
 
   // Check if any filters are active (different from defaults)
   const hasActiveFilters = useMemo(() => {
     if (isAssignmentMode) {
       return !eqArrays(assignmentDraftSelection || [], assignmentDefaultSelection || []);
+    }
+    if (isTrashMode) {
+      const defaultSnapshot = buildTrashFilterSnapshot(defaults);
+      if (TRASH_ARRAY_FILTER_KEYS.some((key) => !eqArrays(draft[key] || [], defaultSnapshot[key] || []))) return true;
+      return TRASH_SCALAR_FILTER_KEYS.some((key) => String(draft[key] || '') !== String(defaultSnapshot[key] || ''));
     }
     if (isClientsMode) {
       const defaultClientTags = Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [];
@@ -776,7 +890,7 @@ export default function FiltersPanel({
     if (!eqArrays(draft.roles || [], defaultRoles)) return true;
     if ((draft.suspended ?? null) !== defaultSuspended) return true;
     return false;
-  }, [assignmentDefaultSelection, assignmentDraftSelection, defaults, draft, isAssignmentMode, isClientsMode, isObjectsMode, isOrdersMode]);
+  }, [assignmentDefaultSelection, assignmentDraftSelection, defaults, draft, isAssignmentMode, isClientsMode, isObjectsMode, isOrdersMode, isTrashMode]);
 
   const handleAssignmentReset = () => {
     const defaultSelection = [...assignmentDefaultSelection];
@@ -1409,6 +1523,49 @@ export default function FiltersPanel({
       return renderAssignmentOptions();
     }
     switch (activeCat) {
+      case 'trash_entityTypes':
+        return renderTagFilterOptions(
+          trashFilters?.entityTypes,
+          'entityTypes',
+          toggleObjectsMulti,
+          Object.fromEntries((trashFilters?.entityTypes || []).map((item) => [String(item?.id || ''), Number(item?.count || 0)])),
+          (trashFilters?.entityTypes || []).reduce((sum, item) => sum + Number(item?.count || 0), 0),
+        );
+      case 'trash_deletedBy':
+        return renderTagFilterOptions(
+          trashFilters?.deletedBy,
+          'deletedByIds',
+          toggleObjectsMulti,
+          Object.fromEntries((trashFilters?.deletedBy || []).map((item) => [String(item?.id || ''), Number(item?.count || 0)])),
+          (trashFilters?.deletedBy || []).reduce((sum, item) => sum + Number(item?.count || 0), 0),
+        );
+      case 'trash_mediaOwnerTypes':
+        return renderTagFilterOptions(
+          trashFilters?.mediaOwnerTypes,
+          'mediaOwnerTypes',
+          toggleObjectsMulti,
+          Object.fromEntries((trashFilters?.mediaOwnerTypes || []).map((item) => [String(item?.id || ''), Number(item?.count || 0)])),
+          (trashFilters?.mediaOwnerTypes || []).reduce((sum, item) => sum + Number(item?.count || 0), 0),
+        );
+      case 'trash_deletedDate':
+        return (
+          <View style={{ paddingHorizontal: sz.md, paddingTop: sz.sm, gap: sz.sm }}>
+            {renderDateTimeFilterField({
+              field: 'deletedDateFrom',
+              value: formatDateLabel(draft.deletedDateFrom),
+              placeholder: t('trash_filter_deleted_from'),
+              icon: 'calendar',
+              onPress: () => setDatePickerField('deletedDateFrom'),
+            })}
+            {renderDateTimeFilterField({
+              field: 'deletedDateTo',
+              value: formatDateLabel(draft.deletedDateTo),
+              placeholder: t('trash_filter_deleted_to'),
+              icon: 'calendar',
+              onPress: () => setDatePickerField('deletedDateTo'),
+            })}
+          </View>
+        );
       case 'clients_clientTags':
         return renderTagFilterOptions(
           clientFilters?.clientTags,
@@ -2186,6 +2343,18 @@ export default function FiltersPanel({
                   handleAssignmentReset();
                   return;
                 }
+                if (isTrashMode) {
+                  const snapshot = buildTrashFilterSnapshot(defaults);
+                  setDraft((prev) => ({ ...prev, ...snapshot }));
+                  setBaseline((prev) => ({ ...prev, ...snapshot }));
+                  if (setValue) {
+                    [...TRASH_ARRAY_FILTER_KEYS, ...TRASH_SCALAR_FILTER_KEYS].forEach((key) => {
+                      setValue(key, snapshot[key]);
+                    });
+                  }
+                  if (onReset) onReset(snapshot);
+                  return;
+                }
                 if (isClientsMode) {
                   const snapshot = {
                     clientTags: Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [],
@@ -2366,6 +2535,18 @@ export default function FiltersPanel({
                   }
                   setAssignmentBaselineSelection(selection);
                   setAssignmentDraftSelection(selection);
+                  if (onClose) onClose();
+                  return;
+                }
+                if (isTrashMode) {
+                  const snapshot = buildTrashFilterSnapshot(draft);
+                  if (setValue) {
+                    [...TRASH_ARRAY_FILTER_KEYS, ...TRASH_SCALAR_FILTER_KEYS].forEach((key) => {
+                      setValue(key, snapshot[key]);
+                    });
+                  }
+                  if (onApply) onApply(snapshot);
+                  setBaseline((prev) => ({ ...prev, ...snapshot }));
                   if (onClose) onClose();
                   return;
                 }
