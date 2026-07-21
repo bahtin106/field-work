@@ -19,7 +19,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.monitorapp.monitor",
-      "versionCode": 9,
+      "versionCode": 10,
       "edgeToEdgeEnabled": true,
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
