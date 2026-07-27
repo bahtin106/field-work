@@ -8,6 +8,7 @@ import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, Vi
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../../components/navigation/AppHeader';
+import RelatedOrdersRow from '../../../components/orders/RelatedOrdersRow';
 import EntityPhotoPreview from '../../../components/media/EntityPhotoPreview';
 import Card from '../../../components/ui/Card';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
@@ -19,8 +20,11 @@ import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
-import { useClient, useClientOrderCount } from '../../../src/features/clients/queries';
+import { useAuthContext } from '../../../providers/SimpleAuthProvider';
+import { useClient } from '../../../src/features/clients/queries';
 import { normalizeClient } from '../../../src/features/clients/api';
+import { useRelatedRequestCount } from '../../../src/features/requests/queries';
+import { buildOrdersEntityFilterRoute } from '../../../src/features/requests/relationFilters';
 import { getTrashItem } from '../../../src/features/trash/api';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
 import {
@@ -65,12 +69,19 @@ export default function ClientViewScreen() {
       return {};
     }
   }, [rawReturnParams]);
-  const { has } = usePermissions();
+  const { has, loading: permissionsLoading } = usePermissions();
+  const { user: authUser, profile: authProfile } = useAuthContext();
 
   const canViewClients = isTrashMode ? has('canViewTrash') : has('canViewClients');
   const canEditClients = !isTrashMode && has('canEditClients');
   const canViewObjects = has('canViewObjects');
   const canViewClientPhones = has('canViewClientPhones');
+  const authAccountType = String(authUser?.user_metadata?.account_type || '').trim().toLowerCase();
+  const isSoloAdmin =
+    String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
+  const canViewAllOrders = !permissionsLoading && has('canViewAllOrders') && !isSoloAdmin;
+  const showRelatedOrdersRow =
+    !permissionsLoading && canViewClients && !isTrashMode && Boolean(clientId);
 
   const activeClientQuery = useClient(clientId, { enabled: !!clientId && canViewClients && !isTrashMode });
   const trashQuery = useQuery({
@@ -87,9 +98,6 @@ export default function ClientViewScreen() {
     enabled: !!clientId && canViewClients,
   });
   const { settings } = useCompanySettings();
-  useClientOrderCount(clientId, {
-    enabled: !!clientId && canViewClients && !isTrashMode,
-  });
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const toast = useToast();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
@@ -220,6 +228,26 @@ export default function ClientViewScreen() {
     },
     [client?.objects],
   );
+  const relatedOrdersQuery = useRelatedRequestCount(
+    {
+      scope: canViewAllOrders ? 'all' : 'my',
+      clientId,
+    },
+    { enabled: showRelatedOrdersRow },
+  );
+  const relatedOrdersRoute = React.useMemo(
+    () =>
+      buildOrdersEntityFilterRoute({
+        canViewAllOrders,
+        entityType: 'client',
+        entityId: clientId,
+        label: fullName || t('placeholder_no_name'),
+      }),
+    [canViewAllOrders, clientId, fullName, t],
+  );
+  const openRelatedOrders = React.useCallback(() => {
+    if (relatedOrdersRoute) router.push(relatedOrdersRoute);
+  }, [relatedOrdersRoute, router]);
 
   if (!canViewClients) {
     return (
@@ -291,6 +319,20 @@ export default function ClientViewScreen() {
                     if (!value) return;
                     router.push({ pathname: '/clients', params: { tag: value } });
                   }}
+                />
+              </Card>
+            </>
+          ) : null}
+
+          {showRelatedOrdersRow ? (
+            <>
+              <SectionHeader>{t('section_general')}</SectionHeader>
+              <Card paddedXOnly separated>
+                <RelatedOrdersRow
+                  label={t('orders_related_filter')}
+                  count={relatedOrdersQuery.data}
+                  isLoading={relatedOrdersQuery.isLoading}
+                  onPress={openRelatedOrders}
                 />
               </Card>
             </>

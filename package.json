@@ -9,6 +9,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "icons:sync": "node scripts/sync-android-launcher-icons.mjs",
+    "icons:android:sync": "node scripts/sync-android-launcher-icons.mjs",
     "storage:push-vps": "node scripts/push-vps-storage-metric.js",
     "billing:reminders:tick": "node scripts/subscription-email-worker.js",
     "billing:reminders:legacy": "node scripts/subscription-reminders-tick.js",
@@ -86,6 +88,7 @@
     "react-native-zoom-toolkit": "^5.1.0"
   },
   "devDependencies": {
+    "@expo/image-utils": "0.8.8",
     "@babel/core": "^7.20.0",
     "@eslint/js": "^9.39.1",
     "@types/react": "19.1.10",
@@ -95,6 +98,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "jimp-compact": "0.16.1",
     "typescript": "5.9.2"
   },
   "resolutions": {

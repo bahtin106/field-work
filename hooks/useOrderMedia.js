@@ -106,9 +106,23 @@ function sanitizeMediaIssues(issuesMap) {
 function mergeResolvedUrlsPreservingLocal(current, incoming) {
   const currentMap = current && typeof current === 'object' ? current : {};
   const incomingMap = incoming && typeof incoming === 'object' ? incoming : {};
-  const next = { ...currentMap, ...incomingMap };
-  for (const [key, value] of Object.entries(currentMap)) {
-    if (isLocalFileUri(value)) next[key] = value;
+  let next = currentMap;
+  for (const [key, value] of Object.entries(incomingMap)) {
+    if (isLocalFileUri(currentMap[key]) || currentMap[key] === value) continue;
+    if (next === currentMap) next = { ...currentMap };
+    next[key] = value;
+  }
+  return next;
+}
+
+function mergeStringMapIfChanged(current, incoming) {
+  const currentMap = current && typeof current === 'object' ? current : {};
+  const incomingMap = incoming && typeof incoming === 'object' ? incoming : {};
+  let next = currentMap;
+  for (const [key, value] of Object.entries(incomingMap)) {
+    if (currentMap[key] === value) continue;
+    if (next === currentMap) next = { ...currentMap };
+    next[key] = value;
   }
   return next;
 }
@@ -554,7 +568,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
             _globalThumbCache.set(key, value);
             pruneMapCache(_globalThumbCache);
           }
-          setThumbUrls((prev) => ({ ...prev, ...thumbMap }));
+          setThumbUrls((prev) => mergeStringMapIfChanged(prev, thumbMap));
           prefetchMediaUrls(Object.values(thumbMap), { batchSize: 6 }).catch(() => {});
         }
         if (Object.keys(infoMap).length) {

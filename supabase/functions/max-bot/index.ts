@@ -2061,6 +2061,7 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
       entrance: address.entrance || null,
       floor: address.floor || null,
       comment: address.comment || null,
+      media_sections: [],
     })
     .select('id, name')
     .single();

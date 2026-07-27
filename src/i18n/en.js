@@ -1221,6 +1221,7 @@ export default {
   finance_rule_condition_between: 'from',
   finance_rule_condition_to: 'to',
   finance_rule_condition_from: 'from',
+  objects_media_section_title: 'Media',
   objects_media_add_section: 'Add media section',
   objects_media_delete_section_title: 'Delete media section?',
   objects_media_delete_section_message: 'All photos in this section will be moved to Trash for 30 days.',

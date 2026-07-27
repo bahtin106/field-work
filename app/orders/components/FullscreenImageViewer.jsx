@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Image as RNImage,
   Modal,
+  Platform,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -24,6 +25,13 @@ import { useTheme } from '../../../theme';
 import { withAlpha } from '../../../theme/colors';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
+import {
+  notifyIOSModalDismissed,
+  registerIOSModal,
+  releaseIOSModal,
+  requestIOSModalPresentation,
+  unregisterIOSModal,
+} from '../../../components/ui/modals/iosModalCoordinator';
 import ListSeparator from '../../../components/ui/ListSeparator';
 import SeparatedList from '../../../components/ui/SeparatedList';
 import ToastProvider, { useToast } from '../../../components/ui/ToastProvider';
@@ -332,6 +340,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   categoryLabel,
   capturePreviewMode = false,
   onDismiss,
+  onNativeDismiss,
   embedded = false,
 }) {
   const { theme } = useTheme();
@@ -347,6 +356,14 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const dismissNotifiedRef = useRef(false);
   const modalOverlayOpenRef = useRef(false);
   const infoRequestRef = useRef(0);
+  const iosModalIdRef = useRef(null);
+  const iosSuspendedRef = useRef(false);
+  const nativeVisibleRef = useRef(false);
+  const nativeDismissPendingRef = useRef(false);
+  const onNativeDismissRef = useRef(onNativeDismiss);
+  const presentRef = useRef(null);
+  const suspendRef = useRef(null);
+  onNativeDismissRef.current = onNativeDismiss;
 
   const initialImages = useMemo(() => normalizeImages(images), [images]);
   const initialFallbackImages = useMemo(
@@ -377,6 +394,23 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const [toolbarVisible, setToolbarVisible] = useState(true);
   const [imageLoadStates, setImageLoadStates] = useState({});
   const [manualRetryNonce, setManualRetryNonce] = useState(0);
+  const [nativeVisible, setNativeVisible] = useState(false);
+  const [nativeDismissPending, setNativeDismissPending] = useState(false);
+
+  presentRef.current = () => {
+    nativeVisibleRef.current = true;
+    nativeDismissPendingRef.current = false;
+    setNativeDismissPending(false);
+    setNativeVisible(true);
+  };
+  suspendRef.current = () => {
+    if (!nativeVisibleRef.current) return;
+    iosSuspendedRef.current = true;
+    nativeVisibleRef.current = false;
+    nativeDismissPendingRef.current = true;
+    setNativeDismissPending(true);
+    setNativeVisible(false);
+  };
 
   const overlayBg = useMemo(() => withAlpha(VIEWER_BG, VIEWER_OVERLAY_ALPHA), []);
   const currentUri = localImages[currentIndex] || '';
@@ -502,6 +536,38 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       },
     });
   }, [insets.bottom, insets.top, theme]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || embedded) return undefined;
+    const id = registerIOSModal({
+      present: () => presentRef.current?.(),
+      suspend: () => suspendRef.current?.(),
+    });
+    iosModalIdRef.current = id;
+    return () => {
+      unregisterIOSModal(id);
+      iosModalIdRef.current = null;
+    };
+  }, [embedded]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || embedded) return;
+    const id = iosModalIdRef.current;
+    if (!id) return;
+    if (visible) {
+      requestIOSModalPresentation(id);
+      return;
+    }
+    releaseIOSModal(id);
+    if (nativeVisibleRef.current) {
+      nativeVisibleRef.current = false;
+      nativeDismissPendingRef.current = true;
+      setNativeDismissPending(true);
+      setNativeVisible(false);
+      return;
+    }
+    if (!nativeDismissPendingRef.current) onNativeDismissRef.current?.();
+  }, [embedded, visible]);
 
   useEffect(() => {
     const previousVisible = visibleRef.current;
@@ -945,15 +1011,29 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const viewerContainerProps = embedded
     ? { style: styles.rootFill }
     : {
-        visible,
+        visible: Platform.OS === 'ios' ? nativeVisible : visible,
         transparent: false,
         animationType: 'fade',
         presentationStyle: 'fullScreen',
         hardwareAccelerated: true,
         onRequestClose: requestClose,
+        onDismiss: () => {
+          const wasSuspended = Platform.OS === 'ios' && iosSuspendedRef.current;
+          iosSuspendedRef.current = false;
+          nativeVisibleRef.current = false;
+          nativeDismissPendingRef.current = false;
+          setNativeVisible(false);
+          setNativeDismissPending(false);
+          if (Platform.OS === 'ios' && iosModalIdRef.current != null) {
+            notifyIOSModalDismissed(iosModalIdRef.current, { suspended: wasSuspended });
+          }
+          if (!wasSuspended) onNativeDismissRef.current?.();
+        },
       };
 
-  if (!visible || !localImages.length) return null;
+  const keepsNativeLayer =
+    Platform.OS === 'ios' && !embedded && (nativeVisible || nativeDismissPending);
+  if ((!visible && !keepsNativeLayer) || !localImages.length) return null;
 
   return (
     <>
@@ -1159,22 +1239,53 @@ function FullscreenImageViewer({
   onDismiss,
   embedded = false,
 }) {
-  if (!visible || !images?.length) return null;
+  const [nativeLayerDismissed, setNativeLayerDismissed] = useState(!visible);
+  const retainedPropsRef = useRef(null);
+  if (visible && images?.length) {
+    retainedPropsRef.current = {
+      images,
+      fallbackImages,
+      imageMetadata,
+      initialIndex,
+      onClose,
+      onDelete,
+      onRotateSave,
+      categoryLabel,
+      capturePreviewMode,
+      onDismiss,
+    };
+  }
+
+  useEffect(() => {
+    if (visible) setNativeLayerDismissed(false);
+  }, [visible]);
+
+  const handleNativeDismiss = useCallback(() => {
+    setNativeLayerDismissed(true);
+  }, []);
+
+  const retainedProps = retainedPropsRef.current;
+  if (
+    !retainedProps ||
+    (!visible && !embedded && nativeLayerDismissed) ||
+    (embedded && (!visible || !images?.length))
+  ) return null;
 
   return (
     <ToastProvider>
       <ImageViewingGallery
         visible={visible}
-        images={images}
-        fallbackImages={fallbackImages}
-        imageMetadata={imageMetadata}
-        initialIndex={initialIndex}
-        onClose={onClose}
-        onDelete={onDelete}
-        onRotateSave={onRotateSave}
-        categoryLabel={categoryLabel}
-        capturePreviewMode={capturePreviewMode}
-        onDismiss={onDismiss}
+        images={retainedProps.images}
+        fallbackImages={retainedProps.fallbackImages}
+        imageMetadata={retainedProps.imageMetadata}
+        initialIndex={retainedProps.initialIndex}
+        onClose={retainedProps.onClose}
+        onDelete={retainedProps.onDelete}
+        onRotateSave={retainedProps.onRotateSave}
+        categoryLabel={retainedProps.categoryLabel}
+        capturePreviewMode={retainedProps.capturePreviewMode}
+        onDismiss={retainedProps.onDismiss}
+        onNativeDismiss={handleNativeDismiss}
         embedded={embedded}
       />
     </ToastProvider>

@@ -221,6 +221,7 @@ function ObjectMediaEditRow({
             onChangeLabel(nextValue);
           }}
           onSubmitEditing={commit}
+          onBlur={commit}
           returnKeyType="done"
           style={{
             flex: 1,
@@ -1208,7 +1209,7 @@ export default function EditObjectScreen() {
 
         {objectMediaSections.length || canAddMediaSection ? (
           <>
-            <SectionHeader>{t('order_details_photos_section')}</SectionHeader>
+            <SectionHeader>{t('objects_media_section_title')}</SectionHeader>
             <Card paddedXOnly>
               {objectMediaSections.map((fieldKey, index) => {
                 const photos = Array.isArray(objectMediaRef.current?.[fieldKey]) ? objectMediaRef.current[fieldKey] : [];

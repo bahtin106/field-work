@@ -1297,9 +1297,26 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
       if (Number.isFinite(mapId) && mapId > 0) {
         const row = await getExternalMapById(admin, mapId);
-        if (!row?.external_path || row.provider !== 'yandex_disk') {
+        if (!row?.external_path) {
           return binary(404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
         }
+
+        if (row.provider === 'beget_s3') {
+          try {
+            const signed = await createBegetPresignedGetUrl({
+              key: String(row.external_path || ''),
+              expiresInSec: 5 * 60,
+            });
+            return streamRemoteResponse(signed.url);
+          } catch {
+            return binary(404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
+          }
+        }
+
+        if (row.provider !== 'yandex_disk') {
+          return binary(404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
+        }
+
         const { accessToken } = await getValidAccessToken(admin, String(row.company_id || ''));
         if (!accessToken) {
           return binary(404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -1384,15 +1401,12 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
         if (String(row.provider || '').trim() === 'beget_s3') {
           const begetKey = String(row.external_path || '').trim();
-          if (begetKey) {
-            try {
-              const signed = await createBegetPresignedGetUrl({
-                key: begetKey,
-                expiresInSec: 60 * 60 * 24,
-              });
-              resolvedUrls[url] = signed.url;
-              continue;
-            } catch {}
+          if (begetKey && Number(row.id) > 0) {
+            resolvedUrls[url] = await buildSignedRenderUrl(publicBaseUrl, {
+              mode: 'render',
+              map_id: String(row.id),
+            });
+            continue;
           }
           resolvedUrls[url] = url;
           continue;

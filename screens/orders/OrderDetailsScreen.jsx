@@ -4740,10 +4740,7 @@ function OrderDetailsContent() {
         if (!queued.has(String(uri || '').trim())) {
           setLocalPendingMap((previous) => ({
             ...(previous || {}),
-            [category]: (previous?.[category] || []).flatMap((entry) => {
-              if (entry.id !== id) return [entry];
-              return entry.uploadedUrl ? [{ ...entry, pending: false, failed: false }] : [];
-            }),
+            [category]: (previous?.[category] || []).filter((entry) => entry.id !== id),
           }));
         } else if (!uploadSucceeded && getOfflineSnapshot().isOnline) {
           await setOrderPhotoUploadQueueStatus(orderId, category, uri, 'failed');
@@ -4813,7 +4810,7 @@ function OrderDetailsContent() {
             if (!belongsToBatch) return [entry];
             const remainsQueued = queued.has(String(entry?.uri || '').trim());
             if (!remainsQueued) {
-              return entry.uploadedUrl ? [{ ...entry, pending: false, failed: false }] : [];
+              return [];
             }
             return [{ ...entry, failed: getOfflineSnapshot().isOnline }];
           }),
@@ -4849,6 +4846,12 @@ function OrderDetailsContent() {
       });
       const queued = await getQueuedOrderPhotoUrls(orderId, category);
       if (success && !queued.has(uri)) {
+        setLocalPendingMap((previous) => ({
+          ...(previous || {}),
+          [category]: (previous?.[category] || []).filter(
+            (entry) => String(entry?.uri || '') !== uri,
+          ),
+        }));
         return;
       }
       if (!success && getOfflineSnapshot().isOnline) {

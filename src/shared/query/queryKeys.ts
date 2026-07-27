@@ -2,6 +2,21 @@ export const queryKeys = {
   requests: {
     all: (params = {}) => ['requests', 'all', params],
     my: (params = {}) => ['requests', 'my', params],
+    relatedCount: ({ scope = 'my', clientId = '', objectIds = [] } = {}) => [
+      'requests',
+      scope === 'all' ? 'all' : 'my',
+      'related-count',
+      String(clientId || '').trim(),
+      Array.from(
+        new Set(
+          (Array.isArray(objectIds) ? objectIds : [])
+            .map((value) => String(value || '').trim())
+            .filter(Boolean),
+        ),
+      )
+        .sort()
+        .join(','),
+    ],
     calendar: (params = {}) => ['requests', 'calendar', params],
     detail: (id) => ['requests', 'detail', String(id || '')],
     assigneeName: (userId) => ['requests', 'assignee-name', String(userId || '')],

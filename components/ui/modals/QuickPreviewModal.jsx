@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -19,6 +20,13 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { getCardSurfaceStyle } from '../../../theme/surfaceStyles';
 import { useToastOverlay } from '../ToastProvider';
 import { withAlpha } from './BaseModal';
+import {
+  notifyIOSModalDismissed,
+  registerIOSModal,
+  releaseIOSModal,
+  requestIOSModalPresentation,
+  unregisterIOSModal,
+} from './iosModalCoordinator';
 
 const ANCHOR_GAP = 8;
 const EMERGE_SPRING = { damping: 22, stiffness: 280, mass: 0.65 };
@@ -47,9 +55,42 @@ export default function QuickPreviewModal({
   const scale = useSharedValue(0.88);
   const slideY = useSharedValue(20);
   const [rendered, setRendered] = React.useState(visible);
+  const [nativeVisible, setNativeVisible] = React.useState(false);
+  const [nativeDismissPending, setNativeDismissPending] = React.useState(false);
   const [cardSize, setCardSize] = React.useState({ width: 0, height: 0 });
   const [tagsColumnWidth, setTagsColumnWidth] = React.useState(0);
   const [measuredTagWidths, setMeasuredTagWidths] = React.useState({});
+  const iosModalIdRef = React.useRef(null);
+  const iosSuspendedRef = React.useRef(false);
+  const nativeVisibleRef = React.useRef(false);
+  const presentRef = React.useRef(null);
+  const suspendRef = React.useRef(null);
+
+  presentRef.current = () => {
+    nativeVisibleRef.current = true;
+    setNativeDismissPending(false);
+    setNativeVisible(true);
+  };
+  suspendRef.current = () => {
+    if (!nativeVisibleRef.current) return;
+    iosSuspendedRef.current = true;
+    nativeVisibleRef.current = false;
+    setNativeDismissPending(true);
+    setNativeVisible(false);
+  };
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'ios') return undefined;
+    const id = registerIOSModal({
+      present: () => presentRef.current?.(),
+      suspend: () => suspendRef.current?.(),
+    });
+    iosModalIdRef.current = id;
+    return () => {
+      unregisterIOSModal(id);
+      iosModalIdRef.current = null;
+    };
+  }, []);
 
   const setNotRendered = React.useCallback(() => setRendered(false), []);
 
@@ -71,6 +112,22 @@ export default function QuickPreviewModal({
     scale.value = withTiming(0.88, { duration: dur, easing: ease });
     slideY.value = withTiming(16, { duration: dur, easing: ease });
   }, [opacity, scale, slideY, visible, setNotRendered]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const id = iosModalIdRef.current;
+    if (!id) return;
+    if (rendered) {
+      requestIOSModalPresentation(id);
+      return;
+    }
+    releaseIOSModal(id);
+    if (nativeVisibleRef.current) {
+      nativeVisibleRef.current = false;
+      setNativeDismissPending(true);
+      setNativeVisible(false);
+    }
+  }, [rendered]);
 
   const aBackdrop = useAnimatedStyle(() => ({ opacity: opacity.value }));
   const aCard = useAnimatedStyle(() => ({
@@ -97,7 +154,9 @@ export default function QuickPreviewModal({
     screenHeight - cardSize.height - horizontalMargin,
   );
 
-  if (!rendered) return null;
+  if (!rendered && (Platform.OS !== 'ios' || (!nativeVisible && !nativeDismissPending))) {
+    return null;
+  }
 
   const safeTitle = String(title || '').trim();
   const safeTags = Array.isArray(tags)
@@ -149,11 +208,21 @@ export default function QuickPreviewModal({
 
   return (
     <Modal
-      visible
+      visible={Platform.OS === 'ios' ? nativeVisible : true}
       transparent
       animationType="none"
       presentationStyle="overFullScreen"
       onRequestClose={onClose}
+      onDismiss={() => {
+        const wasSuspended = iosSuspendedRef.current;
+        iosSuspendedRef.current = false;
+        nativeVisibleRef.current = false;
+        setNativeVisible(false);
+        setNativeDismissPending(false);
+        if (Platform.OS === 'ios' && iosModalIdRef.current != null) {
+          notifyIOSModalDismissed(iosModalIdRef.current, { suspended: wasSuspended });
+        }
+      }}
     >
       <Animated.View style={[StyleSheet.absoluteFillObject, aBackdrop]}>
         <Pressable

@@ -30,19 +30,40 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from '@expo/vector-icons/Feather';
-import { FullWindowOverlay } from 'react-native-screens';
 import { applyAndroidNavigationBar, applyAndroidSystemBars } from '../../../lib/systemBars';
 import { t as T } from '../../../src/i18n';
 import { useToastOverlay } from '../ToastProvider';
 import { useTheme } from '../../../theme';
 import { withAlpha as withThemeAlpha } from '../../../theme/colors';
 import DismissKeyboardArea from '../../layout/DismissKeyboardArea';
+import {
+  notifyIOSModalDismissed,
+  registerIOSModal,
+  releaseIOSModal,
+  requestIOSModalPresentation,
+  unregisterIOSModal,
+} from './iosModalCoordinator';
 
 const OPEN_SPRING = { damping: 28, stiffness: 500, mass: 0.5 };
 const MIN_TOP_GAP_FROM_STATUS_BAR_DP = 38;
 const EmbeddedModalHostContext = createContext(null);
+
+function ModalWindowBottomSafeArea({ supported, enabled, children }) {
+  if (!supported) return children;
+
+  // Android Modal renders in a separate window, so its safe area must be
+  // measured in that native tree instead of inherited from the activity.
+  return (
+    <SafeAreaView
+      edges={enabled ? ['bottom'] : []}
+      style={{ width: '100%', flexShrink: 1, minHeight: 0 }}
+    >
+      {children}
+    </SafeAreaView>
+  );
+}
 
 export function withAlpha(color, a) {
   const next = withThemeAlpha(color, a);
@@ -138,6 +159,10 @@ const BaseModalImpl = (
   const [rnVisible, setRnVisible] = useState(false);
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
   const [modalKey, _setModalKey] = useState(0);
+  const iosModalIdRef = useRef(null);
+  const iosSuspendedRef = useRef(false);
+  const openRef = useRef(null);
+  const suspendRef = useRef(null);
   const dismissNotifiedRef = useRef(false);
   const nestedRequestCloseStackRef = useRef([]);
   const registerNestedRequestClose = useCallback((handler) => {
@@ -195,6 +220,8 @@ const BaseModalImpl = (
   const windowH = windowDimensions.height;
   const windowW = windowDimensions.width;
   const floatingSheet = isSheet && windowW >= 768;
+  const usesModalWindowBottomInset =
+    Platform.OS === 'android' && !embedded && isSheet && !floatingSheet;
   const sheetCornerRadius = Platform.OS === 'ios' ? 24 : 28;
   const minCardHeight = theme.spacing.xxxl * 3 + theme.spacing.xl;
   const topInsetAllowance = theme.components?.input?.height ?? 48;
@@ -301,6 +328,14 @@ const BaseModalImpl = (
   };
 
   const doUnmount = () => {
+    if (Platform.OS === 'ios' && !embedded) {
+      setNativeDismissPending(true);
+      setRnVisible(false);
+      try {
+        onClose?.();
+      } catch {}
+      return;
+    }
     setRnVisible(false);
     try {
       onClose?.();
@@ -332,6 +367,13 @@ const BaseModalImpl = (
     sc.value = isSheet ? 1 : 0.96;
     if (!rnVisible) setRnVisible(true);
     // Animation triggered by <Modal onShow> — guarantees native mount is done
+  };
+  openRef.current = open;
+  suspendRef.current = () => {
+    if (!rnVisible) return;
+    iosSuspendedRef.current = true;
+    setNativeDismissPending(true);
+    setRnVisible(false);
   };
 
   const close = () => {
@@ -436,13 +478,37 @@ const BaseModalImpl = (
   ).current;
 
   useEffect(() => {
+    if (Platform.OS !== 'ios' || embedded) return undefined;
+    const id = registerIOSModal({
+      present: () => openRef.current?.(),
+      suspend: () => suspendRef.current?.(),
+    });
+    iosModalIdRef.current = id;
+    return () => {
+      unregisterIOSModal(id);
+      iosModalIdRef.current = null;
+    };
+  }, [embedded]);
+
+  useEffect(() => {
+    if (Platform.OS === 'ios' && !embedded) {
+      const id = iosModalIdRef.current;
+      if (!id) return;
+      if (visible) {
+        requestIOSModalPresentation(id);
+      } else {
+        releaseIOSModal(id);
+        if (rnVisible) close();
+      }
+      return;
+    }
     if (visible) open();
     else if (rnVisible) close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   useEffect(() => {
-    if ((!embedded && Platform.OS !== 'ios') || !rnVisible) return;
+    if (!embedded || !rnVisible) return;
     const frame = requestAnimationFrame(() => {
       runOpenAnimation();
       try {
@@ -493,15 +559,13 @@ const BaseModalImpl = (
 
   if (!visible && !rnVisible && !nativeDismissPending) return null;
 
-  const ModalContainer = embedded ? View : Platform.OS === 'ios' ? FullWindowOverlay : Modal;
+  const ModalContainer = embedded ? View : Modal;
   const containerProps =
     embedded
       ? {
         style: [StyleSheet.absoluteFill, { zIndex: 100, elevation: 100 }],
         accessibilityViewIsModal: true,
       }
-      : Platform.OS === 'ios'
-      ? { unstable_accessibilityContainerViewIsModal: true }
       : {
         visible: !!rnVisible,
         transparent: true,
@@ -515,16 +579,25 @@ const BaseModalImpl = (
           } catch {}
         },
         onDismiss: () => {
-          // Safety-net: ensure state is reset even if native dismisses unexpectedly
+          const wasSuspended = Platform.OS === 'ios' && iosSuspendedRef.current;
+          iosSuspendedRef.current = false;
           setRnVisible(false);
           setNativeDismissPending(false);
-          notifyDismiss();
+          if (Platform.OS === 'ios' && iosModalIdRef.current != null) {
+            notifyIOSModalDismissed(iosModalIdRef.current, { suspended: wasSuspended });
+          }
+          if (!wasSuspended) notifyDismiss();
         },
       };
 
   return (
     <EmbeddedModalHostContext.Provider value={modalHostValue}>
       <ModalContainer key={modalKey} {...containerProps}>
+      <View
+        collapsable={false}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="box-none"
+      >
       {fullscreenContent ? (
         <View style={StyleSheet.absoluteFill}>{fullscreenContent}</View>
       ) : (
@@ -598,7 +671,9 @@ const BaseModalImpl = (
                   ? 0
                   : floatingSheet
                     ? theme.spacing.sm
-                    : insets.bottom
+                    : usesModalWindowBottomInset
+                      ? 0
+                      : insets.bottom
                 : 0,
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
@@ -610,10 +685,14 @@ const BaseModalImpl = (
             },
           ]}
         >
-          <DismissKeyboardArea
-            enabled={false}
-            style={{ width: '100%', flexShrink: 1, minHeight: 0 }}
+          <ModalWindowBottomSafeArea
+            supported={usesModalWindowBottomInset}
+            enabled={kbInset <= 0}
           >
+            <DismissKeyboardArea
+              enabled={false}
+              style={{ width: '100%', flexShrink: 1, minHeight: 0 }}
+            >
           {/* Drag handle */}
             {isSheet && showHandle ? (
               <View style={s.handleHit} {...(disablePanClose ? {} : pan.panHandlers)}>
@@ -721,12 +800,14 @@ const BaseModalImpl = (
                 {footer}
               </View>
             ) : null}
-          </DismissKeyboardArea>
+            </DismissKeyboardArea>
+          </ModalWindowBottomSafeArea>
           </Animated.View>
         </Animated.View>
         </>
       )}
       {embedded || Platform.OS === 'ios' ? null : renderToastOverlay?.() || null}
+      </View>
       </ModalContainer>
     </EmbeddedModalHostContext.Provider>
   );

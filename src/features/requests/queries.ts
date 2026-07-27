@@ -12,6 +12,7 @@ import {
 } from '../../shared/offline/offlineStatus';
 import {
   getAssigneeDisplayNameById,
+  getRelatedRequestCount,
   getRequestById,
   isRequestAuthorizationError,
   listCalendarRequests,
@@ -402,6 +403,34 @@ export function useAllRequests(params: any = {}, options: any = {}) {
 
 export function useMyRequests(params: any = {}, options: any = {}) {
   return useRequestInfiniteQuery(queryKeys.requests.my(params), { ...params, scope: 'my' }, options);
+}
+
+export function useRelatedRequestCount(params: any = {}, options: any = {}) {
+  const { enabled = true, ...queryOptions } = options;
+  const scope = params?.scope === 'all' ? 'all' : 'my';
+  const relationFilters = useMemo(
+    () => ({
+      clientId: String(params?.clientId || '').trim(),
+      objectIds: Array.from(
+        new Set(
+          (Array.isArray(params?.objectIds) ? params.objectIds : [])
+            .map((value) => String(value || '').trim())
+            .filter(Boolean),
+        ),
+      ).sort(),
+    }),
+    [params?.clientId, params?.objectIds],
+  );
+  const hasRelations = Boolean(relationFilters.clientId || relationFilters.objectIds.length);
+
+  return useQuery({
+    queryKey: queryKeys.requests.relatedCount({ scope, ...relationFilters }),
+    queryFn: () => getRelatedRequestCount({ scope, ...relationFilters }),
+    enabled: Boolean(enabled && hasRelations),
+    staleTime: 30 * 1000,
+    retry: shouldRetryRequestQuery,
+    ...queryOptions,
+  });
 }
 
 export function useRequest(id: any, options: any = {}) {

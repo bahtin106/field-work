@@ -41,3 +41,31 @@ export function applyOrderRelationFilters(query, filters = {}) {
   if (!orFilter) return query;
   return query.or(orFilter);
 }
+
+export function buildOrdersEntityFilterRoute({
+  canViewAllOrders = false,
+  entityType = '',
+  entityId = '',
+  label = '',
+} = {}) {
+  const normalizedType = String(entityType || '').trim().toLowerCase();
+  const normalizedId = normalizeRelationId(entityId);
+  if (!normalizedId || (normalizedType !== 'client' && normalizedType !== 'object')) {
+    return null;
+  }
+
+  const entityLabel = String(label || '').trim();
+  return {
+    pathname: canViewAllOrders ? '/orders/all-orders' : '/orders/my-orders',
+    params: {
+      ...(canViewAllOrders ? {} : { seedFilter: 'all' }),
+      ...(normalizedType === 'client'
+        ? { client_ids: normalizedId, object_ids: '' }
+        : { client_ids: '', object_ids: normalizedId }),
+      reset_order_filters: '1',
+      filter_entity_type: normalizedType,
+      filter_entity_id: normalizedId,
+      ...(entityLabel ? { filter_entity_label: entityLabel } : {}),
+    },
+  };
+}

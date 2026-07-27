@@ -84,6 +84,32 @@ function applyObjectFilters(items, values) {
     return true;
   });
 }
+
+function buildObjectAttributeFacetCounts(items) {
+  const list = Array.isArray(items) ? items : [];
+  const counts = {
+    cities: {},
+    streets: {},
+    clients: {},
+  };
+
+  const increment = (target, rawValue) => {
+    const value = String(rawValue || '').trim();
+    if (!value) return;
+    target[value] = (target[value] || 0) + 1;
+  };
+
+  list.forEach((item) => {
+    if (getClientObjectLocationMode(item) === 'address') {
+      increment(counts.cities, item?.city);
+      increment(counts.streets, item?.street);
+    }
+    increment(counts.clients, item?.client_id);
+  });
+
+  return counts;
+}
+
 export default function ObjectsIndex() {
   const { theme } = useTheme();
   useTranslation();
@@ -237,6 +263,10 @@ export default function ObjectsIndex() {
   );
   const objectTagFacetCounts = useMemo(
     () => buildTagFacetCounts(enrichedObjects, (item) => item?.tags),
+    [enrichedObjects],
+  );
+  const objectAttributeFacetCounts = useMemo(
+    () => buildObjectAttributeFacetCounts(enrichedObjects),
     [enrichedObjects],
   );
 
@@ -519,6 +549,9 @@ export default function ObjectsIndex() {
           tags: objectTagOptions,
           facetCounts: {
             total: enrichedObjects.length,
+            cities: objectAttributeFacetCounts.cities,
+            streets: objectAttributeFacetCounts.streets,
+            clients: objectAttributeFacetCounts.clients,
             objectTags: objectTagFacetCounts,
           },
         }}

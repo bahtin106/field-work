@@ -56,7 +56,6 @@ import {
 } from '../src/shared/offline/backgroundSync';
 import QueryProvider from '../src/shared/query/QueryProvider';
 import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
-import { withAlpha } from '../theme/colors';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 import { KeyboardProvider } from '../lib/keyboardControllerCompat';
@@ -120,40 +119,13 @@ if (!globalThis.__splashPrevented) {
 }
 
 function _BrandedLoadingScreen({ theme, label }) {
-  const isDark = theme?.mode === 'dark';
-  const cardBg = withAlpha(theme.colors.surface, isDark ? 0.52 : 0.92);
-  const cardBorder = withAlpha(theme.colors.border, isDark ? 0.72 : 0.92);
-  const cardShadow =
-    theme.shadows?.level2?.ios?.shadowColor ||
-    theme.shadows?.card?.ios?.shadowColor ||
-    theme.colors.shadow ||
-    theme.colors.cardShadow;
-
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
-      <View
-        style={{
-          width: 112,
-          height: 112,
-          borderRadius: 32,
-          backgroundColor: cardBg,
-          borderWidth: 1,
-          borderColor: cardBorder,
-          justifyContent: 'center',
-          alignItems: 'center',
-          shadowColor: cardShadow,
-          shadowOpacity: isDark ? 0.24 : 0.14,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: 8 },
-          elevation: 5,
-        }}
-      >
-        <Image
-          source={require('../assets/splash/splashscreen_logo.png')}
-          style={{ width: 78, height: 78 }}
-          resizeMode="contain"
-        />
-      </View>
+      <Image
+        source={require('../assets/adaptive-icon.png')}
+        style={{ width: 112, height: 112 }}
+        resizeMode="contain"
+      />
       <Text
         style={{
           marginTop: 20,

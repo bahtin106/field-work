@@ -15,7 +15,7 @@ import {
   extractOrderAddress,
   normalizeOrderAddressMode,
 } from './addressing';
-import { applyOrderRelationFilters } from './relationFilters';
+import { applyOrderRelationFilters, hasRelationFilters } from './relationFilters';
 import { resolveRequestTitle } from './title';
 import { getMyCompanyId } from '../profile/api';
 import { buildClientObjectLocationSummary } from '../objects/addressing';
@@ -270,6 +270,7 @@ export async function listRequests(params: any = {}) {
       relationClientId = '',
       relationObjectIds = [],
       clientIds = [],
+      objectIds = [],
       orderIds = [],
       clientTags = [],
       objectTags = [],
@@ -348,6 +349,9 @@ export async function listRequests(params: any = {}) {
     if (Array.isArray(clientIds) && clientIds.length) {
       query = query.in('client_id', clientIds.map(String));
     }
+    if (Array.isArray(objectIds) && objectIds.length) {
+      query = query.in('object_id', objectIds.map(String));
+    }
     if (Array.isArray(orderIds) && orderIds.length) {
       query = query.in('id', orderIds.map(String));
     }
@@ -373,6 +377,42 @@ export async function listRequests(params: any = {}) {
     const { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
     if (error) throw error;
     return warmExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
+  });
+}
+
+export async function getRelatedRequestCount({
+  scope = 'my',
+  clientId = '',
+  objectIds = [],
+}: any = {}) {
+  const relationFilters = {
+    clientId: String(clientId || '').trim(),
+    objectIds: Array.from(
+      new Set(
+        (Array.isArray(objectIds) ? objectIds : [])
+          .map((value) => String(value || '').trim())
+          .filter(Boolean),
+      ),
+    ),
+  };
+  if (!hasRelationFilters(relationFilters)) return 0;
+
+  return measureNetwork('requests.relatedCount', async () => {
+    const session = await requireRequestSession();
+    let query = supabase
+      .from('orders_accessible')
+      .select('id', { count: 'exact', head: true });
+
+    if (scope !== 'all') {
+      query = query.eq('assigned_to', session.user.id);
+    }
+
+    query = excludeFeedStatuses(query);
+    query = applyOrderRelationFilters(query, relationFilters);
+
+    const { count, error } = await query;
+    if (error) throw error;
+    return Math.max(0, Number(count || 0));
   });
 }
 

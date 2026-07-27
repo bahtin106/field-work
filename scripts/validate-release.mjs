@@ -1,3 +1,5 @@
+import { X509Certificate } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -14,11 +16,27 @@ function check(condition, message) {
 const packageJson = json('package.json');
 const appJson = json('app.json').expo;
 const manifest = read('android/app/src/main/AndroidManifest.xml');
+const androidNetworkSecurityConfig = read(
+  'android/app/src/main/res/xml/network_security_config.xml',
+);
+const isrgRootX1Pem = read('android/app/src/main/res/raw/isrg_root_x1.pem');
+const isrgRootX1 = new X509Certificate(isrgRootX1Pem);
 const androidStrings = read('android/app/src/main/res/values/strings.xml');
 const androidStyles = read('android/app/src/main/res/values/styles.xml');
 const androidNightStyles = read('android/app/src/main/res/values-night/styles.xml');
+const androidLauncherIcon = read('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml');
+const androidRoundLauncherIcon = read('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml');
+const androidLauncherBackground = read(
+  'android/app/src/main/res/drawable/ic_launcher_background.xml',
+);
 const gradle = read('android/app/build.gradle');
 const gradleProperties = read('android/gradle.properties');
+const legacySystemBarCompat = read(
+  'android/app/src/main/java/com/monitorapp/monitor/LegacySystemBarColorCompat.java',
+);
+const legacySystemBarVisitor = read(
+  'android/buildSrc/src/main/groovy/com/monitorapp/build/LegacySystemBarColorApiVisitorFactory.groovy',
+);
 const systemBars = read('lib/systemBars.js');
 const externalUrls = read('config/externalUrls.js');
 const appRuntime = read('config/appRuntime.js');
@@ -74,6 +92,8 @@ const authFlowState = read('lib/authFlowNavigationState.js');
 const rootLayout = read('app/_layout.js');
 const photoQueue = read('src/shared/media/orderPhotoQueue.js');
 const cachedImage = read('components/ui/CachedImage.jsx');
+const photoGrid = read('app/orders/components/PhotoGrid.jsx');
+const quickPreviewModal = read('components/ui/modals/QuickPreviewModal.jsx');
 const fullscreenImageViewer = read('app/orders/components/FullscreenImageViewer.jsx');
 const baseModal = read('components/ui/modals/BaseModal.jsx');
 const confirmAlertModals = read('components/ui/modals/ConfirmAlertModals.jsx');
@@ -84,6 +104,17 @@ const mediaUploadModal = read('app/orders/components/OrderPhotosModal.jsx');
 const signedMediaUrl = read('src/shared/media/signedUrl.js');
 const mediaAssets = read('src/shared/media/assets.js');
 const emailServer = read('email-server.cjs');
+const iconSyncValidation = spawnSync(
+  process.execPath,
+  ['scripts/sync-android-launcher-icons.mjs', '--check'],
+  {
+    cwd: root,
+    encoding: 'utf8',
+  },
+);
+const iconSyncValidationOutput = `${iconSyncValidation.stdout || ''}\n${
+  iconSyncValidation.stderr || ''
+}`.trim();
 const financePersistenceMigrationPath =
   'supabase/migrations/20260719120000_fix_manual_expense_persistence.sql';
 const financePersistenceMigration = read(financePersistenceMigrationPath);
@@ -122,6 +153,11 @@ check(packageJson.dependencies?.expo === '~54.0.36', 'Expo must stay on the vali
 check(packageJson.dependencies?.['expo-updates'] === '~29.0.19', 'expo-updates must match the validated SDK 54 patch');
 check(packageJson.dependencies?.['@react-native-community/netinfo'] === '11.4.1', 'NetInfo must match Expo SDK 54');
 check(packageJson.dependencies?.['react-native-keyboard-controller'] === '1.18.5', 'Keyboard controller must match Expo SDK 54');
+check(
+  packageJson.devDependencies?.['@expo/image-utils'] === '0.8.8' &&
+    packageJson.devDependencies?.['jimp-compact'] === '0.16.1',
+  'Canonical app icon synchronization requires the validated image tooling',
+);
 
 const permissions = new Set(appJson.android?.permissions || []);
 const blockedPermissions = new Set(appJson.android?.blockedPermissions || []);
@@ -187,6 +223,44 @@ check(appJson.android?.runtimeVersion === appJson.version, 'Android runtimeVersi
 check(appJson.ios?.runtimeVersion === appJson.version, 'iOS runtimeVersion must match app version');
 check(Number.isInteger(versionCode) && versionCode > 0, 'Android versionCode must be a positive integer');
 check(appJson.orientation === 'default', 'Android release must support user-selected orientation');
+check(
+  appJson.icon === './assets/icon.png' &&
+    appJson.splash?.image === './assets/adaptive-icon.png' &&
+    appJson.web?.favicon === './assets/favicon.png' &&
+    appJson.android?.adaptiveIcon?.foregroundImage === './assets/adaptive-icon.png' &&
+    appJson.android?.adaptiveIcon?.monochromeImage ===
+      './assets/branding/app-mark-monochrome.png' &&
+    appJson.plugins?.some(
+      (plugin) =>
+        Array.isArray(plugin) &&
+        plugin[0] === 'expo-splash-screen' &&
+        plugin[1]?.image === './assets/adaptive-icon.png' &&
+        plugin[1]?.dark?.image === './assets/adaptive-icon.png',
+    ) &&
+    appJson.plugins?.some(
+      (plugin) =>
+        Array.isArray(plugin) &&
+        plugin[0] === 'expo-notifications' &&
+        plugin[1]?.icon === './assets/notifications/notification-icon.png',
+    ) &&
+    rootLayout.includes("source={require('../assets/adaptive-icon.png')}") &&
+    manifest.includes('android:icon="@mipmap/ic_launcher"') &&
+    manifest.includes('android:roundIcon="@mipmap/ic_launcher_round"') &&
+    manifest.includes('android:resource="@drawable/notification_icon"') &&
+    androidLauncherIcon.includes('<foreground android:drawable="@mipmap/ic_launcher_foreground"') &&
+    androidLauncherIcon.includes(
+      '<monochrome android:drawable="@mipmap/ic_launcher_monochrome"',
+    ) &&
+    androidRoundLauncherIcon.includes('<foreground android:drawable="@mipmap/ic_launcher_foreground"') &&
+    androidRoundLauncherIcon.includes(
+      '<monochrome android:drawable="@mipmap/ic_launcher_monochrome"',
+    ) &&
+    !androidLauncherBackground.includes('<bitmap') &&
+    iconSyncValidation.status === 0,
+  `All visible app icon variants must derive from assets/adaptive-icon.png; run npm run icons:sync${
+    iconSyncValidationOutput ? `\n${iconSyncValidationOutput}` : ''
+  }`,
+);
 check(appJson.android?.edgeToEdgeEnabled === true, 'Android edge-to-edge must be enabled');
 check(
   !manifest.includes('android:screenOrientation=') &&
@@ -201,13 +275,25 @@ check(
 );
 check(
   !`${androidStyles}\n${androidNightStyles}`.match(
-    /windowOptOutEdgeToEdgeEnforcement|android:(?:statusBarColor|navigationBarColor|windowTranslucentNavigation)/,
+    /windowOptOutEdgeToEdgeEnforcement|android:(?:statusBarColor|navigationBarColor|navigationBarDividerColor|windowTranslucentNavigation)/,
   ),
   'Android themes must not opt out of edge-to-edge or set deprecated system bar colors',
 );
 check(
   !systemBars.match(/StatusBar\.set(?:Translucent|BackgroundColor)|NavigationBar\.set(?:Behavior|BackgroundColor)Async/),
   'System bar integration must not call APIs unsupported by edge-to-edge',
+);
+check(
+  gradle.includes('LegacySystemBarColorApiVisitorFactory') &&
+    gradle.includes('InstrumentationScope.ALL') &&
+    legacySystemBarCompat.includes('Build.VERSION.SDK_INT >= EDGE_TO_EDGE_ENFORCED_API') &&
+    legacySystemBarVisitor.includes("'getStatusBarColor()I'") &&
+    legacySystemBarVisitor.includes("'setStatusBarColor(I)V'") &&
+    legacySystemBarVisitor.includes("'getNavigationBarColor()I'") &&
+    legacySystemBarVisitor.includes("'setNavigationBarColor(I)V'") &&
+    legacySystemBarVisitor.includes("'getNavigationBarDividerColor()I'") &&
+    legacySystemBarVisitor.includes("'setNavigationBarDividerColor(I)V'"),
+  'Release builds must isolate legacy system-bar color APIs from Android 15+',
 );
 
 check(externalUrls.includes('https://monitorapp.ru/data-deletion'), 'Public account deletion URL is required');
@@ -217,6 +303,19 @@ check(
     !appRuntime.includes("readPublicEnv('EXPO_PUBLIC_SUPABASE_URL')") &&
     !appRuntime.includes("readPublicEnv('SUPABASE_URL')"),
   'The app must use only the canonical self-hosted Supabase origin',
+);
+check(
+  manifest.includes('android:networkSecurityConfig="@xml/network_security_config"') &&
+    manifest.includes('android:usesCleartextTraffic="false"') &&
+    androidNetworkSecurityConfig.includes(
+      '<domain includeSubdomains="false">supabase.monitorapp.ru</domain>',
+    ) &&
+    androidNetworkSecurityConfig.includes('<certificates src="system"/>') &&
+    androidNetworkSecurityConfig.includes('<certificates src="@raw/isrg_root_x1"/>') &&
+    androidNetworkSecurityConfig.includes('cleartextTrafficPermitted="false"') &&
+    isrgRootX1.fingerprint256 ===
+      '96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6',
+  'Android must trust the official ISRG Root X1 only for the canonical Supabase domain',
 );
 check(
   !fs.existsSync(path.join(root, 'supabase/.temp/linked-project.json')),
@@ -543,14 +642,31 @@ check(
 check(photoQueue.includes('ownerUserId') && photoQueue.includes('flushOrderPhotoQueue'), 'Photo queue must be owner-scoped and globally flushable');
 check(
   !cachedImage.includes('__img_retry') &&
-    cachedImage.includes('source={{ uri: sourceUri }}') &&
+    !cachedImage.includes('fallbackUriRef') &&
+    cachedImage.includes('const imageSource = useMemo(() => ({ uri: sourceUri }), [sourceUri])') &&
+    cachedImage.includes('source={imageSource}') &&
     cachedImage.includes("retryAttempt > 0 ? 'none' : cachePolicy"),
   'Image retries must preserve signed URLs exactly and bypass a failed cache entry',
 );
 check(
+  photoGrid.includes('key: buildPhotoKey(uploadedUrl || visibleUri, visibleUri') &&
+    photoGrid.includes('const stableDisplayBySourceRef = useRef(new Map())') &&
+    photoGrid.includes('stableDisplayBySourceRef.current.get(sourceKey)'),
+  'Uploaded order photos must keep stable identities and must not be replaced by late thumbnails',
+);
+check(
+  quickPreviewModal.includes('registerIOSModal') &&
+    quickPreviewModal.includes('requestIOSModalPresentation') &&
+    quickPreviewModal.includes('notifyIOSModalDismissed') &&
+    quickPreviewModal.includes("visible={Platform.OS === 'ios' ? nativeVisible : true}"),
+  'Quick previews opened from another modal must participate in the shared iOS modal stack',
+);
+check(
   fullscreenImageViewer.includes('onDisplay={handleDisplayed}') &&
     fullscreenImageViewer.includes("t('viewer_image_load_error')") &&
-    fullscreenImageViewer.includes('fallbackImages={fallbackImages}'),
+    fullscreenImageViewer.includes('fallbackImages={retainedProps.fallbackImages}') &&
+    fullscreenImageViewer.includes('registerIOSModal') &&
+    fullscreenImageViewer.includes('onNativeDismiss={handleNativeDismiss}'),
   'Fullscreen photos must expose loading failure recovery and a network fallback',
 );
 check(
@@ -594,6 +710,13 @@ check(
     baseModal.includes("const sheetCornerRadius = Platform.OS === 'ios' ? 24 : 28") &&
     baseModal.includes('EmbeddedModalHostContext') &&
     baseModal.includes('registerRequestClose') &&
+    baseModal.includes('registerIOSModal') &&
+    baseModal.includes('requestIOSModalPresentation') &&
+    baseModal.includes('notifyIOSModalDismissed') &&
+    baseModal.includes('iosSuspendedRef') &&
+    !baseModal.includes('FullWindowOverlay') &&
+    baseModal.includes('const ModalContainer = embedded ? View : Modal') &&
+    baseModal.includes('collapsable={false}') &&
     baseModal.includes("BackHandler.addEventListener('hardwareBackPress'") &&
     confirmAlertModals.includes('<BaseModal') &&
     confirmAlertModals.includes('presentation="dialog"') &&

@@ -104,6 +104,7 @@ export function createEmptyClientObjectDraft(overrides = {}) {
     media_file_1_label: '',
     media_file_2_label: '',
     media_file_3_label: '',
+    media_sections: [],
     ...overrides,
   };
 }
