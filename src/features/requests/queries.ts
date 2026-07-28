@@ -547,7 +547,11 @@ export function useUpdateRequestMutation() {
       }
 
       try {
-        return markRequestDetailLoaded(await updateRequest(id, patch, expectedUpdatedAt));
+        const updated = await updateRequest(id, patch, expectedUpdatedAt);
+        return markRequestDetailLoaded({
+          ...(baseSnapshot || {}),
+          ...(updated || {}),
+        });
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const queued = await enqueueRequestUpdate({

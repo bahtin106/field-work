@@ -1250,6 +1250,19 @@ export default function CompanySettings() {
           </View>
         ) : null}
 
+        {isSoloAdmin ? (
+          <View style={s.sectionWrap}>
+            <SectionHeader>{t('settings_sections_data_title')}</SectionHeader>
+            <Card paddedXOnly separated>
+              <SelectField
+                label={t('settings_sections_data_items_trash')}
+                showValue={false}
+                onPress={go('/app_settings/trash')}
+              />
+            </Card>
+          </View>
+        ) : null}
+
         <View style={s.sectionWrap}>
           <SectionHeader>{t('settings_sections_reference_title')}</SectionHeader>
           <Card paddedXOnly separated>

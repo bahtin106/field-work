@@ -17,6 +17,7 @@ export default function Screen({
   scroll = true,
   scrollRef,
   contentContainerStyle,
+  refreshControl,
   onScroll,
   scrollEventThrottle,
   headerOptions, // Новый prop для прямой передачи опций header
@@ -82,9 +83,13 @@ export default function Screen({
           <KeyboardAwareScrollView
             ref={resolvedScrollRef}
             contentContainerStyle={[
-              { flexGrow: 1, paddingBottom: insets.bottom + 20 },
+              {
+                flexGrow: 1,
+                paddingBottom: insets.bottom + theme.components.keyboardAware.bottomOffset,
+              },
               contentContainerStyle,
             ]}
+            refreshControl={refreshControl}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="none"
             showsVerticalScrollIndicator={false}

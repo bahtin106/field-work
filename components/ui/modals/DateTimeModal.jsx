@@ -8,9 +8,46 @@ import BaseModal, { withAlpha } from './BaseModal';
 import ModalActionsRow from './ModalActionsRow';
 import Wheel, { ITEM_HEIGHT_DP, VISIBLE_COUNT_DP } from './Wheel';
 
+function parseInitialDate(value) {
+  try {
+    if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) {
+      return new Date();
+    }
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return new Date(
+        value.getFullYear(),
+        value.getMonth(),
+        value.getDate(),
+        value.getHours(),
+        value.getMinutes(),
+        0,
+        0,
+      );
+    }
+    if (typeof value === 'string') {
+      const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (match) {
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        return new Date(year, month - 1, day, 12, 0, 0, 0);
+      }
+    }
+    if (typeof value === 'number') {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? new Date() : date;
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  } catch {
+    return new Date();
+  }
+}
+
 export default function DateTimeModal({
   visible,
   onClose,
+  onDismiss,
   onApply,
   initial = null,
   mode = 'datetime',
@@ -23,7 +60,6 @@ export default function DateTimeModal({
 }) {
   const modalRef = React.useRef(null);
   const { theme } = useTheme();
-  const [contentW, setContentW] = React.useState(0);
 
   const clampStep = (n, step) => Math.max(1, Math.min(30, Math.floor(step || 5)));
   const step = clampStep(minuteStep, minuteStep);
@@ -34,42 +70,12 @@ export default function DateTimeModal({
   };
   const pad2 = (n) => String(n).padStart(2, '0');
 
-  const parseInitial = (v) => {
-    try {
-      if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) {
-        return new Date();
-      }
-      if (v instanceof Date && !isNaN(v)) {
-        return new Date(
-          v.getFullYear(),
-          v.getMonth(),
-          v.getDate(),
-          v.getHours(),
-          v.getMinutes(),
-          0,
-          0,
-        );
-      }
-      if (typeof v === 'string') {
-        const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (m) {
-          const y = Number(m[1]);
-          const mo = Number(m[2]);
-          const d = Number(m[3]);
-          return new Date(y, mo - 1, d, 12, 0, 0, 0);
-        }
-      }
-      if (typeof v === 'number') {
-        const d = new Date(v);
-        return isNaN(d) ? new Date() : d;
-      }
-      const d = new Date(v);
-      return isNaN(d) ? new Date() : d;
-    } catch {
-      return new Date();
-    }
-  };
-  const baseDate = parseInitial(initial);
+  const initialValue = initial instanceof Date ? initial.getTime() : initial;
+  const baseDate = React.useMemo(
+    () => parseInitialDate(initialValue),
+    // Keep the resolved date stable while the user is interacting with the wheels.
+    [initialValue],
+  );
 
   const _dict = React.useMemo(() => getDict?.() || {}, []);
   const _srcShort = Array.from({ length: 12 }, (_, i) => T(`months_short_${i}`));
@@ -100,11 +106,6 @@ export default function DateTimeModal({
     const maxYear = allowFutureDates ? y + 10 : y;
     return range(minYear, maxYear);
   }, [allowFutureDates, allowPastDates, currentYear]);
-
-  const [dYearIdx, setDYearIdx] = React.useState(0);
-  const [dMonthIdx, setDMonthIdx] = React.useState(0);
-  const [dDayIdx, setDDayIdx] = React.useState(0);
-  const [withYear, setWithYear] = React.useState(omitYearDefault);
 
   const clampMonthForYear = React.useCallback(
     (month, year) => {
@@ -143,6 +144,55 @@ export default function DateTimeModal({
     [allowPastDates, allowFutureDates, currentYear, currentMonth, currentDay, daysInMonth],
   );
 
+  const minutesData = React.useMemo(
+    () => range(0, 59).filter((minute) => minute % step === 0),
+    [step],
+  );
+  const initialSelection = React.useMemo(() => {
+    let yearIdx = years.indexOf(baseDate.getFullYear());
+    if (yearIdx < 0) yearIdx = 0;
+
+    const initialWithYear = allowOmitYear ? omitYearDefault : true;
+    if (allowOmitYear && !omitYearDefault && baseDate.getFullYear() === currentYear) {
+      const preferredYear = Math.max(years[0] || 1900, currentYear - 30);
+      const preferredYearIdx = years.indexOf(preferredYear);
+      if (preferredYearIdx >= 0) yearIdx = preferredYearIdx;
+    }
+
+    const yearForBounds = initialWithYear ? years[yearIdx] || currentYear : null;
+    const month = clampMonthForYear(baseDate.getMonth(), yearForBounds);
+    const day = clampDayForYearMonth(baseDate.getDate(), month, yearForBounds);
+    const initialDays = getDayRange(yearForBounds, month);
+    const dayIdx = Math.max(0, initialDays.indexOf(day));
+    const roundedMinute = Math.min(59, Math.round(baseDate.getMinutes() / step) * step);
+    const minuteIdx = Math.max(0, minutesData.indexOf(roundedMinute));
+
+    return {
+      yearIdx,
+      month,
+      dayIdx,
+      withYear: initialWithYear,
+      hourIdx: baseDate.getHours(),
+      minuteIdx,
+    };
+  }, [
+    allowOmitYear,
+    baseDate,
+    clampDayForYearMonth,
+    clampMonthForYear,
+    currentYear,
+    getDayRange,
+    minutesData,
+    omitYearDefault,
+    step,
+    years,
+  ]);
+
+  const [dYearIdx, setDYearIdx] = React.useState(initialSelection.yearIdx);
+  const [dMonthIdx, setDMonthIdx] = React.useState(initialSelection.month);
+  const [dDayIdx, setDDayIdx] = React.useState(initialSelection.dayIdx);
+  const [withYear, setWithYear] = React.useState(initialSelection.withYear);
+
   const availableMonths = React.useMemo(() => {
     const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : null;
     if (year == null) return range(0, 11);
@@ -165,47 +215,24 @@ export default function DateTimeModal({
     getDayRange,
   ]);
 
-  const minutesData = React.useMemo(() => range(0, 59).filter((m) => m % step === 0), [step]);
-  const [tHourIdx, setTHourIdx] = React.useState(0);
-  const [tMinuteIdx, setTMinuteIdx] = React.useState(0);
+  const [tHourIdx, setTHourIdx] = React.useState(initialSelection.hourIdx);
+  const [tMinuteIdx, setTMinuteIdx] = React.useState(initialSelection.minuteIdx);
   const [tab, setTab] = React.useState('date');
+  const previousVisibleRef = React.useRef(false);
 
-  React.useEffect(() => {
-    if (!visible) return;
+  React.useLayoutEffect(() => {
+    const wasVisible = previousVisibleRef.current;
+    previousVisibleRef.current = visible;
+    if (wasVisible) return;
 
-    const y = years.indexOf(baseDate.getFullYear());
-    let yearIdx = y >= 0 ? y : 0;
-    const initialWithYear = allowOmitYear ? omitYearDefault : true;
-
-    // Если год опущен (omitYearDefault === false) и baseDate был подставлен как currentYear
-    // — переключаем дефолтный индекс года на более вероятный (currentYear - 30),
-    // чтобы не заставлять пользователя листать десятилетия назад.
-    if (allowOmitYear && omitYearDefault === false && baseDate.getFullYear() === currentYear) {
-      const preferredYear = Math.max(years[0] || 1900, currentYear - 30);
-      const prefIdx = years.indexOf(preferredYear);
-      if (prefIdx >= 0) yearIdx = prefIdx;
-    }
-
-    setDYearIdx(yearIdx);
-    setWithYear(initialWithYear);
-
-    const yearForBounds = initialWithYear ? years[yearIdx] || currentYear : null;
-    const month = clampMonthForYear(baseDate.getMonth(), yearForBounds);
-    const day = clampDayForYearMonth(baseDate.getDate(), month, yearForBounds);
-    const initDays = getDayRange(yearForBounds, month);
-    const initDayIdx = Math.max(0, initDays.indexOf(day));
-
-    setDMonthIdx(month);
-    setDDayIdx(initDayIdx);
-
-    setTHourIdx(baseDate.getHours());
-    const mi = Math.round(baseDate.getMinutes() / step);
-    const minuteVal = Math.min(59, mi * step);
-    const mIdx = minutesData.indexOf(minuteVal);
-    setTMinuteIdx(mIdx >= 0 ? mIdx : 0);
+    setDYearIdx(initialSelection.yearIdx);
+    setWithYear(initialSelection.withYear);
+    setDMonthIdx(initialSelection.month);
+    setDDayIdx(initialSelection.dayIdx);
+    setTHourIdx(initialSelection.hourIdx);
+    setTMinuteIdx(initialSelection.minuteIdx);
     setTab('date');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }, [initialSelection, visible]);
 
   // Когда пользователь включает переключатель года (с false → true),
   // если год заранее был подставлен в текущий год (sentinel flow),
@@ -244,10 +271,8 @@ export default function DateTimeModal({
     return withYear ? `${d} ${mName} ${y}, ${hh}:${mm}` : `${d} ${mName}, ${hh}:${mm}`;
   }, [mode, dDayIdx, dMonthIdx, dYearIdx, years, tHourIdx, tMinuteIdx, minutesData, MONTHS_GEN, baseDate, withYear, days]);
 
-  const innerGap = theme.components?.datetimeModal?.innerGap ?? theme.spacing?.sm ?? 8;
-  const minWheelWidth = theme.components?.datetimeModal?.wheelMinWidth ?? 64;
-  const W3 = Math.max(minWheelWidth, contentW > 0 ? (contentW - innerGap * 2) / 3 : 0);
-  const W2 = Math.max(minWheelWidth, contentW > 0 ? (contentW - innerGap) / 2 : 0);
+  const modalTokens = theme.components.datetimeModal;
+  const innerGap = modalTokens.innerGap;
 
   const handleApply = () => {
     const selectedMonth = dMonthIdx;
@@ -297,9 +322,9 @@ export default function DateTimeModal({
     <View
       style={{
         flexDirection: 'row',
-        borderWidth: 1,
+        borderWidth: modalTokens.segmentedBorderWidth,
         borderColor: theme.colors.border,
-        borderRadius: 12,
+        borderRadius: modalTokens.segmentedRadius,
         overflow: 'hidden',
         marginBottom: theme.spacing.sm,
       }}
@@ -313,17 +338,21 @@ export default function DateTimeModal({
             style={({ pressed }) => [
               {
                 flex: 1,
-                paddingVertical: 8,
+                paddingVertical: modalTokens.segmentedPaddingY,
                 alignItems: 'center',
-                backgroundColor: active ? withAlpha(theme.colors.primary, 0.12) : theme.colors.surface,
+                backgroundColor: active
+                  ? withAlpha(theme.colors.primary, modalTokens.segmentedActiveAlpha)
+                  : theme.colors.surface,
               },
-              pressed && { opacity: 0.85 },
+              pressed && { opacity: modalTokens.segmentedPressedOpacity },
             ]}
           >
             <Text
               style={{
                 color: active ? theme.colors.primary : theme.colors.textSecondary,
-                fontWeight: active ? '700' : '500',
+                fontWeight: active
+                  ? theme.typography.weight.bold
+                  : theme.typography.weight.medium,
               }}
             >
               {k === 'date' ? T('datetime_tab_date') : T('datetime_tab_time')}
@@ -339,17 +368,18 @@ export default function DateTimeModal({
       ref={modalRef}
       visible={visible}
       onClose={onClose}
+      onDismiss={onDismiss}
       title={header}
-      maxHeightRatio={0.65}
+      maxHeightRatio={modalTokens.maxHeightRatio}
       presentation="sheet"
       footer={footer}
     >
-      <View onLayout={(e) => setContentW(e.nativeEvent.layout.width)}>
+      <View>
         {mode === 'datetime' ? <Segmented /> : null}
 
         {mode === 'date' || (mode === 'datetime' && tab === 'date') ? (
           <>
-            <View style={{ position: 'relative', marginBottom: 10 }}>
+            <View style={{ position: 'relative', marginBottom: modalTokens.wheelSectionGap }}>
               <View
                 style={{
                   flexDirection: 'row',
@@ -364,7 +394,6 @@ export default function DateTimeModal({
                   inactiveColor={theme.colors.textSecondary}
                   index={Math.max(0, Math.min(dDayIdx, days.length - 1))}
                   onIndexChange={setDDayIdx}
-                  width={W3}
                 />
                 <Wheel
                   data={availableMonths.map((m) => MONTHS_ABBR[m])}
@@ -383,7 +412,6 @@ export default function DateTimeModal({
                       return Math.max(0, nextIdx);
                     });
                   }}
-                  width={W3}
                 />
                 {withYear ? (
                   <Wheel
@@ -404,11 +432,18 @@ export default function DateTimeModal({
                         return Math.max(0, nextIdx);
                       });
                     }}
-                    width={W3}
                     enabled={withYear}
                   />
                 ) : (
-                  <View style={{ width: W3, justifyContent: 'center', alignItems: 'center' }}>
+                  <View
+                    style={{
+                      flex: 1,
+                      flexBasis: 0,
+                      minWidth: 0,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                  >
                     <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.md }}>---</Text>
                   </View>
                 )}
@@ -421,10 +456,16 @@ export default function DateTimeModal({
                   right: 0,
                   top: (ITEM_HEIGHT_DP * (VISIBLE_COUNT_DP - 1)) / 2,
                   height: ITEM_HEIGHT_DP,
-                  backgroundColor: withAlpha(theme.colors.primary, 0.06),
-                  borderWidth: 1,
-                  borderColor: withAlpha(theme.colors.primary, 0.22),
-                  borderRadius: 12,
+                  backgroundColor: withAlpha(
+                    theme.colors.primary,
+                    modalTokens.selectionBackgroundAlpha,
+                  ),
+                  borderWidth: modalTokens.selectionBorderWidth,
+                  borderColor: withAlpha(
+                    theme.colors.primary,
+                    modalTokens.selectionBorderAlpha,
+                  ),
+                  borderRadius: modalTokens.selectionRadius,
                 }}
               />
             </View>
@@ -436,13 +477,21 @@ export default function DateTimeModal({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   marginTop: theme.spacing.sm,
-                  paddingHorizontal: 4,
-                  paddingLeft: 12,
-                  paddingVertical: 6,
+                  paddingHorizontal: modalTokens.omitYearPaddingX,
+                  paddingLeft: modalTokens.omitYearPaddingLeft,
+                  paddingVertical: modalTokens.omitYearPaddingY,
                 }}
               >
-                <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '600' }}>{omitYearLabel}</Text>
-                <View style={{ width: 12 }} />
+                <Text
+                  style={{
+                    color: theme.colors.text,
+                    fontSize: modalTokens.omitYearTextSize,
+                    fontWeight: theme.typography.weight.semibold,
+                  }}
+                >
+                  {omitYearLabel}
+                </Text>
+                <View style={{ width: modalTokens.omitYearSpacerWidth }} />
                 <ThemedSwitch value={withYear} onValueChange={setWithYear} />
               </View>
             ) : null}
@@ -451,7 +500,7 @@ export default function DateTimeModal({
 
         {mode === 'time' || (mode === 'datetime' && tab === 'time') ? (
           <>
-            <View style={{ position: 'relative', marginBottom: 10 }}>
+            <View style={{ position: 'relative', marginBottom: modalTokens.wheelSectionGap }}>
               <View
                 style={{
                   flexDirection: 'row',
@@ -466,7 +515,6 @@ export default function DateTimeModal({
                   inactiveColor={theme.colors.textSecondary}
                   index={tHourIdx}
                   onIndexChange={setTHourIdx}
-                  width={W2}
                 />
                 <Wheel
                   data={minutesData.map((n) => String(n).padStart(2, '0'))}
@@ -474,7 +522,6 @@ export default function DateTimeModal({
                   inactiveColor={theme.colors.textSecondary}
                   index={tMinuteIdx}
                   onIndexChange={setTMinuteIdx}
-                  width={W2}
                 />
               </View>
               <View
@@ -485,10 +532,16 @@ export default function DateTimeModal({
                   right: 0,
                   top: (ITEM_HEIGHT_DP * (VISIBLE_COUNT_DP - 1)) / 2,
                   height: ITEM_HEIGHT_DP,
-                  backgroundColor: withAlpha(theme.colors.primary, 0.06),
-                  borderWidth: 1,
-                  borderColor: withAlpha(theme.colors.primary, 0.22),
-                  borderRadius: 12,
+                  backgroundColor: withAlpha(
+                    theme.colors.primary,
+                    modalTokens.selectionBackgroundAlpha,
+                  ),
+                  borderWidth: modalTokens.selectionBorderWidth,
+                  borderColor: withAlpha(
+                    theme.colors.primary,
+                    modalTokens.selectionBorderAlpha,
+                  ),
+                  borderRadius: modalTokens.selectionRadius,
                 }}
               />
             </View>

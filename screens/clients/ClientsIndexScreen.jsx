@@ -84,14 +84,49 @@ export default function ClientsIndexScreen() {
   const [sortVisible, setSortVisible] = React.useState(false);
   const [sortKey, setSortKey] = React.useState(CLIENT_SORT.NAME_ASC);
   const filters = useFilters({ screenKey: 'clients', defaults: CLIENT_FILTER_DEFAULTS });
-  const selectedTag = React.useMemo(() => {
-    const raw = Array.isArray(params?.tag) ? params.tag[0] : params?.tag;
+  const setFilterValue = filters.setValue;
+  const applyFilters = filters.apply;
+  const revalidateFilters = filters.revalidate;
+  const routeClientTag = React.useMemo(() => {
+    const raw = Array.isArray(params?.filter_client_tag)
+      ? params.filter_client_tag[0]
+      : params?.filter_client_tag;
     return String(raw || '').trim();
-  }, [params?.tag]);
-  const activeTagFilter = React.useMemo(
-    () => (selectedTag && String(search || '').trim() === selectedTag ? selectedTag : ''),
-    [search, selectedTag],
-  );
+  }, [params?.filter_client_tag]);
+  const routeTagSeedRef = React.useRef('');
+
+  React.useEffect(() => {
+    if (!routeClientTag) {
+      routeTagSeedRef.current = '';
+      return undefined;
+    }
+    if (routeTagSeedRef.current === routeClientTag) return undefined;
+    routeTagSeedRef.current = routeClientTag;
+
+    let cancelled = false;
+    const seedTagFilter = async () => {
+      await revalidateFilters();
+      if (cancelled) return;
+
+      const nextValues = {
+        ...CLIENT_FILTER_DEFAULTS,
+        clientTags: [routeClientTag],
+      };
+      setSearch('');
+      setDebouncedSearch('');
+      Object.entries(nextValues).forEach(([key, value]) => setFilterValue(key, value));
+      await applyFilters(nextValues);
+
+      if (!cancelled) {
+        router.setParams({ filter_client_tag: undefined });
+      }
+    };
+
+    void seedTagFilter();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyFilters, revalidateFilters, routeClientTag, router, setFilterValue]);
 
   const { data: companyId, isLoading: companyLoading } = useMyCompanyIdQuery();
 
@@ -165,18 +200,8 @@ export default function ClientsIndexScreen() {
     return () => clearTimeout(timer);
   }, [search, theme?.timings?.backDelayMs]);
 
-  React.useEffect(() => {
-    if (!selectedTag) return;
-    setSearch(selectedTag);
-  }, [selectedTag]);
-
   const filteredClients = React.useMemo(() => {
     return clientsFilteredByPanel.filter((client) => {
-      const tagMatch =
-        !activeTagFilter ||
-        (Array.isArray(client?.tags) &&
-          client.tags.some((tag) => String(tag?.value || '').trim().toLowerCase() === activeTagFilter.toLowerCase()));
-      if (!tagMatch) return false;
       if (!debouncedSearch) return true;
       return matchesSearch(
         buildSearchIndex({
@@ -193,7 +218,7 @@ export default function ClientsIndexScreen() {
         debouncedSearch,
       );
     });
-  }, [activeTagFilter, canViewClientPhones, clientsFilteredByPanel, debouncedSearch]);
+  }, [canViewClientPhones, clientsFilteredByPanel, debouncedSearch]);
 
   const filterSummaryData = React.useMemo(() => {
     const fullParts = [];

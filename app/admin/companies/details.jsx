@@ -2,7 +2,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
@@ -20,6 +20,7 @@ import DateTimeModal from '../../../components/ui/modals/DateTimeModal';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useCompanyAccessState } from '../../../hooks/useCompanyAccessState';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -32,6 +33,8 @@ function parseDate(value) {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_SUBSCRIPTION_ADJUSTMENT_DAYS = 36500;
+const SUBSCRIPTION_DAY_STEPS = Object.freeze([1, 7, 30, 365]);
 
 function toPickerDate(value) {
   return parseDate(value);
@@ -65,62 +68,20 @@ function normalizeTimeZone(value) {
   }
 }
 
-function getTimeZoneOffsetMinutes(value, timeZone) {
-  const d = parseDate(value);
-  if (!d) return 0;
-  try {
-    const dtf = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hour12: false,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    const parts = Object.fromEntries(dtf.formatToParts(d).map((part) => [part.type, part.value]));
-    const zonedUtcMs = Date.UTC(
-      Number(parts.year),
-      Number(parts.month) - 1,
-      Number(parts.day),
-      Number(parts.hour),
-      Number(parts.minute),
-      0,
-      0,
-    );
-    return Math.round((zonedUtcMs - d.getTime()) / 60000);
-  } catch {
-    return 0;
-  }
+function resolveDateLocale(locale) {
+  return String(locale || '').trim().toLowerCase().startsWith('en') ? 'en-US' : 'ru-RU';
 }
 
-function formatUtcOffset(totalMinutes) {
-  const mins = Number.isFinite(totalMinutes) ? Math.trunc(totalMinutes) : 0;
-  const sign = mins >= 0 ? '+' : '-';
-  const abs = Math.abs(mins);
-  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
-  const mm = String(abs % 60).padStart(2, '0');
-  return `UTC${sign}${hh}:${mm}`;
-}
-
-function formatDateTime(value, timeZone) {
+function formatDate(value, timeZone, locale) {
   const d = parseDate(value);
   if (!d) return '';
   const safeZone = normalizeTimeZone(timeZone);
-  const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
-  const datePart = new Intl.DateTimeFormat(locale, {
+  return new Intl.DateTimeFormat(resolveDateLocale(locale), {
     timeZone: safeZone,
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   }).format(d);
-  const timePart = new Intl.DateTimeFormat(locale, {
-    timeZone: safeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(d);
-  return `${datePart}, ${timePart} (${formatUtcOffset(getTimeZoneOffsetMinutes(d, safeZone))})`;
 }
 
 function addDays(baseDate, days) {
@@ -191,17 +152,21 @@ function ActionRow({ label, value, onPress, disabled, theme }) {
       onPress={disabled ? undefined : onPress}
       style={({ pressed }) => [
         base.row,
-        pressed && !disabled ? { opacity: theme.components.listItem.disabledOpacity } : null,
+        pressed && !disabled ? { opacity: theme.components.button.pressedOpacity } : null,
         disabled ? { opacity: theme.components.listItem.disabledOpacity } : null,
       ]}
+      disabled={disabled}
+      android_ripple={{ color: theme.colors.ripple, borderless: false }}
+      pressRetentionOffset={theme.components.interactive.pressRetentionOffset}
       accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
     >
       <Text style={base.label}>{label}</Text>
       <View style={base.rightWrap}>
         {value ? <Text style={base.value}>{value}</Text> : null}
         <Feather
           name="chevron-right"
-          size={theme.components.listItem.chevronSize || 18}
+          size={theme.components.listItem.chevronSize}
           color={theme.colors.textSecondary}
         />
       </View>
@@ -214,7 +179,8 @@ export default function AdminCompanyDetailsScreen() {
   const companyIdRaw = companyIdParam ?? idParam;
   const companyId = Array.isArray(companyIdRaw) ? companyIdRaw[0] : companyIdRaw;
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const nav = useNavigation();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -233,6 +199,8 @@ export default function AdminCompanyDetailsScreen() {
   const [daysInput, setDaysInput] = React.useState('0');
   const [paidSeatsInput, setPaidSeatsInput] = React.useState('0');
   const [confirmState, setConfirmState] = React.useState(null);
+  const pendingPeriodEndRef = React.useRef(null);
+  const periodEndTransitionFrameRef = React.useRef(null);
 
   const { data, isLoading, error, refetch: refetchCompany } = useQuery({
     queryKey: companyKey,
@@ -434,11 +402,14 @@ export default function AdminCompanyDetailsScreen() {
 
   const periodEndRaw = meta?.current_period_end || data?.current_period_end || access?.period_end || null;
   const companyIsActive = data?.is_active !== false;
-  const periodEnd = parseDate(periodEndRaw);
+  const periodEnd = React.useMemo(() => parseDate(periodEndRaw), [periodEndRaw]);
   const isSubscriptionActive = !!periodEnd && periodEnd.getTime() > Date.now();
   const companyTimeZone = normalizeTimeZone(data?.timezone);
-  const periodEndPickerDate = toPickerDate(periodEnd);
-  const createdAt = parseDate(data?.created_at);
+  const periodEndPickerDate = React.useMemo(
+    () => toPickerDate(periodEnd) || new Date(),
+    [periodEnd],
+  );
+  const createdAt = React.useMemo(() => parseDate(data?.created_at), [data?.created_at]);
 
   const addDaysBaseDate = React.useMemo(() => {
     const currentNow = new Date();
@@ -452,7 +423,11 @@ export default function AdminCompanyDetailsScreen() {
 
   const parsedDaysDelta = React.useMemo(() => {
     const rawDelta = toSignedInt(daysInput, 0);
-    return clampNumber(rawDelta, -maxSubtractDays, 36500);
+    return clampNumber(
+      rawDelta,
+      -maxSubtractDays,
+      MAX_SUBSCRIPTION_ADJUSTMENT_DAYS,
+    );
   }, [daysInput, maxSubtractDays]);
 
   const previewPeriodEnd = React.useMemo(() => {
@@ -489,7 +464,11 @@ export default function AdminCompanyDetailsScreen() {
 
   const setDaysDelta = React.useCallback(
     (next) => {
-      const clamped = clampNumber(toSignedInt(next, 0), -maxSubtractDays, 36500);
+      const clamped = clampNumber(
+        toSignedInt(next, 0),
+        -maxSubtractDays,
+        MAX_SUBSCRIPTION_ADJUSTMENT_DAYS,
+      );
       setDaysInput(String(clamped));
     },
     [maxSubtractDays],
@@ -500,15 +479,43 @@ export default function AdminCompanyDetailsScreen() {
       const next = parseDate(nextDate);
       if (!next) return;
       const draftPaid = isSubscriptionActive ? paidSeatsTotal : paidSeatsRestoreValue;
-    openConfirm({
-      title: t('admin_company_confirm_period_title'),
-      message: t('admin_company_confirm_period_message'),
-      periodEnd: next,
-      paidSeatsTotal: draftPaid,
-      applyPaidSeats: false,
-    });
-  },
+      openConfirm({
+        title: t('admin_company_confirm_period_title'),
+        message: t('admin_company_confirm_period_message'),
+        periodEnd: next,
+        paidSeatsTotal: draftPaid,
+        applyPaidSeats: false,
+      });
+    },
     [isSubscriptionActive, openConfirm, paidSeatsRestoreValue, paidSeatsTotal, t],
+  );
+
+  const openPeriodEndPicker = React.useCallback(() => {
+    pendingPeriodEndRef.current = null;
+    setDatePickerVisible(true);
+  }, []);
+
+  const handlePeriodEndPickerDismiss = React.useCallback(() => {
+    const pendingPeriodEnd = pendingPeriodEndRef.current;
+    pendingPeriodEndRef.current = null;
+    if (!pendingPeriodEnd) return;
+
+    if (periodEndTransitionFrameRef.current != null) {
+      cancelAnimationFrame(periodEndTransitionFrameRef.current);
+    }
+    periodEndTransitionFrameRef.current = requestAnimationFrame(() => {
+      periodEndTransitionFrameRef.current = null;
+      handlePickDate(pendingPeriodEnd);
+    });
+  }, [handlePickDate]);
+
+  React.useEffect(
+    () => () => {
+      if (periodEndTransitionFrameRef.current != null) {
+        cancelAnimationFrame(periodEndTransitionFrameRef.current);
+      }
+    },
+    [],
   );
 
   const handleAddDaysRequest = React.useCallback(() => {
@@ -580,147 +587,164 @@ export default function AdminCompanyDetailsScreen() {
     return true;
   }, [isSubscriptionActive, openConfirm, t, toast]);
 
-  if (guardLoading || !isAllowed) return <Screen background="background" />;
+  if (guardLoading || !isAllowed) return <Screen />;
 
   return (
-    <Screen background="background">
-      <View style={{ flex: 1 }}>
-        {refreshIndicator}
-        <ScrollView
-          contentContainerStyle={styles(theme).content}
-          refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        >
-          {isLoading ? <Text style={styles(theme).muted}>{t('admin_loading')}</Text> : null}
-          {error ? <Text style={styles(theme).error}>{String(error?.message || t('admin_unknown_error'))}</Text> : null}
+    <Screen
+      contentContainerStyle={styles.content}
+      refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
+      {refreshIndicator}
+      {isLoading ? <Text style={styles.muted}>{t('admin_loading')}</Text> : null}
+      {error ? <Text style={styles.error}>{String(error?.message || t('admin_unknown_error'))}</Text> : null}
 
-          {data ? (
-            <>
-            <SectionHeader>{t('admin_company_about_title')}</SectionHeader>
-            <Card paddedXOnly separated>
-              <LabelValueRow label={t('admin_companies_name')} value={data.name || ''} />
-              <LabelValueRow
-                label={t('admin_company_company_status')}
-                value={companyIsActive ? t('admin_company_status_active') : t('admin_company_status_inactive')}
-              />
-              <LabelValueRow label={t('admin_company_created_at')} value={createdAt ? formatDateTime(createdAt, companyTimeZone) : ''} />
-              <LabelValueRow label={t('admin_companies_employees')} value={String(employeesCount)} />
-            </Card>
+      {data ? (
+        <>
+          <SectionHeader>{t('admin_company_about_title')}</SectionHeader>
+          <Card paddedXOnly separated>
+            <LabelValueRow label={t('admin_company_name_short')} value={data.name || ''} />
+            <LabelValueRow
+              label={t('admin_company_company_status')}
+              value={
+                companyIsActive
+                  ? t('admin_company_status_active')
+                  : t('admin_company_status_inactive')
+              }
+            />
+            <LabelValueRow
+              label={t('admin_company_created_at')}
+              value={createdAt ? formatDate(createdAt, companyTimeZone, locale) : ''}
+            />
+            <LabelValueRow
+              label={t('admin_companies_employees')}
+              value={String(employeesCount)}
+            />
+          </Card>
 
-            <SectionHeader>{t('admin_company_subscription_licenses_title')}</SectionHeader>
-            <Card paddedXOnly separated>
-              <LabelValueRow
-                label={t('admin_company_license')}
-                valueComponent={(
-                  <Text
-                    style={[
-                      styles(theme).statusValue,
-                      { color: isSubscriptionActive ? theme.colors.success : theme.colors.danger },
-                    ]}
-                  >
-                    {isSubscriptionActive ? t('admin_company_status_active') : t('admin_company_status_inactive')}
-                  </Text>
-                )}
-              />
-              <LabelValueRow
-                label={t('admin_company_period_end')}
-                value={periodEnd ? formatDateTime(periodEnd, companyTimeZone) : ''}
-              />
-              <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
-              <LabelValueRow label={t('admin_company_used_seats')} value={String(usedSeats)} />
-              <LabelValueRow label={t('billing_free_seats')} value={String(freeSeats)} />
-              <LabelValueRow label={t('admin_company_blocked_by_license')} value={String(blockedByLicense)} />
-            </Card>
-
-            <SectionHeader>{t('admin_company_subscription_manage_title')}</SectionHeader>
-            <Card paddedXOnly separated>
-              <ActionRow
-                label={t('admin_company_period_end')}
-                value=""
-                onPress={() => setDatePickerVisible(true)}
-                disabled={mutation.isPending}
-                theme={theme}
-              />
-              <ActionRow
-                label={t('admin_company_add_days')}
-                value=""
-                onPress={() => {
-                  setDaysInput('0');
-                  setAddDaysVisible(true);
-                }}
-                disabled={mutation.isPending}
-                theme={theme}
-              />
-              <ActionRow
-                label={t('admin_company_paid_seats_total')}
-                value=""
-                onPress={() => {
-                  setPaidSeatsInput(String(paidSeatsTotal));
-                  setPaidSeatsVisible(true);
-                }}
-                disabled={mutation.isPending}
-                theme={theme}
-              />
-              <ActionRow
-                label={t('admin_company_cancel_subscription')}
-                value=""
-                onPress={() => {
-                  handleCancelSubscriptionRequest();
-                }}
-                disabled={mutation.isPending}
-                theme={theme}
-              />
-              <ActionRow
-                label={
-                  companyIsActive
-                    ? t('admin_company_deactivate_action')
-                    : t('admin_company_activate_action')
-                }
-                value={
-                  companyIsActive
+          <SectionHeader>{t('admin_company_subscription_licenses_title')}</SectionHeader>
+          <Card paddedXOnly separated>
+            <LabelValueRow
+              label={t('admin_company_license')}
+              valueComponent={
+                <Text
+                  style={[
+                    styles.statusValue,
+                    { color: isSubscriptionActive ? theme.colors.success : theme.colors.danger },
+                  ]}
+                >
+                  {isSubscriptionActive
                     ? t('admin_company_status_active')
-                    : t('admin_company_status_inactive')
-                }
-                onPress={() =>
-                  openConfirm({
-                    title: companyIsActive
-                      ? t('admin_company_deactivate_confirm_title')
-                      : t('admin_company_activate_confirm_title'),
-                    message: companyIsActive
-                      ? t('admin_company_deactivate_confirm_message')
-                      : t('admin_company_activate_confirm_message'),
-                    action: 'activation',
-                    nextIsActive: !companyIsActive,
-                  })
-                }
-                disabled={mutation.isPending || activationMutation.isPending}
-                theme={theme}
-              />
-            </Card>
-            <View style={{ marginTop: theme.spacing.md }}>
-              <UIButton
-                title={t('admin_company_delete_action')}
-                variant="destructive"
-                onPress={() => setDeleteConfirmVisible(true)}
-                disabled={deleteCompanyMutation.isPending}
-                loading={deleteCompanyMutation.isPending}
-              />
-            </View>
-            </>
-          ) : null}
-        </ScrollView>
-      </View>
+                    : t('admin_company_status_inactive')}
+                </Text>
+              }
+            />
+            <LabelValueRow
+              label={t('admin_company_period_end')}
+              value={periodEnd ? formatDate(periodEnd, companyTimeZone, locale) : ''}
+            />
+            <LabelValueRow
+              label={t('billing_paid_seats_total')}
+              value={String(paidSeatsTotal)}
+            />
+            <LabelValueRow
+              label={t('admin_company_used_seats')}
+              value={String(usedSeats)}
+            />
+            <LabelValueRow label={t('billing_free_seats')} value={String(freeSeats)} />
+            <LabelValueRow
+              label={t('admin_company_blocked_by_license')}
+              value={String(blockedByLicense)}
+            />
+          </Card>
+
+          <SectionHeader>{t('admin_company_subscription_manage_title')}</SectionHeader>
+          <Card paddedXOnly separated>
+            <ActionRow
+              label={t('admin_company_period_end')}
+              value=""
+              onPress={openPeriodEndPicker}
+              disabled={mutation.isPending}
+              theme={theme}
+            />
+            <ActionRow
+              label={t('admin_company_add_days')}
+              value=""
+              onPress={() => {
+                setDaysInput('0');
+                setAddDaysVisible(true);
+              }}
+              disabled={mutation.isPending}
+              theme={theme}
+            />
+            <ActionRow
+              label={t('admin_company_paid_seats_total')}
+              value=""
+              onPress={() => {
+                setPaidSeatsInput(String(paidSeatsTotal));
+                setPaidSeatsVisible(true);
+              }}
+              disabled={mutation.isPending}
+              theme={theme}
+            />
+            <ActionRow
+              label={t('admin_company_cancel_subscription')}
+              value=""
+              onPress={() => {
+                handleCancelSubscriptionRequest();
+              }}
+              disabled={mutation.isPending}
+              theme={theme}
+            />
+            <ActionRow
+              label={
+                companyIsActive
+                  ? t('admin_company_deactivate_action')
+                  : t('admin_company_activate_action')
+              }
+              value={
+                companyIsActive
+                  ? t('admin_company_status_active')
+                  : t('admin_company_status_inactive')
+              }
+              onPress={() =>
+                openConfirm({
+                  title: companyIsActive
+                    ? t('admin_company_deactivate_confirm_title')
+                    : t('admin_company_activate_confirm_title'),
+                  message: companyIsActive
+                    ? t('admin_company_deactivate_confirm_message')
+                    : t('admin_company_activate_confirm_message'),
+                  action: 'activation',
+                  nextIsActive: !companyIsActive,
+                })
+              }
+              disabled={mutation.isPending || activationMutation.isPending}
+              theme={theme}
+            />
+          </Card>
+          <View style={styles.deleteAction}>
+            <UIButton
+              title={t('admin_company_delete_action')}
+              variant="destructive"
+              onPress={() => setDeleteConfirmVisible(true)}
+              disabled={deleteCompanyMutation.isPending}
+              loading={deleteCompanyMutation.isPending}
+            />
+          </View>
+        </>
+      ) : null}
 
       <DateTimeModal
         visible={datePickerVisible}
         onClose={() => setDatePickerVisible(false)}
-        mode="datetime"
-        initial={periodEndPickerDate || new Date()}
+        onDismiss={handlePeriodEndPickerDismiss}
+        mode="date"
+        initial={periodEndPickerDate}
         onApply={(d) => {
-          setDatePickerVisible(false);
-          handlePickDate(d);
+          pendingPeriodEndRef.current = parseDate(d);
         }}
-        allowFutureDates={true}
-        allowPastDates={true}
+        allowFutureDates
+        allowPastDates
       />
 
       <BaseModal
@@ -729,12 +753,12 @@ export default function AdminCompanyDetailsScreen() {
         title={t('admin_company_add_days_modal_title')}
         presentation="sheet"
         footer={
-          <View style={styles(theme).modalFooter}>
+          <View style={styles.modalFooter}>
             <UIButton
               title={t('btn_cancel')}
               variant="secondary"
               onPress={() => setAddDaysVisible(false)}
-              containerStyle={styles(theme).modalButtonSlot}
+              containerStyle={styles.modalButtonSlot}
             />
             <UIButton
               title={t('btn_apply')}
@@ -742,52 +766,67 @@ export default function AdminCompanyDetailsScreen() {
                 const canProceed = handleAddDaysRequest();
                 if (canProceed) setAddDaysVisible(false);
               }}
-              containerStyle={styles(theme).modalButtonSlot}
+              containerStyle={styles.modalButtonSlot}
             />
           </View>
         }
       >
-        <LabelValueRow
-          label={t('admin_company_period_end_preview')}
-          value={previewPeriodEnd ? formatDateTime(previewPeriodEnd, companyTimeZone) : ''}
-        />
-        <View style={base.sep} />
-        <TextField
-          label={t('admin_company_add_days')}
-          value={daysInput}
-          onChangeText={setDaysInput}
-          keyboardType="numbers-and-punctuation"
-          numericInput={{ allowDecimal: false, allowNegative: true }}
-          placeholder={t('admin_company_add_days_placeholder')}
-        />
-        <View style={styles(theme).quickActions}>
-          {[1, 7, 30, 365].map((step) => (
-            <Pressable
-              key={step}
-              onPress={() => setDaysDelta(parsedDaysDelta + step)}
-              style={({ pressed }) => [
-                styles(theme).quickBtn,
-                pressed ? { opacity: theme.components.listItem.disabledOpacity } : null,
-              ]}
-            >
-              <Text style={styles(theme).quickBtnText}>{`+${step}`}</Text>
-            </Pressable>
-          ))}
-        </View>
-        <View style={styles(theme).quickActions}>
-          {[1, 7, 30, 365].map((step) => (
-            <Pressable
-              key={`minus-${step}`}
-              onPress={() => setDaysDelta(parsedDaysDelta - step)}
-              style={({ pressed }) => [
-                styles(theme).quickBtn,
-                pressed ? { opacity: theme.components.listItem.disabledOpacity } : null,
-              ]}
-            >
-              <Text style={styles(theme).quickBtnText}>{`-${step}`}</Text>
-            </Pressable>
-          ))}
-        </View>
+        <KeyboardAwareScrollView
+          style={styles.modalScroll}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+          enableAutomaticScroll
+          bottomOffset={theme.components.keyboardAware.bottomOffset}
+          extraKeyboardSpace={theme.components.keyboardAware.extraKeyboardSpace}
+        >
+          <LabelValueRow
+            label={t('admin_company_period_end_preview')}
+            value={previewPeriodEnd ? formatDate(previewPeriodEnd, companyTimeZone, locale) : ''}
+          />
+          <View style={base.sep} />
+          <TextField
+            label={t('admin_company_add_days')}
+            value={daysInput}
+            onChangeText={setDaysInput}
+            keyboardType="numbers-and-punctuation"
+            numericInput={{ allowDecimal: false, allowNegative: true }}
+            placeholder={t('admin_company_add_days_placeholder')}
+          />
+          <View style={styles.quickActions}>
+            {SUBSCRIPTION_DAY_STEPS.map((step) => (
+              <Pressable
+                key={step}
+                onPress={() => setDaysDelta(parsedDaysDelta + step)}
+                style={({ pressed }) => [
+                  styles.quickBtn,
+                  pressed ? styles.controlPressed : null,
+                ]}
+                android_ripple={{ color: theme.colors.ripple, borderless: false }}
+                pressRetentionOffset={theme.components.interactive.pressRetentionOffset}
+                accessibilityRole="button"
+              >
+                <Text style={styles.quickBtnText}>{`+${step}`}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={styles.quickActions}>
+            {SUBSCRIPTION_DAY_STEPS.map((step) => (
+              <Pressable
+                key={`minus-${step}`}
+                onPress={() => setDaysDelta(parsedDaysDelta - step)}
+                style={({ pressed }) => [
+                  styles.quickBtn,
+                  pressed ? styles.controlPressed : null,
+                ]}
+                android_ripple={{ color: theme.colors.ripple, borderless: false }}
+                pressRetentionOffset={theme.components.interactive.pressRetentionOffset}
+                accessibilityRole="button"
+              >
+                <Text style={styles.quickBtnText}>{`-${step}`}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <BaseModal
@@ -796,12 +835,12 @@ export default function AdminCompanyDetailsScreen() {
         title={t('admin_company_paid_seats_modal_title')}
         presentation="sheet"
         footer={
-          <View style={styles(theme).modalFooter}>
+          <View style={styles.modalFooter}>
             <UIButton
               title={t('btn_cancel')}
               variant="secondary"
               onPress={() => setPaidSeatsVisible(false)}
-              containerStyle={styles(theme).modalButtonSlot}
+              containerStyle={styles.modalButtonSlot}
             />
             <UIButton
               title={t('btn_save')}
@@ -809,50 +848,78 @@ export default function AdminCompanyDetailsScreen() {
                 const canProceed = handleSavePaidSeatsRequest();
                 if (canProceed) setPaidSeatsVisible(false);
               }}
-              containerStyle={styles(theme).modalButtonSlot}
+              containerStyle={styles.modalButtonSlot}
             />
           </View>
         }
       >
-        {!isSubscriptionActive ? (
-          <Text style={styles(theme).muted}>{t('admin_company_paid_seats_zero_when_expired')}</Text>
-        ) : null}
-        <View style={styles(theme).counterWrap}>
-          <Pressable
-            onPress={() => {
-              if (!isSubscriptionActive) return;
-              setPaidSeatsInput((prev) => String(Math.max(1, toSafeInt(prev, paidSeatsTotal) - 1)));
-            }}
-            style={styles(theme).counterBtn}
-          >
-            <Text style={styles(theme).counterBtnText}>-</Text>
-          </Pressable>
-          <View style={styles(theme).counterValueWrap}>
-            <TextField
-              label={t('admin_company_paid_seats_total')}
-              value={paidSeatsInput}
-              onChangeText={(v) => {
-                const raw = String(v || '').replace(/[^\d]/g, '');
-                if (!isSubscriptionActive) {
-                  setPaidSeatsInput('0');
-                  return;
-                }
-                setPaidSeatsInput(raw || '1');
+        <KeyboardAwareScrollView
+          style={styles.modalScroll}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+          enableAutomaticScroll
+          bottomOffset={theme.components.keyboardAware.bottomOffset}
+          extraKeyboardSpace={theme.components.keyboardAware.extraKeyboardSpace}
+        >
+          {!isSubscriptionActive ? (
+            <Text style={styles.muted}>{t('admin_company_paid_seats_zero_when_expired')}</Text>
+          ) : null}
+          <View style={styles.counterWrap}>
+            <Pressable
+              onPress={() => {
+                setPaidSeatsInput((prev) =>
+                  String(Math.max(1, toSafeInt(prev, paidSeatsTotal) - 1)),
+                );
               }}
-              keyboardType="numeric"
-              numericInput={{ allowDecimal: false, allowNegative: false }}
-            />
+              disabled={!isSubscriptionActive}
+              style={({ pressed }) => [
+                styles.counterBtn,
+                pressed && isSubscriptionActive ? styles.controlPressed : null,
+                !isSubscriptionActive ? styles.controlDisabled : null,
+              ]}
+              android_ripple={{ color: theme.colors.ripple, borderless: false }}
+              pressRetentionOffset={theme.components.interactive.pressRetentionOffset}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !isSubscriptionActive }}
+            >
+              <Text style={styles.counterBtnText}>-</Text>
+            </Pressable>
+            <View style={styles.counterValueWrap}>
+              <TextField
+                label={t('admin_company_paid_seats_total')}
+                value={paidSeatsInput}
+                onChangeText={(v) => {
+                  const raw = String(v || '').replace(/[^\d]/g, '');
+                  if (!isSubscriptionActive) {
+                    setPaidSeatsInput('0');
+                    return;
+                  }
+                  setPaidSeatsInput(raw || '1');
+                }}
+                keyboardType="numeric"
+                numericInput={{ allowDecimal: false, allowNegative: false }}
+                disabled={!isSubscriptionActive}
+              />
+            </View>
+            <Pressable
+              onPress={() => {
+                setPaidSeatsInput((prev) => String(toSafeInt(prev, paidSeatsTotal) + 1));
+              }}
+              disabled={!isSubscriptionActive}
+              style={({ pressed }) => [
+                styles.counterBtn,
+                pressed && isSubscriptionActive ? styles.controlPressed : null,
+                !isSubscriptionActive ? styles.controlDisabled : null,
+              ]}
+              android_ripple={{ color: theme.colors.ripple, borderless: false }}
+              pressRetentionOffset={theme.components.interactive.pressRetentionOffset}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !isSubscriptionActive }}
+            >
+              <Text style={styles.counterBtnText}>+</Text>
+            </Pressable>
           </View>
-          <Pressable
-            onPress={() => {
-              if (!isSubscriptionActive) return;
-              setPaidSeatsInput((prev) => String(toSafeInt(prev, paidSeatsTotal) + 1));
-            }}
-            style={styles(theme).counterBtn}
-          >
-            <Text style={styles(theme).counterBtnText}>+</Text>
-          </Pressable>
-        </View>
+        </KeyboardAwareScrollView>
       </BaseModal>
 
       <ConfirmModal
@@ -894,11 +961,10 @@ export default function AdminCompanyDetailsScreen() {
   );
 }
 
-const styles = (theme) =>
+const createStyles = (theme) =>
   StyleSheet.create({
     content: {
       paddingHorizontal: theme.components.screenLayout.contentPaddingX,
-      paddingBottom: theme.components.screenLayout.contentPaddingBottom,
     },
     muted: {
       color: theme.colors.textSecondary,
@@ -911,8 +977,11 @@ const styles = (theme) =>
       marginTop: theme.spacing.sm,
     },
     statusValue: {
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.semibold,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
+    },
+    deleteAction: {
+      marginTop: theme.spacing.md,
     },
     modalFooter: {
       flexDirection: 'row',
@@ -920,6 +989,12 @@ const styles = (theme) =>
     },
     modalButtonSlot: {
       flex: 1,
+    },
+    modalScroll: {
+      flexShrink: 1,
+    },
+    modalContent: {
+      paddingBottom: theme.spacing.xs,
     },
     quickActions: {
       flexDirection: 'row',
@@ -931,12 +1006,18 @@ const styles = (theme) =>
     quickBtn: {
       borderWidth: theme.components.card.borderWidth,
       borderColor: theme.colors.border,
-      borderRadius: theme.radii.sm,
+      borderRadius: theme.components.button.radius,
       backgroundColor: theme.colors.surface,
       paddingHorizontal: theme.spacing.md,
-      minHeight: theme.components.input.height * 0.72,
+      minHeight: theme.components.button.sizes.sm.h,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    controlPressed: {
+      opacity: theme.components.button.pressedOpacity,
+    },
+    controlDisabled: {
+      opacity: theme.components.listItem.disabledOpacity,
     },
     quickBtnText: {
       color: theme.colors.text,

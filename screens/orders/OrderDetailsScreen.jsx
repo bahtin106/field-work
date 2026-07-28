@@ -88,6 +88,7 @@ import {
   useUpdateRequestMutation,
 } from '../../src/features/requests/queries';
 import {
+  getRequestById,
   isRequestAuthorizationError,
   updateRequestWithVersion,
 } from '../../src/features/requests/api';
@@ -628,8 +629,15 @@ function OrderDetailsContent() {
   const pathname = usePathname();
   const __params = useLocalSearchParams();
   const idParam = __params?.id;
+  const fromNotificationParam = __params?.fromNotification;
   const financeEntryIdParam = __params?.financeEntryId;
   const trashIdParam = __params?.trashId;
+  const openedFromNotification = useMemo(() => {
+    const value = Array.isArray(fromNotificationParam)
+      ? fromNotificationParam[0]
+      : fromNotificationParam;
+    return value === true || ['1', 'true'].includes(String(value || '').toLowerCase());
+  }, [fromNotificationParam]);
   const id = useMemo(() => {
     const fromParams = Array.isArray(idParam) ? idParam[0] : idParam;
     const normalizedFromParams = normalizeOrderRouteId(fromParams);
@@ -715,12 +723,12 @@ function OrderDetailsContent() {
   const pendingNavigationActionRef = useRef(null);
   const queryClient = useQueryClient();
   const initialCachedOrder = useMemo(() => {
-    if (!id || isTrashMode) return null;
+    if (!id || isTrashMode || openedFromNotification) return null;
     const cached = queryClient.getQueryData(queryKeys.requests.detail(id));
     return cached && typeof cached === 'object' && isEntityBoundToOrder(cached, id)
       ? { ...cached, time_window_start: cached.time_window_start ?? null }
       : null;
-  }, [id, isTrashMode, queryClient]);
+  }, [id, isTrashMode, openedFromNotification, queryClient]);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: !!id && protectedDataReady,
   });
@@ -745,6 +753,8 @@ function OrderDetailsContent() {
     [companySettings?.use_work_types, initialCachedOrder],
   );
   const [order, setOrder] = useState(initialDisplayOrder);
+  const [orderLoadIssue, setOrderLoadIssue] = useState(null);
+  const notificationFreshConfirmedRef = useRef(!openedFromNotification);
   const activeOrderIdRef = useRef(id);
   activeOrderIdRef.current = id;
   const [orderReady, setOrderReady] = useState(() => !!initialDisplayOrder || !id);
@@ -1132,7 +1142,9 @@ function OrderDetailsContent() {
     previousRouteOrderIdRef.current = id;
     lastRequestSyncRef.current = '';
     orderRef.current = null;
+    notificationFreshConfirmedRef.current = !openedFromNotification;
     setOrder(null);
+    setOrderLoadIssue(null);
     setOrderReady(!id);
     setCompanyId(null);
     setSelectedFinanceEntry(null);
@@ -1166,7 +1178,7 @@ function OrderDetailsContent() {
       input_percent: '',
       photo_urls: [],
     });
-  }, [id]);
+  }, [id, openedFromNotification]);
 
   const { data: activeRequestData, refetch: refetchActiveRequestData } = useRequest(id, {
     enabled: !!id && protectedDataReady && !isTrashMode,
@@ -1729,6 +1741,8 @@ function OrderDetailsContent() {
       return;
     }
     if (!protectedDataReady) return;
+    setOrderLoadIssue(null);
+    if (!orderRef.current) setOrderReady(false);
     const runId = fetchDataRunRef.current + 1;
     fetchDataRunRef.current = runId;
     const isActiveRun = () =>
@@ -1744,13 +1758,16 @@ function OrderDetailsContent() {
       // в”Ђв”Ђ 2. Order data: show cache instantly, then refetch в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       const cachedOrderRaw = isTrashMode
         ? requestDataRef.current
-        : queryClient.getQueryData(queryKeys.requests.detail(id));
+        : openedFromNotification
+          ? null
+          : queryClient.getQueryData(queryKeys.requests.detail(id));
 
       let fetchedOrderRaw =
         isEntityBoundToOrder(cachedOrderRaw, id) && isOrderSnapshotReadyForDisplay(cachedOrderRaw)
           ? cachedOrderRaw
           : null;
       if (
+        !openedFromNotification &&
         !fetchedOrderRaw &&
         isEntityBoundToOrder(requestDataRef.current, id) &&
         isOrderSnapshotReadyForDisplay(requestDataRef.current)
@@ -1789,23 +1806,40 @@ function OrderDetailsContent() {
             .catch(() => {});
         }
       } else {
-        try {
-          const refetched = await refetchRequestData();
-          fetchedOrderRaw = refetched?.data || null;
-        } catch {
-          // fallback below
-        }
-        if (!fetchedOrderRaw && !isTrashMode) {
-          fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
+        if (openedFromNotification && !isTrashMode) {
+          // Notification opens must verify the current server state. useRequest
+          // intentionally falls back to persisted cache when offline, which is
+          // useful during normal browsing but can resurrect a deleted or already
+          // reassigned request after tapping an old notification.
+          fetchedOrderRaw = markRequestDetailLoaded(await getRequestById(id));
+          if (fetchedOrderRaw) {
+            queryClient.setQueryData(queryKeys.requests.detail(id), fetchedOrderRaw);
+          }
+        } else {
+          try {
+            const refetched = await refetchRequestData();
+            fetchedOrderRaw = refetched?.data || null;
+          } catch {
+            // fallback below
+          }
+          if (!fetchedOrderRaw && !isTrashMode) {
+            fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
+          }
         }
       }
       if (!isActiveRun()) return;
-      if (!isEntityBoundToOrder(fetchedOrderRaw, id)) throw new Error('Order not found');
+      if (!isEntityBoundToOrder(fetchedOrderRaw, id)) {
+        const unavailableError = new Error('Order is unavailable');
+        unavailableError.code = 'ORDER_UNAVAILABLE';
+        throw unavailableError;
+      }
 
       const fetchedOrder = {
         ...fetchedOrderRaw,
         time_window_start: fetchedOrderRaw.time_window_start ?? null,
       };
+      notificationFreshConfirmedRef.current = true;
+      setOrderLoadIssue(null);
 
       // Publish the request as soon as its primary payload is available. Status
       // persistence and reference-data enrichment must not hold the first paint.
@@ -1984,12 +2018,16 @@ function OrderDetailsContent() {
           return;
         }
       }
-      console.warn('Fetch data error:', e);
+      setOrderLoadIssue(isOfflineLikeError(e) ? 'offline' : 'unavailable');
+      if (e?.code !== 'ORDER_UNAVAILABLE') {
+        console.warn('Fetch data error:', e);
+      }
       setOrderReady(true);
     }
   }, [
     id,
     isTrashMode,
+    openedFromNotification,
     protectedDataReady,
     authUserId,
     authRole,
@@ -4515,6 +4553,13 @@ function OrderDetailsContent() {
     );
   }, [getOrderMediaInfo, viewerVisible]);
 
+  const handleViewerImageRetry = useCallback(async (viewerIdx) => {
+    const category = viewerCategoryRef.current;
+    const rawUrl = String(viewerRawPhotosRef.current?.[viewerIdx] || '').trim();
+    if (!category || !rawUrl) return '';
+    return orderMediaRef.current.refreshDisplayUrl(category, rawUrl);
+  }, []);
+
   const handleViewerDelete = useCallback(
     (viewerIdx) => {
       const category = viewerCategoryRef.current;
@@ -4663,6 +4708,7 @@ function OrderDetailsContent() {
     if (
       !requestData ||
       editMode ||
+      (openedFromNotification && !notificationFreshConfirmedRef.current) ||
       !isEntityBoundToOrder(requestData, id) ||
       !isOrderSnapshotReadyForDisplay(requestData)
     ) return;
@@ -4682,7 +4728,7 @@ function OrderDetailsContent() {
     if (Object.prototype.hasOwnProperty.call(requestData, 'work_type_id')) {
       setWorkTypeId(requestData?.work_type_id ?? null);
     }
-  }, [requestData, editMode, hasMeaningfulOrderDiff, buildOrderSyncToken, id, isSoloAdmin]);
+  }, [requestData, editMode, hasMeaningfulOrderDiff, buildOrderSyncToken, id, isSoloAdmin, openedFromNotification]);
 
   useEffect(() => {
     if (!order?.id || firstContentTrackedRef.current) return;
@@ -5441,11 +5487,52 @@ function OrderDetailsContent() {
     );
   }
 
-  if (permsLoading || loading || !order) {
+  if (permsLoading || loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
+    );
+  }
+
+  if (!order) {
+    const unavailableTitle =
+      orderLoadIssue === 'offline'
+        ? t('errors_network')
+        : t('order_not_found');
+    const unavailableMessage =
+      orderLoadIssue === 'offline'
+        ? t('push_open_order_offline')
+        : openedFromNotification
+          ? t('push_open_order_unavailable')
+          : t('order_not_found');
+
+    return (
+      <SafeAreaView
+        style={styles.unavailableScreen}
+        edges={['left', 'right']}
+      >
+        <AppHeader
+          back
+          onBackPress={goBack}
+          options={{ title: t('push_open_issue_title') }}
+        />
+        <View style={styles.unavailableContent}>
+          <Text style={styles.unavailableTitle}>{unavailableTitle}</Text>
+          <Text style={styles.unavailableMessage}>{unavailableMessage}</Text>
+          <View style={styles.unavailableActions}>
+            <Button
+              title={t('btn_retry')}
+              onPress={fetchData}
+            />
+            <Button
+              title={t('btn_back')}
+              variant="secondary"
+              onPress={goBack}
+            />
+          </View>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -6383,6 +6470,7 @@ function OrderDetailsContent() {
                   onClose={closeViewer}
                   onDelete={isTrashMode ? undefined : handleViewerDelete}
                   onRotateSave={isTrashMode ? undefined : handleViewerRotateSave}
+                  onRetryImage={handleViewerImageRetry}
                   categoryLabel={viewerCategoryLabel}
                 />
               </Suspense>
@@ -7025,6 +7113,34 @@ function createStyles(theme) {
       justifyContent: 'center',
       alignItems: 'center',
       backgroundColor: theme.colors.surface,
+    },
+    unavailableScreen: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    unavailableContent: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: sp.xl,
+      gap: sp.md,
+    },
+    unavailableTitle: {
+      color: theme.colors.text,
+      fontSize: typo.sizes?.lg,
+      fontWeight: typo.weight?.semibold,
+      textAlign: 'center',
+    },
+    unavailableMessage: {
+      color: theme.colors.textSecondary,
+      fontSize: typo.sizes?.md,
+      lineHeight: typo.lineHeights?.md,
+      textAlign: 'center',
+    },
+    unavailableActions: {
+      width: '100%',
+      gap: theme.components.button.groupGap,
+      marginTop: sp.sm,
     },
     topBar: {
       flexDirection: 'row',

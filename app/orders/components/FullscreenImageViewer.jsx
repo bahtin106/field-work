@@ -44,7 +44,6 @@ const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
 const DATA_IMAGE_URI_RE = /^data:image\//i;
 const REMOTE_URI_RE = /^https?:\/\//i;
 const GALLERY_WINDOW_SIZE = 3;
-const GALLERY_SNAP_TIMING = { duration: 220 };
 const IMAGE_LOAD_TIMEOUT_MS = 15_000;
 const MAX_IMAGE_RETRY_ATTEMPTS = 2;
 const MIN_PLAUSIBLE_PHOTO_DATE_MS = Date.UTC(2000, 0, 1);
@@ -260,7 +259,6 @@ const ZoomGallery = memo(function ZoomGallery({
   keyExtractor,
   onIndexChange,
   onTap,
-  onPanEnd,
 }) {
   return (
     <Gallery
@@ -272,10 +270,8 @@ const ZoomGallery = memo(function ZoomGallery({
       keyExtractor={keyExtractor}
       onIndexChange={onIndexChange}
       onTap={onTap}
-      onPanEnd={onPanEnd}
       maxScale={5}
       windowSize={GALLERY_WINDOW_SIZE}
-      snapTimingConfig={GALLERY_SNAP_TIMING}
       tapOnEdgeToItem={false}
       allowPinchPanning
       allowOverflow={false}
@@ -337,6 +333,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   onClose,
   onDelete,
   onRotateSave,
+  onRetryImage,
   categoryLabel,
   capturePreviewMode = false,
   onDismiss,
@@ -931,30 +928,6 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     setCurrentIndex(safeIndex);
   }, [localImages.length]);
 
-  const handleGalleryPanEnd = useCallback((event) => {
-    const translationX = Number(event?.translationX) || 0;
-    const translationY = Number(event?.translationY) || 0;
-    const horizontalDistance = Math.abs(translationX);
-    const verticalDistance = Math.abs(translationY);
-    const distanceThreshold = Math.max(32, Math.min(64, viewportWidth * 0.14));
-    const galleryScale = Number(galleryRef.current?.getState?.()?.scale) || 1;
-
-    if (galleryScale > 1.01) return;
-    if (horizontalDistance < distanceThreshold) return;
-    if (horizontalDistance <= verticalDistance * 1.15) return;
-
-    const direction = translationX < 0 ? 1 : -1;
-    const nextIndex = clampIndex(currentIndexRef.current + direction, localImages.length);
-    if (nextIndex === currentIndexRef.current) return;
-
-    currentIndexRef.current = nextIndex;
-    setCurrentIndex(nextIndex);
-    // The toolkit only reports quick flicks as swipes. Remounting at the
-    // intended index handles a deliberate slower drag without changing its
-    // pinch/zoom behavior.
-    setViewerIndex(nextIndex);
-  }, [localImages.length, viewportWidth]);
-
   const handleGalleryTap = useCallback(() => {
     if (modalOverlayOpenRef.current) {
       setMenuOpen(false);
@@ -982,10 +955,34 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
 
   const handleManualImageRetry = useCallback(() => {
     if (!currentUri) return;
+    const retryIndex = currentIndexRef.current;
+    const failedUri = currentUri;
     haptic();
-    setImageLoadStates((previous) => ({ ...previous, [currentUri]: 'loading' }));
+    setImageLoadStates((previous) => ({ ...previous, [failedUri]: 'loading' }));
     setManualRetryNonce((value) => value + 1);
-  }, [currentUri]);
+
+    if (!onRetryImage) return;
+    void Promise.resolve(onRetryImage(retryIndex, failedUri))
+      .then((value) => {
+        const freshUri = String(value || '').trim();
+        if (!freshUri || currentIndexRef.current !== retryIndex) return;
+        setLocalImages((previous) =>
+          previous.map((uri, index) => (index === retryIndex ? freshUri : uri)),
+        );
+        setLocalFallbackImages((previous) =>
+          previous.map((uri, index) => (index === retryIndex ? '' : uri)),
+        );
+        setImageLoadStates((previous) => {
+          const next = { ...previous };
+          delete next[failedUri];
+          next[freshUri] = 'loading';
+          return next;
+        });
+        setViewerIndex(retryIndex);
+        setManualRetryNonce((value) => value + 1);
+      })
+      .catch(() => {});
+  }, [currentUri, onRetryImage]);
 
   const renderGalleryItem = useCallback(
     (uri, index) => (
@@ -1051,7 +1048,6 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                 keyExtractor={galleryKeyExtractor}
                 onIndexChange={handleIndexChange}
                 onTap={handleGalleryTap}
-                onPanEnd={handleGalleryPanEnd}
               />
             </View>
 
@@ -1234,6 +1230,7 @@ function FullscreenImageViewer({
   onClose,
   onDelete,
   onRotateSave,
+  onRetryImage,
   categoryLabel,
   capturePreviewMode = false,
   onDismiss,
@@ -1250,6 +1247,7 @@ function FullscreenImageViewer({
       onClose,
       onDelete,
       onRotateSave,
+      onRetryImage,
       categoryLabel,
       capturePreviewMode,
       onDismiss,
@@ -1282,6 +1280,7 @@ function FullscreenImageViewer({
         onClose={retainedProps.onClose}
         onDelete={retainedProps.onDelete}
         onRotateSave={retainedProps.onRotateSave}
+        onRetryImage={retainedProps.onRetryImage}
         categoryLabel={retainedProps.categoryLabel}
         capturePreviewMode={retainedProps.capturePreviewMode}
         onDismiss={retainedProps.onDismiss}

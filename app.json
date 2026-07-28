@@ -7,7 +7,7 @@
     "scheme": "workorders",
     "icon": "./assets/icon.png",
     "splash": {
-      "image": "./assets/adaptive-icon.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#F2F2F7"
     },
@@ -34,9 +34,9 @@
         "android.permission.WRITE_CONTACTS"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/branding/app-icon-android-foreground.png",
         "monochromeImage": "./assets/branding/app-mark-monochrome.png",
-        "backgroundColor": "#F2F2F7"
+        "backgroundColor": "#68C2EE"
       },
       "runtimeVersion": "1.0.4"
     },
@@ -64,12 +64,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/adaptive-icon.png",
+          "image": "./assets/icon.png",
           "imageWidth": 180,
           "resizeMode": "contain",
           "backgroundColor": "#F2F2F7",
           "dark": {
-            "image": "./assets/adaptive-icon.png",
+            "image": "./assets/icon.png",
             "backgroundColor": "#F2F2F7"
           }
         }
@@ -102,6 +102,7 @@
       "favicon": "./assets/favicon.png"
     },
     "ios": {
+      "icon": "./assets/branding/app-icon-ios.png",
       "bundleIdentifier": "com.monitorapp.monitor",
       "runtimeVersion": "1.0.4",
       "infoPlist": {

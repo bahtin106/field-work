@@ -111,13 +111,13 @@ function formatPeriodEndLabel(date, locale) {
   }).format(date);
 }
 
-function formatRuUnit(value, forms) {
+function getRuPluralForm(value) {
   const abs = Math.abs(Math.trunc(value));
   const mod10 = abs % 10;
   const mod100 = abs % 100;
-  if (mod10 === 1 && mod100 !== 11) return forms[0];
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
-  return forms[2];
+  if (mod10 === 1 && mod100 !== 11) return 0;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 1;
+  return 2;
 }
 
 function formatRemainingLabel(targetDate, now = new Date(), locale, t) {
@@ -129,16 +129,21 @@ function formatRemainingLabel(targetDate, now = new Date(), locale, t) {
   }
 
   const totalDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+  const ruPluralForm = isEn ? null : getRuPluralForm(totalDays);
   const dayUnit = isEn
     ? totalDays === 1
       ? t('billing_day_one')
       : t('billing_day_many')
-    : formatRuUnit(totalDays, [
+    : [
         t('billing_day_one'),
         t('billing_day_few'),
         t('billing_day_many'),
-      ]);
-  return `${t('billing_remaining_label')} ${totalDays} ${dayUnit}`;
+      ][ruPluralForm];
+  const remainingPrefix =
+    !isEn && ruPluralForm === 0
+      ? t('billing_remaining_one_label')
+      : t('billing_remaining_label');
+  return `${remainingPrefix} ${totalDays} ${dayUnit}`;
 }
 
 function _formatStorage(valueBytes) {
@@ -221,12 +226,19 @@ export default function BillingScreen() {
     queryKey: ['billingMemberStats', companyId],
     enabled: isOwner && !!companyId,
     queryFn: async () => {
-      const { data, error: qErr } = await supabase.from('profiles').select('id, license_state').eq('company_id', companyId);
+      const { data, error: qErr } = await supabase
+        .from('profiles')
+        .select('id, role, license_state, is_admin_blocked')
+        .eq('company_id', companyId);
       if (qErr) throw qErr;
-      const rows = Array.isArray(data) ? data : [];
+      const rows = (Array.isArray(data) ? data : []).filter(
+        (row) => String(row?.role || '').toLowerCase() !== ROLE.ADMIN,
+      );
       return {
         totalEmployees: rows.length,
-        blockedByLicenseCount: rows.filter((r) => r.license_state === 'blocked_by_license').length,
+        blockedByLicenseCount: rows.filter(
+          (row) => !asBool(row?.is_admin_blocked) && row?.license_state === 'blocked_by_license',
+        ).length,
       };
     },
     staleTime: BILLING_MEMBER_STATS_STALE_MS,
@@ -283,9 +295,9 @@ export default function BillingScreen() {
   }));
 
   const isMemberLicenseActive = React.useCallback((member) => {
-    if (member?.role === ROLE.ADMIN) return true;
+    if (member?.role === ROLE.ADMIN) return false;
     if (member?.admin_blocked) return false;
-    return member?.license_state !== 'blocked_by_license';
+    return member?.has_seat === true && member?.license_state !== 'blocked_by_license';
   }, []);
 
   const mergedMembers = React.useMemo(() => {
@@ -384,12 +396,25 @@ export default function BillingScreen() {
 
   const accessPaidSeats = asIntOrNull(access?.paid_seats_total);
   const entitlementsPaidSeats = asIntOrNull(entitlements?.allowed_seats);
-  const paidSeatsTotal = Math.max(accessPaidSeats ?? 0, entitlementsPaidSeats ?? 0, asIntOrNull(paidSeatsRpc) ?? 0);
-  const usedSeatsTotal = asIntOrNull(access?.used_seats) ?? asIntOrNull(entitlements?.used_seats) ?? 0;
+  const paidSeatsTotal =
+    accessPaidSeats ?? asIntOrNull(paidSeatsRpc) ?? entitlementsPaidSeats ?? 0;
+  const usedSeatsTotal =
+    asIntOrNull(access?.used_seats) ?? asIntOrNull(entitlements?.used_seats) ?? 0;
   const freeSeatsFromAccess = asIntOrNull(access?.free_seats);
   const freeSeatsTotal = freeSeatsFromAccess ?? Math.max(0, paidSeatsTotal - usedSeatsTotal);
-  const totalEmployees = mergedMembers.length || Number(memberStatsFallback?.totalEmployees || 0);
-  const blockedByLicenseCount = mergedMembers.filter((m) => m.license_state === 'blocked_by_license').length || Number(memberStatsFallback?.blockedByLicenseCount || 0);
+  const licenseMembers = React.useMemo(
+    () => mergedMembers.filter((member) => member?.role !== ROLE.ADMIN),
+    [mergedMembers],
+  );
+  const totalEmployees = mergedMembers.length > 0
+    ? licenseMembers.length
+    : Number(memberStatsFallback?.totalEmployees || 0);
+  const blockedByLicenseCount = mergedMembers.length > 0
+    ? licenseMembers.filter(
+        (member) =>
+          !member?.admin_blocked && member?.license_state === 'blocked_by_license',
+      ).length
+    : Number(memberStatsFallback?.blockedByLicenseCount || 0);
   const hasStorageUsage = !!storageUsage && typeof storageUsage === 'object';
   const storageLimitBytes = Number(storageUsage?.limit_bytes || STORAGE_LIMITS.COMPANY_TOTAL_BYTES);
   const usedStorageBytes = Number(storageUsage?.total_bytes ?? 0);
@@ -469,7 +494,7 @@ export default function BillingScreen() {
 
   const filteredManageMembers = React.useMemo(() => {
     const q = txt(manageSearch);
-    return mergedMembers.filter((m) => {
+    return licenseMembers.filter((m) => {
       if (q) {
         if (
           !matchesSearch(
@@ -502,7 +527,7 @@ export default function BillingScreen() {
     manageFilters.values.roles,
     manageFilters.values.suspended,
     manageSearch,
-    mergedMembers,
+    licenseMembers,
     t,
     useDepartments,
   ]);
@@ -560,11 +585,7 @@ export default function BillingScreen() {
     for (const id of manageSelection) if (!initialSelection.has(id)) return true;
     return false;
   }, [initialSelection, manageSelection]);
-  const currentActiveCount = React.useMemo(
-    () => mergedMembers.filter((m) => isMemberLicenseActive(m)).length,
-    [isMemberLicenseActive, mergedMembers],
-  );
-  const displayedSelectedCount = hasChanges ? manageSelection.size : currentActiveCount;
+  const displayedSelectedCount = manageSelection.size;
 
   const handleRpcError = React.useCallback((rawErr) => {
     const msg = String(rawErr?.message || t('billing_unknown_error'));
@@ -800,14 +821,18 @@ export default function BillingScreen() {
   }, [companyId, getDiff, handleRpcError, manageSelection, mergedMembers, orderConflicts, refreshAll, t, toast]);
 
   const periodEndDate = React.useMemo(
-    () => (entitlements?.current_period_end ? new Date(entitlements.current_period_end) : null),
-    [entitlements?.current_period_end],
+    () => {
+      const raw = access?.period_end ?? entitlements?.current_period_end;
+      return raw ? new Date(raw) : null;
+    },
+    [access?.period_end, entitlements?.current_period_end],
   );
   const isPeriodActuallyExpired = React.useMemo(
     () => !!periodEndDate && periodEndDate.getTime() <= Date.now(),
     [periodEndDate],
   );
-  const isSubscriptionActive = entitlements?.status === 'active' && !isPeriodActuallyExpired;
+  const subscriptionStatus = access?.subscription_status ?? entitlements?.status;
+  const isSubscriptionActive = subscriptionStatus === 'active' && !isPeriodActuallyExpired;
   const statusLabel = isSubscriptionActive ? t('billing_status_active') : t('billing_status_inactive', t('billing_status_expired'));
   const statusColor = isSubscriptionActive ? theme.colors.success : theme.colors.danger;
   const billingLocale = React.useMemo(() => resolveBillingLocale(locale), [locale]);
@@ -940,7 +965,7 @@ export default function BillingScreen() {
                       >
                         <Text style={base.label}>{t('billing_issued_licenses')}</Text>
                         <View style={[base.rightWrap, styles(theme).issuedWrap]}>
-                          <Text style={[base.value, styles(theme).lineValueStrong]}>{`${currentActiveCount}/${paidSeatsTotal}`}</Text>
+                          <Text style={[base.value, styles(theme).lineValueStrong]}>{`${usedSeatsTotal}/${paidSeatsTotal}`}</Text>
                           <AnimatedChevron
                             expanded={licensesExpanded}
                             iconName="chevron-down"
@@ -1044,6 +1069,9 @@ export default function BillingScreen() {
           <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
           <LabelValueRow label={t('billing_manage_selected_count')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: displayedSelectedCount <= paidSeatsTotal ? theme.colors.success : theme.colors.danger }]}>{displayedSelectedCount}</Text>} />
         </SeparatedList>
+        <Text style={[styles(theme).muted, styles(theme).manageLicenseHint]}>
+          {t('billing_license_admins_excluded_hint')}
+        </Text>
         <SearchFiltersBar
           value={manageSearch}
           onChangeText={setManageSearch}
@@ -1280,6 +1308,10 @@ const styles = (theme) => StyleSheet.create({
   footerBtnWrap: { flex: 1 },
   footerBtn: { width: '100%' },
   manageSummaryWrap: { borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.components.card.radius, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface, marginBottom: theme.spacing.sm },
+  manageLicenseHint: {
+    marginBottom: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.xs,
+  },
   manageErrorWrap: {
     borderWidth: theme.components.card.borderWidth,
     borderColor: withAlpha(theme.colors.danger, theme.components?.pill?.borderAlpha ?? 0.18),

@@ -1,4 +1,5 @@
 ﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Image, InteractionManager, LogBox, Platform, Text, View } from 'react-native';
@@ -22,7 +23,8 @@ LogBox.ignoreLogs([
 ]);
 
 import BottomNav from '../components/navigation/BottomNav';
-import ToastProvider, { useToast } from '../components/ui/ToastProvider';
+import { renderNavigationScreen } from '../components/navigation/NavigationCommitBoundary';
+import ToastProvider from '../components/ui/ToastProvider';
 import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
 import {
@@ -34,11 +36,17 @@ import {
 import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
 import patchRouter from '../lib/navigation/patchRouter';
 import dismissToRoute from '../lib/navigation/dismissToRoute';
+import {
+  getNotificationOrderId,
+  getNotificationResponseKey,
+  notificationBelongsToUser,
+  resolveNotificationTarget,
+} from '../lib/notificationRouting';
+import { shouldSuppressForegroundOrderNotification } from '../lib/notificationForegroundState';
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
 import { SimpleAuthProvider, useAuthContext } from '../providers/SimpleAuthProvider';
-import { getSupportRequestById } from '../src/features/supportRequests/api';
 import { initI18n, setLocale } from '../src/i18n';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { FeedbackProvider } from '../src/shared/feedback';
@@ -65,41 +73,34 @@ export const unstable_settings = {
   initialRouteName: 'index',
 };
 
-function getNotificationRecipientUserId(notification) {
-  return String(notification?.request?.content?.data?.recipient_user_id || '').trim();
-}
-
-function notificationBelongsToUser(notification, userId) {
-  const recipientUserId = getNotificationRecipientUserId(notification);
-  return !recipientUserId || recipientUserId === String(userId || '').trim();
-}
-
 function ensureForegroundNotificationHandler() {
   if (Platform.OS === 'web') return;
   if (globalThis.__foregroundNotifHandlerConfigured) return;
-  globalThis.__foregroundNotifHandlerConfigured = true;
-
-  import('expo-notifications')
-    .then((Notifications) => {
-      Notifications.setNotificationHandler({
-        handleNotification: async (notification) => {
-          const belongsToCurrentUser = notificationBelongsToUser(
-            notification,
-            globalThis.__activeNotificationUserId,
-          );
-          return {
-            shouldShowBanner: belongsToCurrentUser,
-            shouldShowList: belongsToCurrentUser,
-            shouldPlaySound: belongsToCurrentUser,
-            shouldSetBadge: false,
-          };
-        },
-      });
-    })
-    .catch(() => {
-      globalThis.__foregroundNotifHandlerConfigured = false;
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async (notification) => {
+        const belongsToCurrentUser = notificationBelongsToUser(
+          notification,
+          globalThis.__activeNotificationUserId,
+        );
+        const shouldShow =
+          belongsToCurrentUser &&
+          !shouldSuppressForegroundOrderNotification(notification);
+        return {
+          shouldShowBanner: shouldShow,
+          shouldShowList: shouldShow,
+          shouldPlaySound: shouldShow,
+          shouldSetBadge: false,
+        };
+      },
     });
+    globalThis.__foregroundNotifHandlerConfigured = true;
+  } catch {
+    globalThis.__foregroundNotifHandlerConfigured = false;
+  }
 }
+
+ensureForegroundNotificationHandler();
 
 function LastSeenTracker() {
   const { user } = useAuthContext();
@@ -111,7 +112,6 @@ const ACCESS_REVALIDATE_INTERVAL_MS = 5 * 60 * 1000;
 const ACCESS_CHECK_MIN_GAP_MS = 1200;
 const ACCESS_BOOTSTRAP_DELAY_MS = 1800;
 const PUSH_BOOTSTRAP_DELAY_MS = 4500;
-const NOTIFICATION_LISTENERS_DELAY_MS = 2800;
 
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
@@ -122,7 +122,7 @@ function _BrandedLoadingScreen({ theme, label }) {
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
       <Image
-        source={require('../assets/adaptive-icon.png')}
+        source={require('../assets/icon.png')}
         style={{ width: 112, height: 112 }}
         resizeMode="contain"
       />
@@ -145,29 +145,25 @@ function _BrandedLoadingScreen({ theme, label }) {
 function RootLayoutInner() {
   const { isInitializing, isSigningOut, isAuthenticated, user } = useAuthContext();
   const { t } = useTranslation();
-  const toast = useToast();
   const { theme } = useTheme();
   const router = useRouter();
   const segments = useSegments();
   const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
   const splashHiddenRef = useRef(false);
   const segmentsRef = useRef(segments);
   const accessCheckInFlightRef = useRef(false);
   const lastAccessCheckAtRef = useRef(0);
   const pushSyncInFlightRef = useRef(null);
   const pushSyncDoneForUserRef = useRef(null);
-  const notificationOpenInFlightRef = useRef(false);
   const lastHandledNotificationKeyRef = useRef('');
   const notificationIdsByOrderRef = useRef(new Map());
-  const pendingInitialNotificationResponseRef = useRef(null);
-  const initialNotificationCheckedRef = useRef(Platform.OS === 'web');
   const previousAuthStateRef = useRef(isAuthenticated);
   const returnToHomeAfterLogoutRef = useRef(false);
   const authSnapshotRef = useRef({ isAuthenticated, userId: String(user?.id || '') });
   authSnapshotRef.current = { isAuthenticated, userId: String(user?.id || '') };
   globalThis.__activeNotificationUserId = isAuthenticated ? String(user?.id || '') : '';
-  const [initialNotificationCheckPending, setInitialNotificationCheckPending] = useState(Platform.OS !== 'web');
-  const [pendingNotificationLaunch, setPendingNotificationLaunch] = useState(false);
   const [publicAuthRouteHydrated, setPublicAuthRouteHydrated] = useState(false);
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
@@ -187,6 +183,11 @@ function RootLayoutInner() {
     const target = String(targetPath || '').trim().replace(/\/+$/, '') || '/';
     return current === target;
   }, [pathname]);
+
+  useEffect(() => {
+    lastHandledNotificationKeyRef.current = '';
+    notificationIdsByOrderRef.current.clear();
+  }, [user?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -294,27 +295,9 @@ function RootLayoutInner() {
     }
   }, [inAuthFlow, isAuthenticated, isBlockedScreen, pathname, publicAuthRouteHydrated, segments]);
 
-  useEffect(() => {
-    if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return undefined;
-    let task = null;
-    const timer = setTimeout(() => {
-      task = InteractionManager.runAfterInteractions(() => {
-        ensureForegroundNotificationHandler();
-      });
-    }, NOTIFICATION_LISTENERS_DELAY_MS);
-    return () => {
-      clearTimeout(timer);
-      try {
-        task?.cancel?.();
-      } catch {}
-    };
-  }, [isAuthenticated, isBlockedScreen, isInitializing]);
-
   const shouldHoldNativeSplash =
     isInitializing ||
-    !publicAuthRouteHydrated ||
-    initialNotificationCheckPending ||
-    (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen);
+    !publicAuthRouteHydrated;
 
   useEffect(() => {
     if (shouldHoldNativeSplash) return;
@@ -322,17 +305,7 @@ function RootLayoutInner() {
   }, [hideSplash, shouldHoldNativeSplash]);
 
   useEffect(() => {
-    if (isInitializing || isAuthenticated || !pendingNotificationLaunch) return;
-    pendingInitialNotificationResponseRef.current = null;
-    setPendingNotificationLaunch(false);
-    import('expo-notifications')
-      .then((Notifications) => Notifications.clearLastNotificationResponseAsync?.())
-      .catch(() => {});
-  }, [isAuthenticated, isInitializing, pendingNotificationLaunch]);
-
-  useEffect(() => {
     if (isInitializing || !publicAuthRouteHydrated) return;
-    if (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen) return;
     if (isAuthenticated && returnToHomeAfterLogoutRef.current && !isBlockedScreen) {
       if (isSamePath('/orders')) {
         returnToHomeAfterLogoutRef.current = false;
@@ -346,10 +319,12 @@ function RootLayoutInner() {
       if ((!inAuthFlow || (isLoginScreen && target !== '/(auth)/login')) && !isSamePath(target)) {
         router.replace(target);
       }
+    } else if (normalizedPathname === '/') {
+      router.replace('/orders');
     } else if (isAuthenticated && inAuthFlow && !isBlockedScreen && !isSamePath('/orders')) {
       router.replace('/orders');
     }
-  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, normalizedPathname, pendingNotificationLaunch, publicAuthRouteHydrated, router]);
+  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, normalizedPathname, publicAuthRouteHydrated, router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
@@ -630,181 +605,18 @@ function RootLayoutInner() {
     };
   }, [isAuthenticated, isInitializing, user?.id]);
 
-  const extractOrderIdFromNotificationResponse = useCallback((response) => {
-    const normalizeNotificationData = (raw) => {
-      let value = raw;
-      if (typeof value === 'string') {
-        try {
-          value = JSON.parse(value);
-        } catch {
-          return {};
-        }
-      }
-      if (!value || typeof value !== 'object') return {};
-      return value;
-    };
-
-    const extractOrderIdFromData = (data) => {
-      if (!data || typeof data !== 'object') return null;
-
-      const directId =
-        data.order_id ??
-        data.orderId ??
-        (data.entity_type === 'order' ? data.entity_id : null) ??
-        data.request_id ??
-        null;
-      if (directId != null && String(directId).trim() !== '') {
-        return String(directId).trim();
-      }
-
-      const paramsRaw = data.params;
-      const params = normalizeNotificationData(paramsRaw);
-      if (params.id != null && String(params.id).trim() !== '') {
-        return String(params.id).trim();
-      }
-
-      const route = String(data.route || data.path || '').trim();
-      if (route) {
-        const match = route.match(/\/orders\/([^/?#]+)/i);
-        if (match?.[1]) return String(match[1]).trim();
-      }
-
-      return null;
-    };
-
-    const notification = response?.notification;
-    const contentData = normalizeNotificationData(notification?.request?.content?.data);
-    const remoteData = normalizeNotificationData(notification?.request?.trigger?.remoteMessage?.data);
-    const bundledData = normalizeNotificationData(remoteData?.data);
-
-    return (
-      extractOrderIdFromData(contentData) ||
-      extractOrderIdFromData(remoteData) ||
-      extractOrderIdFromData(bundledData) ||
-      null
-    );
-  }, []);
-
-  const extractSupportFeedbackIdFromNotificationResponse = useCallback((response) => {
-    const normalizeNotificationData = (raw) => {
-      let value = raw;
-      if (typeof value === 'string') {
-        try {
-          value = JSON.parse(value);
-        } catch {
-          return {};
-        }
-      }
-      if (!value || typeof value !== 'object') return {};
-      return value;
-    };
-
-    const extractFeedbackIdFromData = (data) => {
-      if (!data || typeof data !== 'object') return null;
-
-      const directId =
-        data.feedback_id ??
-        data.feedbackId ??
-        (data.entity_type === 'support_feedback' ? data.entity_id : null) ??
-        null;
-      if (directId != null && String(directId).trim() !== '') {
-        return String(directId).trim();
-      }
-
-      const params = normalizeNotificationData(data.params);
-      if (params.id != null && String(params.id).trim() !== '') {
-        const route = String(data.route || data.path || '').trim();
-        if (route.includes('/admin/feedbacks')) return String(params.id).trim();
-      }
-
-      const route = String(data.route || data.path || '').trim();
-      if (route) {
-        const match = route.match(/\/admin\/feedbacks\/([^/?#]+)/i);
-        if (match?.[1]) return String(match[1]).trim();
-      }
-
-      return null;
-    };
-
-    const notification = response?.notification;
-    const contentData = normalizeNotificationData(notification?.request?.content?.data);
-    const remoteData = normalizeNotificationData(notification?.request?.trigger?.remoteMessage?.data);
-    const bundledData = normalizeNotificationData(remoteData?.data);
-
-    return (
-      extractFeedbackIdFromData(contentData) ||
-      extractFeedbackIdFromData(remoteData) ||
-      extractFeedbackIdFromData(bundledData) ||
-      null
-    );
-  }, []);
-
-  const extractOrderIdFromNotificationContent = useCallback((notification) => {
-    const normalizeNotificationData = (raw) => {
-      let value = raw;
-      if (typeof value === 'string') {
-        try {
-          value = JSON.parse(value);
-        } catch {
-          return {};
-        }
-      }
-      if (!value || typeof value !== 'object') return {};
-      return value;
-    };
-
-    const extractOrderIdFromData = (data) => {
-      if (!data || typeof data !== 'object') return null;
-
-      const directId =
-        data.order_id ??
-        data.orderId ??
-        (data.entity_type === 'order' ? data.entity_id : null) ??
-        data.request_id ??
-        null;
-      if (directId != null && String(directId).trim() !== '') {
-        return String(directId).trim();
-      }
-
-      const paramsRaw = data.params;
-      const params = normalizeNotificationData(paramsRaw);
-      if (params.id != null && String(params.id).trim() !== '') {
-        return String(params.id).trim();
-      }
-
-      const route = String(data.route || data.path || '').trim();
-      if (route) {
-        const match = route.match(/\/orders\/([^/?#]+)/i);
-        if (match?.[1]) return String(match[1]).trim();
-      }
-
-      return null;
-    };
-
-    const contentData = normalizeNotificationData(notification?.request?.content?.data);
-    const remoteData = normalizeNotificationData(notification?.request?.trigger?.remoteMessage?.data);
-    const bundledData = normalizeNotificationData(remoteData?.data);
-
-    return (
-      extractOrderIdFromData(contentData) ||
-      extractOrderIdFromData(remoteData) ||
-      extractOrderIdFromData(bundledData) ||
-      null
-    );
-  }, []);
-
   const dismissPresentedNotificationsForOrder = useCallback(
-    async (orderId, Notifications) => {
+    async (orderId) => {
       const normalized = String(orderId || '').trim();
       if (!normalized) return;
 
-      const moduleRef = Notifications || (await import('expo-notifications'));
+      const moduleRef = Notifications;
       const rememberedIds = notificationIdsByOrderRef.current.get(normalized) || new Set();
       const toDismiss = new Set(rememberedIds);
       const list = await moduleRef.getPresentedNotificationsAsync?.();
       if (Array.isArray(list) && list.length) {
         for (const item of list) {
-          const itemOrderId = extractOrderIdFromNotificationContent(item);
+          const itemOrderId = getNotificationOrderId(item);
           if (itemOrderId && itemOrderId === normalized) {
             const identifier = String(item?.request?.identifier || '').trim();
             if (identifier) toDismiss.add(identifier);
@@ -820,7 +632,7 @@ function RootLayoutInner() {
 
       notificationIdsByOrderRef.current.delete(normalized);
     },
-    [extractOrderIdFromNotificationContent],
+    [],
   );
 
   const getActiveOrderIdFromPathname = useCallback((currentPathname) => {
@@ -830,117 +642,39 @@ function RootLayoutInner() {
     return String(match[1]).trim();
   }, []);
 
-  const getNotificationResponseKey = useCallback(
-    (response) => {
-      const requestId = String(response?.notification?.request?.identifier || '').trim();
-      const actionId = String(response?.actionIdentifier || '').trim();
-      const feedbackId = String(extractSupportFeedbackIdFromNotificationResponse(response) || '').trim();
-      const orderId = String(extractOrderIdFromNotificationResponse(response) || '').trim();
-      return `${requestId}|${actionId}|${feedbackId || orderId}`;
-    },
-    [extractOrderIdFromNotificationResponse, extractSupportFeedbackIdFromNotificationResponse],
-  );
-
-  const hasNotificationNavigationTarget = useCallback(
-    (response) =>
-      !!extractOrderIdFromNotificationResponse(response) ||
-      !!extractSupportFeedbackIdFromNotificationResponse(response),
-    [extractOrderIdFromNotificationResponse, extractSupportFeedbackIdFromNotificationResponse],
-  );
-
-  useEffect(() => {
-    if (Platform.OS === 'web' || initialNotificationCheckedRef.current) return undefined;
-    let active = true;
-    const fallbackTimer = setTimeout(() => {
-      if (!active || initialNotificationCheckedRef.current) return;
-      initialNotificationCheckedRef.current = true;
-      setInitialNotificationCheckPending(false);
-    }, 300);
-
-    (async () => {
-      try {
-        const Notifications = await import('expo-notifications');
-        const response = await Notifications.getLastNotificationResponseAsync?.();
-        if (!active || !response) return;
-
-        if (hasNotificationNavigationTarget(response)) {
-          pendingInitialNotificationResponseRef.current = response;
-          setPendingNotificationLaunch(true);
-        }
-      } catch {
-        // The regular listener below still handles notification taps.
-      } finally {
-        if (active) {
-          initialNotificationCheckedRef.current = true;
-          setInitialNotificationCheckPending(false);
-        }
-        clearTimeout(fallbackTimer);
-      }
-    })();
-
-    return () => {
-      active = false;
-      clearTimeout(fallbackTimer);
-    };
-  }, [hasNotificationNavigationTarget]);
-
   const openSupportFeedbackFromNotification = useCallback(
-    async (feedbackId) => {
-      if (!feedbackId || notificationOpenInFlightRef.current) return;
-      const expectedUserId = authSnapshotRef.current.userId;
-      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
-      notificationOpenInFlightRef.current = true;
-      try {
-        const feedback = await getSupportRequestById(feedbackId);
-        if (!isAuthenticatedUserCurrent(expectedUserId)) return;
-        if (!feedback?.id) {
-          router.replace('/admin/feedbacks');
-          return;
-        }
-
-        router.push({
-          pathname: '/admin/feedbacks/[id]',
-          params: { id: feedback.id },
-        });
-      } catch {
-        if (isAuthenticatedUserCurrent(expectedUserId)) {
-          router.replace('/admin/feedbacks');
-        }
-      } finally {
-        notificationOpenInFlightRef.current = false;
-      }
+    (feedbackId) => {
+      const normalizedFeedbackId = String(feedbackId || '').trim();
+      if (!normalizedFeedbackId) return;
+      router.push({
+        pathname: '/admin/feedbacks/[id]',
+        params: { id: normalizedFeedbackId, fromNotification: '1' },
+      });
     },
-    [isAuthenticatedUserCurrent, router],
+    [router],
   );
 
   const openOrderFromNotification = useCallback(
-    async (orderId) => {
+    (orderId) => {
       const normalizedOrderId = String(orderId || '').trim();
-      if (!normalizedOrderId || notificationOpenInFlightRef.current) return;
-      const expectedUserId = authSnapshotRef.current.userId;
-      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
-      notificationOpenInFlightRef.current = true;
-      try {
-        if (!isAuthenticatedUserCurrent(expectedUserId)) return;
-        router.replace({
-          pathname: `/orders/${normalizedOrderId}`,
+      if (!normalizedOrderId) return;
+      if (getActiveOrderIdFromPathname(pathnameRef.current) !== normalizedOrderId) {
+        router.push({
+          pathname: '/orders/[id]',
           params: {
-            returnTo: '/orders/my-orders',
-            returnParams: JSON.stringify({ fromNotification: true }),
+            id: normalizedOrderId,
+            fromNotification: '1',
+            returnTo: '/orders',
           },
         });
-
-        dismissPresentedNotificationsForOrder(normalizedOrderId).catch(() => {});
-      } catch {
-        if (isAuthenticatedUserCurrent(expectedUserId)) {
-          toast.error(t('push_open_generic_error'));
-          router.replace('/orders');
-        }
-      } finally {
-        notificationOpenInFlightRef.current = false;
       }
+      dismissPresentedNotificationsForOrder(normalizedOrderId).catch(() => {});
     },
-    [dismissPresentedNotificationsForOrder, isAuthenticatedUserCurrent, router, t, toast],
+    [
+      dismissPresentedNotificationsForOrder,
+      getActiveOrderIdFromPathname,
+      router,
+    ],
   );
 
   useEffect(() => {
@@ -949,17 +683,9 @@ function RootLayoutInner() {
     }
 
     let active = true;
-    let responseSub = null;
-    let receivedSub = null;
-
-    const releasePendingNotificationLaunch = () => {
-      setTimeout(() => {
-        if (active) setPendingNotificationLaunch(false);
-      }, 120);
-    };
 
     const rememberNotificationIdentifier = (notification) => {
-      const orderId = String(extractOrderIdFromNotificationContent(notification) || '').trim();
+      const orderId = String(getNotificationOrderId(notification) || '').trim();
       if (!orderId) return;
       const identifier = String(notification?.request?.identifier || '').trim();
       if (!identifier) return;
@@ -968,99 +694,71 @@ function RootLayoutInner() {
       notificationIdsByOrderRef.current.set(orderId, next);
     };
 
-    const handleResponse = async (response, Notifications) => {
-      if (!active || !response) return;
-      const expectedUserId = authSnapshotRef.current.userId;
-      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
-      if (!notificationBelongsToUser(response?.notification, expectedUserId)) {
-        try {
-          const identifier = String(response?.notification?.request?.identifier || '').trim();
-          if (identifier) await Notifications?.dismissNotificationAsync?.(identifier);
-          await Notifications?.clearLastNotificationResponseAsync?.();
-        } catch {}
-        return;
-      }
-      const dedupeKey = getNotificationResponseKey(response);
-      if (dedupeKey && lastHandledNotificationKeyRef.current === dedupeKey) return;
-      if (dedupeKey) lastHandledNotificationKeyRef.current = dedupeKey;
-
-      const feedbackId = extractSupportFeedbackIdFromNotificationResponse(response);
-      if (feedbackId) {
-        await openSupportFeedbackFromNotification(feedbackId);
-        try {
-          await Notifications?.clearLastNotificationResponseAsync?.();
-        } catch {}
-        return;
-      }
-
-      const orderId = extractOrderIdFromNotificationResponse(response);
-      if (!orderId) return;
-
-      await openOrderFromNotification(orderId);
+    const clearLastResponse = () => {
       try {
-        await Notifications?.clearLastNotificationResponseAsync?.();
+        Notifications.clearLastNotificationResponse?.();
       } catch {}
     };
 
-    const init = async () => {
-      try {
-        const Notifications = await import('expo-notifications');
-        const expectedUserId = authSnapshotRef.current.userId;
-        if (!active || !isAuthenticatedUserCurrent(expectedUserId)) return;
-        const presented = await Notifications.getPresentedNotificationsAsync?.();
-        if (!active || !isAuthenticatedUserCurrent(expectedUserId)) return;
-        if (Array.isArray(presented)) {
-          for (const item of presented) rememberNotificationIdentifier(item);
-        }
-
-        receivedSub = Notifications.addNotificationReceivedListener((notification) => {
-          const currentUserId = authSnapshotRef.current.userId;
-          if (!notificationBelongsToUser(notification, currentUserId)) {
-            const identifier = String(notification?.request?.identifier || '').trim();
-            if (identifier) Notifications.dismissNotificationAsync?.(identifier).catch(() => {});
-            return;
-          }
-          rememberNotificationIdentifier(notification);
-        });
-        responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-          rememberNotificationIdentifier(response?.notification);
-          if (hasNotificationNavigationTarget(response)) {
-            setPendingNotificationLaunch(true);
-          }
-          handleResponse(response, Notifications)
-            .catch(() => {})
-            .finally(() => {
-              releasePendingNotificationLaunch();
-            });
-        });
-
-        const pendingInitialResponse = pendingInitialNotificationResponseRef.current;
-        if (pendingInitialResponse) {
-          pendingInitialNotificationResponseRef.current = null;
-          await handleResponse(pendingInitialResponse, Notifications);
-          releasePendingNotificationLaunch();
-          return;
-        }
-
-        const lastResponse = await Notifications.getLastNotificationResponseAsync?.();
-        if (lastResponse) {
-          if (hasNotificationNavigationTarget(lastResponse)) {
-            setPendingNotificationLaunch(true);
-          }
-          await handleResponse(lastResponse, Notifications);
-        }
-      } catch {
-        // noop
-      } finally {
-        if (!pendingInitialNotificationResponseRef.current) {
-          releasePendingNotificationLaunch();
-        }
+    const dismissTappedNotification = (response) => {
+      const identifier = String(response?.notification?.request?.identifier || '').trim();
+      if (identifier) {
+        Notifications.dismissNotificationAsync?.(identifier).catch(() => {});
       }
     };
 
-    init().catch(() => {
-      setPendingNotificationLaunch(false);
+    const handleResponse = (response) => {
+      if (!active || !response) return;
+      const expectedUserId = authSnapshotRef.current.userId;
+      if (!isAuthenticatedUserCurrent(expectedUserId)) return;
+      if (!notificationBelongsToUser(response, expectedUserId)) {
+        dismissTappedNotification(response);
+        clearLastResponse();
+        return;
+      }
+      const dedupeKey = getNotificationResponseKey(response);
+      if (dedupeKey && lastHandledNotificationKeyRef.current === dedupeKey) {
+        clearLastResponse();
+        return;
+      }
+      if (dedupeKey) lastHandledNotificationKeyRef.current = dedupeKey;
+
+      const target = resolveNotificationTarget(response);
+      clearLastResponse();
+      dismissTappedNotification(response);
+      if (!target) return;
+      if (target.kind === 'support-feedback') {
+        openSupportFeedbackFromNotification(target.entityId);
+      } else if (target.kind === 'order') {
+        openOrderFromNotification(target.entityId);
+      }
+    };
+
+    const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+      const currentUserId = authSnapshotRef.current.userId;
+      if (!notificationBelongsToUser(notification, currentUserId)) {
+        const identifier = String(notification?.request?.identifier || '').trim();
+        if (identifier) Notifications.dismissNotificationAsync?.(identifier).catch(() => {});
+        return;
+      }
+      rememberNotificationIdentifier(notification);
     });
+    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      rememberNotificationIdentifier(response?.notification);
+      handleResponse(response);
+    });
+
+    try {
+      const initialResponse = Notifications.getLastNotificationResponse?.();
+      if (initialResponse) handleResponse(initialResponse);
+    } catch {}
+
+    Notifications.getPresentedNotificationsAsync?.()
+      .then((presented) => {
+        if (!active || !Array.isArray(presented)) return;
+        for (const item of presented) rememberNotificationIdentifier(item);
+      })
+      .catch(() => {});
 
     return () => {
       active = false;
@@ -1068,11 +766,6 @@ function RootLayoutInner() {
       receivedSub?.remove?.();
     };
   }, [
-    extractSupportFeedbackIdFromNotificationResponse,
-    extractOrderIdFromNotificationContent,
-    extractOrderIdFromNotificationResponse,
-    getNotificationResponseKey,
-    hasNotificationNavigationTarget,
     isAuthenticated,
     isAuthenticatedUserCurrent,
     isBlockedScreen,
@@ -1086,16 +779,6 @@ function RootLayoutInner() {
     const orderId = getActiveOrderIdFromPathname(pathname);
     if (!orderId) return;
     dismissPresentedNotificationsForOrder(orderId).catch(() => {});
-    const t1 = setTimeout(() => {
-      dismissPresentedNotificationsForOrder(orderId).catch(() => {});
-    }, 450);
-    const t2 = setTimeout(() => {
-      dismissPresentedNotificationsForOrder(orderId).catch(() => {});
-    }, 1200);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
   }, [
     dismissPresentedNotificationsForOrder,
     getActiveOrderIdFromPathname,
@@ -1105,11 +788,7 @@ function RootLayoutInner() {
     pathname,
   ]);
 
-  if (
-    ((isInitializing || !publicAuthRouteHydrated) && !isSigningOut) ||
-    initialNotificationCheckPending ||
-    (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen)
-  ) {
+  if ((isInitializing || !publicAuthRouteHydrated) && !isSigningOut) {
     return (
       <SafeAreaView
         edges={rootSafeEdges}
@@ -1141,6 +820,7 @@ function RootLayoutInner() {
             <View style={{ flex: 1, minHeight: 0 }}>
               <Stack
                 initialRouteName="index"
+                screenLayout={renderNavigationScreen}
                 screenOptions={{
                   headerShown: false,
                   animation: 'none',

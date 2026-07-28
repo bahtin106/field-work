@@ -4,7 +4,7 @@
   "version": "1.0.4",
   "main": "expo-router/entry",
   "scripts": {
-    "postinstall": "npm dedupe --prefer-dedupe",
+    "postinstall": "npm dedupe --prefer-dedupe && patch-package",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -99,6 +99,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "jimp-compact": "0.16.1",
+    "patch-package": "8.0.1",
     "typescript": "5.9.2"
   },
   "resolutions": {

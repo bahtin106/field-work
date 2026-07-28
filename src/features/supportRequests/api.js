@@ -235,7 +235,7 @@ async function loadAttachmentsByFeedbackIds(feedbackIds) {
   return map;
 }
 
-async function resolveSupportPhotoUrls(rows) {
+async function resolveSupportPhotoUrls(rows, { forceRefresh = false } = {}) {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const urls = Array.from(
     new Set(
@@ -253,7 +253,7 @@ async function resolveSupportPhotoUrls(rows) {
   if (!urls.length) return sourceRows;
 
   try {
-    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(urls);
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(urls, { forceRefresh });
     const cleanedSet = new Set((cleanedUrls || []).map((url) => String(url || '').trim()).filter(Boolean));
     const resolveUrl = (url) => {
       const raw = String(url || '').trim();
@@ -548,7 +548,7 @@ export async function listMySupportRequests({ userId, limit = 100 } = {}) {
   return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, new Map(), new Map()));
 }
 
-export async function getSupportRequestById(feedbackId) {
+export async function getSupportRequestById(feedbackId, { forcePhotoRefresh = false } = {}) {
   const id = String(feedbackId || '').trim();
   if (!id) throw new Error('feedback id is required');
 
@@ -574,7 +574,10 @@ export async function getSupportRequestById(feedbackId) {
     ...data,
     photo_urls: attachmentsByFeedbackId.get(String(data?.id || '').trim()) || [],
   };
-  const [dataWithResolvedPhotos] = await resolveSupportPhotoUrls([dataWithPhotos]);
+  const [dataWithResolvedPhotos] = await resolveSupportPhotoUrls(
+    [dataWithPhotos],
+    { forceRefresh: forcePhotoRefresh },
+  );
 
   const [{ profilesById, companiesById }, clientContext] = await Promise.all([
     loadProfilesAndCompanies([dataWithPhotos]),

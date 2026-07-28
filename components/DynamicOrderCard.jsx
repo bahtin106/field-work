@@ -17,9 +17,16 @@ import {
 import { resolveRequestTitle } from '../src/features/requests/title';
 import { useTranslation } from '../src/i18n/useTranslation';
 import {
+  buildClientObjectLocationSummary,
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
 } from '../src/features/objects/addressing';
+import {
+  buildOrderAddressDisplay,
+  buildOrderAddressShort,
+  extractOrderAddress,
+  normalizeOrderAddressMode,
+} from '../src/features/requests/addressing';
 import { isOrderFinanceEnabledFromMap } from '../src/features/fieldSettings/orderFinance';
 import { OrderStatusCapsuleView } from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
@@ -146,6 +153,66 @@ function joinName(obj) {
   return (parts[0] || '').trim();
 }
 
+function normalizeDisplayValue(value) {
+  if (value !== null && typeof value === 'object') return '';
+  return String(value ?? '').trim();
+}
+
+function resolveOrderCardLocation(order) {
+  if (!order || typeof order !== 'object') {
+    return { kind: 'empty', value: '' };
+  }
+
+  const addressMode = normalizeOrderAddressMode(order.address_mode);
+  const objectItem = order.object || order.client_object || null;
+  const objectHasMapPoint = hasClientObjectMapPoint(objectItem);
+  const snapshotHasMapPoint = hasClientObjectMapPoint(order);
+  const mapSource = objectHasMapPoint ? objectItem : order;
+  const locationMode = normalizeClientObjectLocationMode(
+    addressMode === 'object'
+      ? objectItem?.location_mode || order.object_location_mode || order.location_mode
+      : order.location_mode,
+    {
+      fallback: objectHasMapPoint || snapshotHasMapPoint ? 'map' : 'address',
+    },
+  );
+
+  if (locationMode === 'map' && hasClientObjectMapPoint(mapSource)) {
+    return { kind: 'map', value: '' };
+  }
+
+  const addressSnapshot = extractOrderAddress(order);
+  const snapshotShort = buildOrderAddressShort(addressSnapshot);
+  const snapshotFull = buildOrderAddressDisplay(addressSnapshot);
+  const nestedObjectSummary = buildClientObjectLocationSummary(objectItem, { compact: true });
+  const projectedObjectSummary = normalizeDisplayValue(order.object_summary);
+  const precomputedShort = normalizeDisplayValue(order.address_short);
+  const legacyAddress = normalizeDisplayValue(order.address || order.addr);
+  const candidates =
+    addressMode === 'object'
+      ? [
+          nestedObjectSummary,
+          projectedObjectSummary,
+          precomputedShort,
+          legacyAddress,
+          snapshotShort,
+          snapshotFull,
+        ]
+      : [
+          precomputedShort,
+          legacyAddress,
+          snapshotShort,
+          snapshotFull,
+          projectedObjectSummary,
+          nestedObjectSummary,
+        ];
+  const value = candidates.map(normalizeDisplayValue).find(Boolean) || '';
+
+  return value
+    ? { kind: 'address', value }
+    : { kind: 'empty', value: '' };
+}
+
 /* Try to read value by field/meta, with robust fallbacks from raw order */
 function readWithFallback(order, field, key) {
   let val = readValueFromOrder(order, field || { field_key: key, storage_target: 'builtin' });
@@ -169,25 +236,11 @@ function readWithFallback(order, field, key) {
   }
 
   if ((val == null || val === '') && key === 'address') {
-    const locationMode = normalizeClientObjectLocationMode(order?.object_location_mode || order?.location_mode, {
-      fallback: hasClientObjectMapPoint(order) ? 'map' : 'address',
-    });
-    if (locationMode === 'map' && hasClientObjectMapPoint(order)) {
+    const location = resolveOrderCardLocation(order);
+    if (location.kind === 'map') {
       return '__MAP_POINT__';
     }
-    if (String(order?.address_mode || '').trim().toLowerCase() === 'custom') {
-      return '';
-    }
-    // Формируем адрес компактно: пропускаем область/район, показываем город,
-    // улицу без приставки "ул."/"улица" и номер дома.
-    const city = order?.city || order?.town || order?.settlement || null;
-    const rawStreet = order?.street || order?.snt || null;
-    const street =
-      typeof rawStreet === 'string' ? rawStreet.replace(/^\s*(ул\.?|улица)\s+/i, '') : rawStreet;
-    const house = order?.house || order?.plot || null;
-    const composed = [city, street, house].filter(Boolean).join(', ');
-    const cand = [order?.address, order?.addr, composed].find(Boolean);
-    val = cand || '';
+    val = location.value;
   }
 
   if (field?.type === 'select' || field?.type === 'multiselect') {
@@ -369,17 +422,7 @@ function DynamicOrderCard({
         ].some((value) => String(value || '').trim().length > 0);
       }
       if (key === 'address') {
-        const locationMode = normalizeClientObjectLocationMode(order?.object_location_mode || order?.location_mode, {
-          fallback: hasClientObjectMapPoint(order) ? 'map' : 'address',
-        });
-        if (locationMode === 'map' && hasClientObjectMapPoint(order)) return true;
-        if (String(order?.address_mode || '').trim().toLowerCase() === 'custom') return false;
-        const city = order?.city || order?.town || order?.settlement || '';
-        const street = order?.street || order?.snt || '';
-        const house = order?.house || order?.plot || '';
-        return [order?.address, order?.addr, city, street, house].some(
-          (value) => String(value || '').trim().length > 0,
-        );
+        return resolveOrderCardLocation(order).kind !== 'empty';
       }
       if (key === 'departure_time') return hasExplicitDepartureTime(order);
       if (key === 'start_price') {

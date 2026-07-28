@@ -141,6 +141,10 @@ function normalizeOrder(row) {
   const clientItem = row.client || null;
   const address = extractOrderAddress(row);
   const addressMode = normalizeOrderAddressMode(row.address_mode);
+  const objectSummary =
+    buildClientObjectLocationSummary(objectItem, { compact: true }) ||
+    String(row.object_summary || '').trim() ||
+    null;
   const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
   const departureTime = normalizeDepartureTimeString(row?.departure_time);
   return {
@@ -161,7 +165,7 @@ function normalizeOrder(row) {
     fio: customerName || null,
     customer_name: customerName || null,
     object_name: objectItem?.name || String(row.object_name || '').trim() || null,
-    object_summary: buildClientObjectLocationSummary(objectItem, { compact: true }) || null,
+    object_summary: objectSummary,
     object_location_mode: String(objectItem?.location_mode || '').trim() || null,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,
@@ -210,12 +214,6 @@ function buildConcurrencyError(message: string, latest: any = null) {
   return error;
 }
 
-async function getRequestByIdFresh(id) {
-  const key = String(id || '').trim();
-  if (!key || !isUuid(key)) return null;
-  return getRequestById(key);
-}
-
 export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = null) {
   return measureNetwork('requests.update.withVersion', async () => {
     if (!id) throw new Error('Order id is required');
@@ -242,13 +240,16 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
             p_patch: patch ?? {},
           });
           if (!retryError && retryData) {
-            return getRequestByIdFresh(id);
+            return normalizeOrder(Array.isArray(retryData) ? retryData[0] : retryData);
           }
         }
         throw buildConcurrencyError('Order was modified concurrently', latest || null);
       }
 
-      return getRequestByIdFresh(id);
+      // The RPC already returns the committed order row. A mandatory follow-up
+      // request made a successful save look failed whenever that second request
+      // was interrupted on a slow device or during a session transition.
+      return normalizeOrder(Array.isArray(rpcData) ? rpcData[0] : rpcData);
     } catch (rpcFailure) {
       // All order mutations are authorized atomically in the database.
       // A direct-table fallback would bypass the configured access matrix.

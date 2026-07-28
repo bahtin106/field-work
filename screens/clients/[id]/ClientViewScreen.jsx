@@ -317,7 +317,10 @@ export default function ClientViewScreen() {
                   onPressTag={(tag) => {
                     const value = String(tag?.value || '').trim();
                     if (!value) return;
-                    router.push({ pathname: '/clients', params: { tag: value } });
+                    router.push({
+                      pathname: '/clients',
+                      params: { filter_client_tag: value },
+                    });
                   }}
                 />
               </Card>

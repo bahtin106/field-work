@@ -24,7 +24,7 @@ import { useTranslation } from '../src/i18n/useTranslation';
 import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 import { markFirstContent, markScreenMount, measureNetwork } from '../src/shared/perf/devMetrics';
 import { scheduleUiIdleTask } from '../src/shared/perf/uiIdleTask';
-import { hasRoutePreloader, preloadRouteScreen } from '../src/shared/navigation/routePreload';
+import { preloadRouteScreen } from '../src/shared/navigation/routePreload';
 import { queryKeys } from '../src/shared/query/queryKeys';
 import { queryClient as appQueryClient } from '../src/shared/query/queryClient';
 import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
@@ -1078,7 +1078,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             <Pressable
               key={item.key}
               onPress={item.onPress}
-              onPressIn={item.route && hasRoutePreloader(item.route) ? () => preloadRouteScreen(item.route) : undefined}
               unstable_pressDelay={0}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
@@ -1159,7 +1158,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           <Button
             title={t('home_btn_create_order')}
             onPress={openCreateOrder}
-            onPressIn={() => preloadRouteScreen(HOME_ROUTES.createOrder)}
           />
         </View>
       )}

@@ -790,12 +790,15 @@ async function getEntityContext(
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('Entity not found');
-  if (companyId && String((data as any).company_id || '') !== companyId) throw new Error('Forbidden');
+  const entityCompanyId = String((data as any).company_id || '').trim();
+  if (companyId && entityCompanyId !== companyId) throw new Error('Forbidden');
+  const effectiveCompanyId = String(companyId || entityCompanyId).trim();
+  if (!effectiveCompanyId) throw new Error('Company not found');
 
   const { data: company, error: companyErr } = await admin
     .from('companies')
     .select('name, profile_media_provider')
-    .eq('id', companyId)
+    .eq('id', effectiveCompanyId)
     .maybeSingle();
   if (companyErr) throw companyErr;
   if (!company) throw new Error('Company not found');
@@ -814,7 +817,7 @@ async function getEntityContext(
     storagePrefix: meta.storagePrefix(entityId),
     begetStoragePrefix: buildBegetStoragePrefix(
       String(company.name || '').trim() || 'company',
-      String(companyId || (data as any).company_id || '').trim() || 'company',
+      effectiveCompanyId,
       entityType,
       entityLabel,
       entityId,
@@ -824,8 +827,12 @@ async function getEntityContext(
   };
 }
 
-function assertWriteAccess(caller: { userId: string; role: string }, entityType: EntityType, entityId: string) {
-  if (caller.role === 'superadmin') return;
+function assertWriteAccess(
+  caller: { userId: string; role: string; isSuperAdmin: boolean },
+  entityType: EntityType,
+  entityId: string,
+) {
+  if (caller.isSuperAdmin) return;
   if (entityType === 'feedback') return;
   if (entityType === 'feedback_attachment') return;
   if (entityType === 'employee') {
@@ -1254,7 +1261,7 @@ export async function cleanupProfileMediaEntity(
     await clearYandexMapById(admin, existingMap.id);
   }
 
-  return { success: true };
+  return { success: true, queued_cleanup_jobs: 0 };
 }
 
 export async function handleProfileMediaStorageRequest(req: Request) {
@@ -1373,9 +1380,9 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         .from('profile_media_external_map')
         .select('id, entity_type, entity_id, provider, db_url, external_path')
         .in('db_url', urls);
-      mediaMapQuery = caller.isSuperAdmin
-        ? mediaMapQuery.or(`company_id.eq.${caller.companyId},entity_type.eq.employee`)
-        : mediaMapQuery.eq('company_id', caller.companyId);
+      if (!caller.isSuperAdmin) {
+        mediaMapQuery = mediaMapQuery.eq('company_id', caller.companyId);
+      }
 
       const { data: rows, error } = await mediaMapQuery;
       if (error) throw error;
@@ -1432,7 +1439,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
     assertWriteAccess(caller, entityType, entityId);
 
-    const contextCompanyId = caller.role === 'superadmin' ? null : caller.companyId;
+    const contextCompanyId = caller.isSuperAdmin ? null : caller.companyId;
     const ctx = await getEntityContext(admin, contextCompanyId, entityType, entityId);
     const existingMap = await getExistingExternalMap(admin, caller.companyId, entityType, entityId);
 
@@ -1524,12 +1531,12 @@ export async function handleProfileMediaStorageRequest(req: Request) {
     }
 
     if (action === 'delete' || action === 'cleanup_entity') {
-      await cleanupProfileMediaEntity(admin, {
-        companyId: caller.role === 'superadmin' ? null : caller.companyId,
+      const cleanupResult = await cleanupProfileMediaEntity(admin, {
+        companyId: caller.isSuperAdmin ? null : caller.companyId,
         entityType,
         entityId,
       });
-      return json(200, { success: true });
+      return json(200, cleanupResult);
     }
 
     if (action !== 'upload') {

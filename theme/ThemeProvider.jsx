@@ -152,6 +152,11 @@ function buildTheme(mode, systemScheme = null) {
       xxl: base.typography?.sizes?.xxl ?? 24,
       display: base.typography?.sizes?.display ?? 34,
     },
+    lineHeights: {
+      tight: base.typography?.lineHeights?.tight ?? 1.1,
+      normal: base.typography?.lineHeights?.normal ?? 1.35,
+      relaxed: base.typography?.lineHeights?.relaxed ?? 1.5,
+    },
     fontFamily: base.typography?.fontFamily,
     weight: {
       regular: base.typography?.weight?.regular ?? '400',
@@ -402,6 +407,40 @@ function buildTheme(mode, systemScheme = null) {
       bottomOffset: base.components?.keyboardAware?.bottomOffset ?? 20,
       extraKeyboardSpace:
         base.components?.keyboardAware?.extraKeyboardSpace ?? 0,
+    },
+    datetimeModal: {
+      maxHeightRatio: base.components?.datetimeModal?.maxHeightRatio ?? 0.65,
+      innerGap: base.components?.datetimeModal?.innerGap ?? 8,
+      wheelMinWidth: base.components?.datetimeModal?.wheelMinWidth ?? 64,
+      segmentedBorderWidth:
+        base.components?.datetimeModal?.segmentedBorderWidth ?? 1,
+      segmentedRadius: base.components?.datetimeModal?.segmentedRadius ?? 12,
+      segmentedPaddingY:
+        base.components?.datetimeModal?.segmentedPaddingY ?? 8,
+      segmentedActiveAlpha:
+        base.components?.datetimeModal?.segmentedActiveAlpha ?? 0.12,
+      segmentedPressedOpacity:
+        base.components?.datetimeModal?.segmentedPressedOpacity ?? 0.85,
+      wheelSectionGap:
+        base.components?.datetimeModal?.wheelSectionGap ?? 10,
+      selectionBackgroundAlpha:
+        base.components?.datetimeModal?.selectionBackgroundAlpha ?? 0.06,
+      selectionBorderWidth:
+        base.components?.datetimeModal?.selectionBorderWidth ?? 1,
+      selectionBorderAlpha:
+        base.components?.datetimeModal?.selectionBorderAlpha ?? 0.22,
+      selectionRadius:
+        base.components?.datetimeModal?.selectionRadius ?? 12,
+      omitYearPaddingX:
+        base.components?.datetimeModal?.omitYearPaddingX ?? 4,
+      omitYearPaddingLeft:
+        base.components?.datetimeModal?.omitYearPaddingLeft ?? 12,
+      omitYearPaddingY:
+        base.components?.datetimeModal?.omitYearPaddingY ?? 6,
+      omitYearTextSize:
+        base.components?.datetimeModal?.omitYearTextSize ?? 15,
+      omitYearSpacerWidth:
+        base.components?.datetimeModal?.omitYearSpacerWidth ?? 12,
     },
     filtersPanel: {
       openSpring: {

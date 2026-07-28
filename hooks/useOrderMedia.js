@@ -189,7 +189,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const [mediaInfoBySource, setMediaInfoBySource] = useState(() => Object.fromEntries(_globalMediaInfoCache));
   const [localCacheVersion, setLocalCacheVersion] = useState(0);
   const [probeRetryTick, setProbeRetryTick] = useState(0);
-  const probeInFlight = useRef(new Set());
+  const probeInFlight = useRef(new Map());
   const probedUrlsRef = useRef(new Set()); // tracks URLs already probed this session
   const probeRetryCountsRef = useRef(new Map());
   const probeRetryTimerRef = useRef(null);
@@ -408,50 +408,61 @@ export function useOrderMedia({ order, mediaProvider, t }) {
 
   // ─── Inspect single URL (Yandex) ─────────────────────────────────
   const inspectSingle = useCallback(
-    async (category, sourceUrl) => {
+    (category, sourceUrl) => {
       const key = `${category}:${sourceUrl}`;
-      if (!canInspectUrl(sourceUrl)) return { resolved: false, issue: false };
-      if (probeInFlight.current.has(key)) return { resolved: false, issue: false };
-      probeInFlight.current.add(key);
-      try {
-        const data = isLikelyYandexLink(sourceUrl)
-          ? await yandexDiskMedia('inspect_urls', {
-              order_id: order.id,
-              category,
-              urls: [sourceUrl],
-            })
-          : await orderMediaStorage('inspect_urls', {
-              order_id: order.id,
-              category,
-              urls: [sourceUrl],
-            });
-        const resolved =
-          data?.resolved_urls && typeof data.resolved_urls === 'object' ? data.resolved_urls : {};
-        const issuesMap =
-          data?.issues && typeof data.issues === 'object' ? sanitizeMediaIssues(data.issues) : {};
+      if (!canInspectUrl(sourceUrl)) {
+        return Promise.resolve({ resolved: false, issue: false, displayUrl: '' });
+      }
+      const existingRequest = probeInFlight.current.get(key);
+      if (existingRequest) return existingRequest;
 
-        if (isMounted.current) {
-          if (Object.keys(resolved).length) {
-            for (const [k, v] of Object.entries(resolved)) setResolvedCacheEntry(k, v);
-            setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, resolved));
-            prefetchMediaUrls(Object.values(resolved), { batchSize: 2 }).catch(() => {});
+      const request = (async () => {
+        try {
+          const data = isLikelyYandexLink(sourceUrl)
+            ? await yandexDiskMedia('inspect_urls', {
+                order_id: order.id,
+                category,
+                urls: [sourceUrl],
+              })
+            : await orderMediaStorage('inspect_urls', {
+                order_id: order.id,
+                category,
+                urls: [sourceUrl],
+              });
+          const resolved =
+            data?.resolved_urls && typeof data.resolved_urls === 'object' ? data.resolved_urls : {};
+          const issuesMap =
+            data?.issues && typeof data.issues === 'object' ? sanitizeMediaIssues(data.issues) : {};
+
+          if (isMounted.current) {
+            if (Object.keys(resolved).length) {
+              for (const [k, v] of Object.entries(resolved)) setResolvedCacheEntry(k, v);
+              setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, resolved));
+              prefetchMediaUrls(Object.values(resolved), { batchSize: 2 }).catch(() => {});
+            }
+            if (Object.keys(issuesMap).length) {
+              for (const [k, v] of Object.entries(issuesMap)) setIssueCacheEntry(k, v);
+              setIssues((p) => ({ ...p, ...issuesMap }));
+            }
           }
-          if (Object.keys(issuesMap).length) {
-            for (const [k, v] of Object.entries(issuesMap)) setIssueCacheEntry(k, v);
-            setIssues((p) => ({ ...p, ...issuesMap }));
+
+          return {
+            resolved: Boolean(resolved[sourceUrl]),
+            issue: Boolean(issuesMap[sourceUrl]),
+            displayUrl: String(resolved[sourceUrl] || '').trim(),
+            mediaUrls: Array.isArray(data?.media_urls) ? data.media_urls : null,
+          };
+        } catch {
+          return { resolved: false, issue: false, displayUrl: '' };
+        } finally {
+          if (probeInFlight.current.get(key) === request) {
+            probeInFlight.current.delete(key);
           }
         }
+      })();
 
-        return {
-          resolved: Boolean(resolved[sourceUrl]),
-          issue: Boolean(issuesMap[sourceUrl]),
-          mediaUrls: Array.isArray(data?.media_urls) ? data.media_urls : null,
-        };
-      } catch {
-        return { resolved: false, issue: false };
-      } finally {
-        probeInFlight.current.delete(key);
-      }
+      probeInFlight.current.set(key, request);
+      return request;
     },
     [canInspectUrl, order?.id],
   );
@@ -719,6 +730,68 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     });
   }, [markLocalCacheChanged, persistLocalCache]);
 
+  const refreshDisplayUrl = useCallback(async (category, sourceUrl) => {
+    const source = String(sourceUrl || '').trim();
+    if (!source || !category) return '';
+
+    const currentResolved = String(resolvedRef.current?.[source] || '').trim();
+    const cacheKeys = new Set(
+      [
+        source,
+        normalizeUrlCacheKey(source),
+        currentResolved,
+        normalizeUrlCacheKey(currentResolved),
+      ].filter(Boolean),
+    );
+    const localFiles = new Set(
+      [...cacheKeys]
+        .map((key) => String(localCacheRef.current?.[key] || '').trim())
+        .filter(isLocalFileUri),
+    );
+
+    if (localFiles.size) {
+      localCacheRef.current = Object.fromEntries(
+        Object.entries(localCacheRef.current || {}).filter(
+          ([key, value]) => !cacheKeys.has(key) && !localFiles.has(String(value || '').trim()),
+        ),
+      );
+      markLocalCacheChanged();
+      await persistLocalCache();
+      await Promise.all(
+        [...localFiles].map((fileUri) =>
+          deleteAsync(fileUri, { idempotent: true }).catch(() => {}),
+        ),
+      );
+    }
+
+    _globalResolvedCache.delete(source);
+    _globalIssuesCache.delete(source);
+    probedUrlsRef.current.delete(source);
+    probeRetryCountsRef.current.delete(source);
+    const nextResolvedSnapshot = { ...(resolvedRef.current || {}) };
+    delete nextResolvedSnapshot[source];
+    resolvedRef.current = nextResolvedSnapshot;
+    setResolvedUrls((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, source)) return prev;
+      const next = { ...prev };
+      delete next[source];
+      return next;
+    });
+    setIssues((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, source)) return prev;
+      const next = { ...prev };
+      delete next[source];
+      return next;
+    });
+
+    const result = await inspectSingle(category, source);
+    const freshDisplayUrl = String(result?.displayUrl || '').trim();
+    if (freshDisplayUrl && getOfflineSnapshot().isOnline) {
+      ensureLocalCached(source, freshDisplayUrl).catch(() => {});
+    }
+    return freshDisplayUrl || (isRenderableSourceUrl(source) ? source : '');
+  }, [ensureLocalCached, inspectSingle, markLocalCacheChanged, persistLocalCache]);
+
   const setDisplayUrl = useCallback((sourceUrl, displayUrl) => {
     const source = String(sourceUrl || '').trim();
     if (!source) return;
@@ -762,6 +835,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     inspectSingle,
     clearCaches,
     removeFromCache,
+    refreshDisplayUrl,
     setDisplayUrl,
     isLikelyYandexLink,
     MEDIA_CATEGORIES,

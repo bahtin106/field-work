@@ -718,7 +718,10 @@ export default function ObjectViewScreen() {
                 onPressTag={(tag) => {
                   const value = String(tag?.value || '').trim();
                   if (!value) return;
-                  router.push({ pathname: '/objects', params: { tag: value } });
+                  router.push({
+                    pathname: '/objects',
+                    params: { filter_object_tag: value },
+                  });
                 }}
               />
             </Card>

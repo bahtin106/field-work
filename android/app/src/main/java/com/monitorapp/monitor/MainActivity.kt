@@ -1,8 +1,10 @@
 package com.monitorapp.monitor
 import expo.modules.splashscreen.SplashScreenManager
 
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -21,6 +23,26 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+    normalizeLegacyStatusBarProtection()
+  }
+
+  /**
+   * Android 6-9 and some Huawei builds can retain the legacy translucent-status
+   * flag after the splash screen. That flag makes the system draw its own dark
+   * protection layer over an otherwise transparent status bar.
+   *
+   * Keep the edge-to-edge transparent status bar, but remove only that legacy
+   * protection. Android 10+ uses enforceStatusBarContrast from the app theme.
+   */
+  @Suppress("DEPRECATION")
+  private fun normalizeLegacyStatusBarProtection() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      return
+    }
+
+    window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+    window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+    LegacySystemBarColorCompat.setStatusBarColor(window, Color.TRANSPARENT)
   }
 
   /**

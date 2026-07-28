@@ -24,6 +24,8 @@ const isrgRootX1 = new X509Certificate(isrgRootX1Pem);
 const androidStrings = read('android/app/src/main/res/values/strings.xml');
 const androidStyles = read('android/app/src/main/res/values/styles.xml');
 const androidNightStyles = read('android/app/src/main/res/values-night/styles.xml');
+const androidColors = read('android/app/src/main/res/values/colors.xml');
+const androidNightColors = read('android/app/src/main/res/values-night/colors.xml');
 const androidLauncherIcon = read('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml');
 const androidRoundLauncherIcon = read('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml');
 const androidLauncherBackground = read(
@@ -66,6 +68,7 @@ const myOrdersRoute = read('app/orders/my-orders.js');
 const allOrdersRoute = read('app/orders/all-orders.jsx');
 const orderDetailsRoute = read('app/orders/[id].jsx');
 const bottomNavigation = read('components/navigation/BottomNav.jsx');
+const universalHome = read('components/UniversalHome.jsx');
 const bottomNavigationGuard = read('src/shared/navigation/bottomNavigationGuard.js');
 const textField = read('components/ui/TextField.jsx');
 const phoneInput = read('components/ui/PhoneInput.jsx');
@@ -76,6 +79,7 @@ const requestSearch = read('src/features/requests/search.js');
 const requestApi = read('src/features/requests/api.ts');
 const tagFiltering = read('src/features/tags/filtering.js');
 const clientsIndexScreen = read('screens/clients/ClientsIndexScreen.jsx');
+const clientViewScreen = read('screens/clients/[id]/ClientViewScreen.jsx');
 const objectsIndexScreen = read('screens/objects/ObjectsIndexScreen.jsx');
 const objectCard = read('components/objects/ObjectCard.jsx');
 const objectAddressing = read('src/features/objects/addressing.js');
@@ -225,17 +229,20 @@ check(Number.isInteger(versionCode) && versionCode > 0, 'Android versionCode mus
 check(appJson.orientation === 'default', 'Android release must support user-selected orientation');
 check(
   appJson.icon === './assets/icon.png' &&
-    appJson.splash?.image === './assets/adaptive-icon.png' &&
+    appJson.splash?.image === './assets/icon.png' &&
     appJson.web?.favicon === './assets/favicon.png' &&
-    appJson.android?.adaptiveIcon?.foregroundImage === './assets/adaptive-icon.png' &&
+    appJson.android?.adaptiveIcon?.foregroundImage ===
+      './assets/branding/app-icon-android-foreground.png' &&
     appJson.android?.adaptiveIcon?.monochromeImage ===
       './assets/branding/app-mark-monochrome.png' &&
+    appJson.android?.adaptiveIcon?.backgroundColor === '#68C2EE' &&
+    appJson.ios?.icon === './assets/branding/app-icon-ios.png' &&
     appJson.plugins?.some(
       (plugin) =>
         Array.isArray(plugin) &&
         plugin[0] === 'expo-splash-screen' &&
-        plugin[1]?.image === './assets/adaptive-icon.png' &&
-        plugin[1]?.dark?.image === './assets/adaptive-icon.png',
+        plugin[1]?.image === './assets/icon.png' &&
+        plugin[1]?.dark?.image === './assets/icon.png',
     ) &&
     appJson.plugins?.some(
       (plugin) =>
@@ -243,7 +250,7 @@ check(
         plugin[0] === 'expo-notifications' &&
         plugin[1]?.icon === './assets/notifications/notification-icon.png',
     ) &&
-    rootLayout.includes("source={require('../assets/adaptive-icon.png')}") &&
+    rootLayout.includes("source={require('../assets/icon.png')}") &&
     manifest.includes('android:icon="@mipmap/ic_launcher"') &&
     manifest.includes('android:roundIcon="@mipmap/ic_launcher_round"') &&
     manifest.includes('android:resource="@drawable/notification_icon"') &&
@@ -255,9 +262,11 @@ check(
     androidRoundLauncherIcon.includes(
       '<monochrome android:drawable="@mipmap/ic_launcher_monochrome"',
     ) &&
-    !androidLauncherBackground.includes('<bitmap') &&
+    androidLauncherBackground.includes('@color/iconBackground') &&
+    /name="iconBackground">#68C2EE</.test(androidColors) &&
+    /name="iconBackground">#68C2EE</.test(androidNightColors) &&
     iconSyncValidation.status === 0,
-  `All visible app icon variants must derive from assets/adaptive-icon.png; run npm run icons:sync${
+  `All visible app icon variants must derive from assets/icon.png; run npm run icons:sync${
     iconSyncValidationOutput ? `\n${iconSyncValidationOutput}` : ''
   }`,
 );
@@ -379,6 +388,17 @@ check(
   'Client filters must include the complete company tag catalogs',
 );
 check(
+  clientViewScreen.includes('params: { filter_client_tag: value }') &&
+    objectViewScreen.includes('params: { filter_object_tag: value }') &&
+    clientsIndexScreen.includes('clientTags: [routeClientTag]') &&
+    clientsIndexScreen.includes('router.setParams({ filter_client_tag: undefined })') &&
+    objectsIndexScreen.includes('objectTags: [routeObjectTag]') &&
+    objectsIndexScreen.includes('router.setParams({ filter_object_tag: undefined })') &&
+    !clientsIndexScreen.includes('params?.tag') &&
+    !objectsIndexScreen.includes('params?.tag'),
+  'Entity detail tag presses must seed the matching facet instead of text search',
+);
+check(
   orderFacetCounts.includes('addOrderTagCounts(counts.clientTags') &&
     orderFacetCounts.includes('addOrderTagCounts(counts.objectTags') &&
     tagFiltering.includes('export function buildTagFacetCounts') &&
@@ -426,11 +446,15 @@ check(
   'Cold auth restore must preserve encrypted sessions across transient mobile network failures',
 );
 check(
-  offlineStatus.includes('QUALITY_REQUIRED_SAMPLES = 2') &&
+  offlineStatus.includes('QUALITY_REQUIRED_SLOW_SAMPLES = 3') &&
+    offlineStatus.includes('QUALITY_REQUIRED_GOOD_SAMPLES = 2') &&
     offlineStatus.includes('QUALITY_CONFIRMATION_DELAY_MS') &&
     offlineStatus.includes('QUALITY_SLOW_RTT_MS') &&
     offlineStatus.includes('/auth/v1/health') &&
     offlineStatus.includes("recordNetworkQualitySample(sample: 'slow' | 'good' | 'neutral')") &&
+    /:\s*probeTimedOut\s*\?\s*'slow'\s*:\s*'neutral'/.test(offlineStatus) &&
+    !offlineStatus.includes('transportHintWasPoor') &&
+    !offlineStatus.includes('hasPoorTransportHint') &&
     offlineStatus.includes('qualityProbeAbortController?.abort()') &&
     queryClient.includes('startNetworkQualityMonitoring') &&
     queryClient.includes('setNetworkQualityMonitoringActive(isActive)'),
@@ -577,6 +601,14 @@ for (const [routeSource, screenPath] of [
   );
 }
 check(
+  !bottomNavigation.includes('onPressIn={() => preloadRouteScreen') &&
+    !universalHome.includes('onPressIn={() => preloadRouteScreen') &&
+    !universalHome.includes('onPressIn={item.route') &&
+    bottomNavigation.includes('scheduleUiIdleTask') &&
+    universalHome.includes('scheduleUiIdleTask'),
+  'Route modules must preload during idle time, never inside the active press gesture',
+);
+check(
   orderDetailsScreen.includes('const bgTasks = [];') &&
     orderDetailsScreen.includes('cachedOrderNeedsStatusAdvance') &&
     orderDetailsScreen.includes('const shouldAdvanceStatus =') &&
@@ -668,6 +700,12 @@ check(
     fullscreenImageViewer.includes('registerIOSModal') &&
     fullscreenImageViewer.includes('onNativeDismiss={handleNativeDismiss}'),
   'Fullscreen photos must expose loading failure recovery and a network fallback',
+);
+check(
+  !fullscreenImageViewer.includes('handleGalleryPanEnd') &&
+    !fullscreenImageViewer.includes('GALLERY_SNAP_TIMING') &&
+    !fullscreenImageViewer.includes('snapTimingConfig='),
+  'Fullscreen photo paging must use the gallery native snap animation without remounting on pan end',
 );
 check(
   signedMediaUrl.includes("'x-amz-date'") &&
