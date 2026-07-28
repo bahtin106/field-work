@@ -757,6 +757,9 @@ check(
     orderDetailsScreen.includes('onLongPress={copyOrderPhone}') &&
     orderDetailsScreen.includes('onLongPress={copyOrderCoordinates}') &&
     orderDetailsScreen.includes('onValueLongPress={copyOrderAddress}') &&
+    (orderDetailsScreen.match(/collapsable=\{false\}/g) || []).length >= 2 &&
+    (orderDetailsScreen.match(/style=\{styles\.contactTouchBoundary\}/g) || []).length === 2 &&
+    orderDetailsScreen.includes("contactTouchBoundary: {\n      overflow: 'hidden'") &&
     !orderDetailsScreen.includes('orderPhoneLongPressHandledRef') &&
     !orderDetailsScreen.includes('orderAddressLongPressHandledRef') &&
     !orderDetailsScreen.includes('valuePressOnly') &&

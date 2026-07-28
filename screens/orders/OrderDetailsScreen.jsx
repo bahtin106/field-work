@@ -5921,89 +5921,98 @@ function OrderDetailsContent() {
                   ) : null}
 
                   {showPhoneRow ? (
-                    <LabelValueRow
-                      label={t('order_details_phone')}
-                      valueComponent={
-                        orderPhoneRawValue ? (
-                          <Pressable
-                            style={({ pressed }) => [
-                              styles.linkPressable,
-                              pressed ? styles.linkPressablePressed : null,
-                            ]}
-                            accessibilityRole="link"
-                            accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
-                            onPress={openOrderPhoneDialer}
-                            onLongPress={copyOrderPhone}
-                            delayLongPress={450}
-                          >
-                            <Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>
-                          </Pressable>
-                        ) : (
-                          <Text style={base.value}>{orderPhoneDisplayValue}</Text>
-                        )
-                      }
-                      hideWhenEmpty={false}
-                    />
+                    <View
+                      collapsable={false}
+                      style={styles.contactTouchBoundary}
+                    >
+                      {orderPhoneRawValue ? (
+                        <Pressable
+                          style={({ pressed }) => (pressed ? styles.contactRowPressed : null)}
+                          accessibilityRole="link"
+                          accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
+                          onPress={openOrderPhoneDialer}
+                          onLongPress={copyOrderPhone}
+                          delayLongPress={450}
+                        >
+                          <LabelValueRow
+                            label={t('order_details_phone')}
+                            valueComponent={<Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>}
+                            hideWhenEmpty={false}
+                          />
+                        </Pressable>
+                      ) : (
+                        <LabelValueRow
+                          label={t('order_details_phone')}
+                          valueComponent={<Text style={base.value}>{orderPhoneDisplayValue}</Text>}
+                          hideWhenEmpty={false}
+                        />
+                      )}
+                    </View>
                   ) : null}
 
                   {showObjectAddressRow ? (
-                    useCoordinatesForOrderAddress ? (
-                      <LabelValueRow
-                        label={t('objects_location_coordinates')}
-                        valueComponent={(
-                          <Pressable
-                            style={({ pressed }) => [
-                              styles.linkPressable,
-                              pressed ? styles.linkPressablePressed : null,
-                            ]}
-                            accessibilityRole="link"
-                            onPress={() => {
-                              void openCoordinatesInPreferredMap(orderMapLat, orderMapLng).then((result) => {
-                                if (!result.opened) showToast(t('map_app_open_error'));
-                              });
-                            }}
-                            onLongPress={copyOrderCoordinates}
-                            delayLongPress={450}
-                          >
-                            <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
-                          </Pressable>
-                        )}
-                        hideWhenEmpty={false}
-                      />
-                    ) : (
-                      <ExpandableTextRow
-                        label={t('order_details_address')}
-                        value={
-                          orderAddressItems.length > 0
-                            ? orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')
-                            : t('order_details_address_not_specified')
-                        }
-                        collapsedValue={shortOrderAddress || fullOrderAddress || t('order_details_address_not_specified')}
-                        expandedKeyValueItems={orderAddressItems}
-                        expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
-                        collapsedValueStyle={orderAddressForNavigator ? styles.link : null}
-                        onValuePress={
-                          orderAddressForNavigator
-                            ? () => {
-                                void openAddressInPreferredMap(orderAddressForNavigator).then((result) => {
+                    <View
+                      collapsable={false}
+                      style={styles.contactTouchBoundary}
+                    >
+                      {useCoordinatesForOrderAddress ? (
+                        <LabelValueRow
+                          label={t('objects_location_coordinates')}
+                          valueComponent={(
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.linkPressable,
+                                pressed ? styles.linkPressablePressed : null,
+                              ]}
+                              accessibilityRole="link"
+                              onPress={() => {
+                                void openCoordinatesInPreferredMap(orderMapLat, orderMapLng).then((result) => {
                                   if (!result.opened) showToast(t('map_app_open_error'));
                                 });
-                              }
-                            : null
-                        }
-                        onCollapsedPress={
-                          orderAddressForNavigator
-                            ? () => {
-                                void openAddressInPreferredMap(orderAddressForNavigator).then((result) => {
-                                  if (!result.opened) showToast(t('map_app_open_error'));
-                                });
-                              }
-                            : null
-                        }
-                        onValueLongPress={copyOrderAddress}
-                        forceShow
-                      />
-                    )
+                              }}
+                              onLongPress={copyOrderCoordinates}
+                              delayLongPress={450}
+                            >
+                              <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
+                            </Pressable>
+                          )}
+                          hideWhenEmpty={false}
+                        />
+                      ) : (
+                        <ExpandableTextRow
+                          label={t('order_details_address')}
+                          value={
+                            orderAddressItems.length > 0
+                              ? orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')
+                              : t('order_details_address_not_specified')
+                          }
+                          collapsedValue={shortOrderAddress || fullOrderAddress || t('order_details_address_not_specified')}
+                          expandedKeyValueItems={orderAddressItems}
+                          expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
+                          collapsedValueStyle={orderAddressForNavigator ? styles.link : null}
+                          onValuePress={
+                            orderAddressForNavigator
+                              ? () => {
+                                  void openAddressInPreferredMap(orderAddressForNavigator).then((result) => {
+                                    if (!result.opened) showToast(t('map_app_open_error'));
+                                  });
+                                }
+                              : null
+                          }
+                          onCollapsedPress={
+                            orderAddressForNavigator
+                              ? () => {
+                                  void openAddressInPreferredMap(orderAddressForNavigator).then((result) => {
+                                    if (!result.opened) showToast(t('map_app_open_error'));
+                                  });
+                                }
+                              : null
+                          }
+                          onValueLongPress={copyOrderAddress}
+                          forceShow
+                        />
+                      )}
+                    </View>
                   ) : null}
                 </Card>
               </>
@@ -7181,6 +7190,12 @@ function createStyles(theme) {
       justifyContent: 'center',
     },
     linkPressablePressed: {
+      opacity: 0.6,
+    },
+    contactTouchBoundary: {
+      overflow: 'hidden',
+    },
+    contactRowPressed: {
       opacity: 0.6,
     },
     deletedObjectText: {
