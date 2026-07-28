@@ -25,6 +25,7 @@ function ExpandableTextRowComponent({
   onCollapsedLongPress = null,
   onValueLongPress = null,
   rowPressDisabled = false,
+  valuePressOnly = false,
   // new optional props
   chevronName = 'chevron-down',
   onChevronPress = null,
@@ -96,14 +97,30 @@ function ExpandableTextRowComponent({
   );
 
   const rowOnPress = rowPressDisabled || (toggleOnChevronOnly && expanded) || (
-    !hasRowPress && (toggleOnChevronOnly || !canExpand)
+    valuePressOnly || (!hasRowPress && (toggleOnChevronOnly || !canExpand))
   )
     ? undefined
     : handleRowPress;
-  const rowOnLongPress = !rowPressDisabled && showCollapsedValue && typeof valueLongPress === 'function'
+  const rowOnLongPress = !rowPressDisabled && !valuePressOnly && showCollapsedValue && typeof valueLongPress === 'function'
     ? valueLongPress
     : undefined;
   const showValuePressFeedback = showCollapsedValue && !!(rowOnPress || rowOnLongPress);
+  const valueOnlyOnPress = valuePressOnly && showCollapsedValue && hasRowPress
+    ? handleRowPress
+    : undefined;
+  const valueOnlyOnLongPress =
+    valuePressOnly && showCollapsedValue && typeof valueLongPress === 'function'
+      ? valueLongPress
+      : undefined;
+  const collapsedContent = (
+    <Text
+      style={[base.value, styles.collapsedValue, collapsedValueStyle]}
+      numberOfLines={1}
+      ellipsizeMode="tail"
+    >
+      {normalizedCollapsedValue}
+    </Text>
+  );
   const expandedContent = hasExpandedItems ? (
     <View style={styles.expandedList}>
       {expandedKeyValueItems.map((item, index) => {
@@ -138,15 +155,25 @@ function ExpandableTextRowComponent({
         <View style={base.middleSpacer} />
         <View style={styles.rightWrap}>
           {showCollapsedValue ? (
-            <View style={[styles.valueWrap, valuePressed ? styles.inlineValuePressablePressed : null]}>
-              <Text
-                style={[base.value, styles.collapsedValue, collapsedValueStyle]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
+            valueOnlyOnPress || valueOnlyOnLongPress ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.valueWrap,
+                  styles.inlineValuePressable,
+                  pressed ? styles.inlineValuePressablePressed : null,
+                ]}
+                onPress={valueOnlyOnPress}
+                onLongPress={valueOnlyOnLongPress}
+                delayLongPress={450}
+                accessibilityRole="link"
               >
-                {normalizedCollapsedValue}
-              </Text>
-            </View>
+                {collapsedContent}
+              </Pressable>
+            ) : (
+              <View style={[styles.valueWrap, valuePressed ? styles.inlineValuePressablePressed : null]}>
+                {collapsedContent}
+              </View>
+            )
           ) : null}
           {showExpandedAction ? (
             <View style={styles.valueWrap}>

@@ -5924,8 +5924,13 @@ function OrderDetailsContent() {
                     orderPhoneRawValue ? (
                       <Pressable
                         style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
+                        pointerEvents="box-only"
+                        collapsable={false}
                         accessibilityRole="link"
                         accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
+                        onPressIn={(event) => {
+                          event?.stopPropagation?.();
+                        }}
                         onPress={(event) => {
                           event?.stopPropagation?.();
                           void openOrderPhoneDialer();
@@ -6011,6 +6016,7 @@ function OrderDetailsContent() {
                             : null
                         }
                         onValueLongPress={copyOrderAddress}
+                        valuePressOnly
                         forceShow
                       />
                     )

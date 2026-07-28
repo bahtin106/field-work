@@ -754,8 +754,11 @@ check(
 check(
   orderDetailsScreen.includes('accessibilityLabel={`${t(\'order_details_phone\')}: ${orderPhoneDisplayValue}`}') &&
     orderDetailsScreen.includes('event?.stopPropagation?.();') &&
+    orderDetailsScreen.includes('pointerEvents="box-only"') &&
+    orderDetailsScreen.includes('valuePressOnly') &&
+    expandableTextRow.includes('valuePressOnly && showCollapsedValue && hasRowPress') &&
     !expandableTextRow.includes('hitSlop={theme.components?.interactive?.hitSlop}\n        accessibilityRole'),
-  'The full request phone row must open the dialer without adjacent address hit-target overlap',
+  'The request phone row must own its responder while the adjacent address action stays confined to its visible value',
 );
 check(
   (mediaUploadModal.match(/order_photos_selected_hint/g) || []).length === 1 &&
