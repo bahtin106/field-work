@@ -297,13 +297,17 @@ check(
   'Android themes must not opt out of edge-to-edge or set deprecated system bar colors',
 );
 check(
-  !systemBars.match(/StatusBar\.set(?:Translucent|BackgroundColor)|NavigationBar\.set(?:Behavior|BackgroundColor)Async/),
-  'System bar integration must not call APIs unsupported by edge-to-edge',
+  !systemBars.match(/StatusBar\.setTranslucent|NavigationBar\.set(?:Behavior|BackgroundColor)Async/) &&
+    systemBars.includes('if (Number(Platform.Version) < 35)') &&
+    systemBars.includes('StatusBar.setBackgroundColor(backgroundColor, false)'),
+  'Legacy status-bar color updates must stay below Android 15 and track the live app theme',
 );
 check(
   mainActivity.includes('Build.VERSION.SDK_INT >= 35') &&
-    mainActivity.includes('LegacySystemBarColorCompat.setStatusBarColor(window, Color.TRANSPARENT)'),
-  'Pre-Android 15 devices must normalize manufacturer status-bar protection to the edge-to-edge background',
+    mainActivity.includes(
+      'LegacySystemBarColorCompat.setStatusBarColor(window, getColor(R.color.app_background))',
+    ),
+  'Pre-Android 15 devices must start with the resolved app background instead of a transparent manufacturer fallback',
 );
 check(
   gradle.includes('LegacySystemBarColorApiVisitorFactory') &&

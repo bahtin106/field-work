@@ -1,7 +1,6 @@
 package com.monitorapp.monitor
 import expo.modules.splashscreen.SplashScreenManager
 
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -31,8 +30,8 @@ class MainActivity : ReactActivity() {
    * the splash screen. That makes the system draw its own protection color over
    * the themed edge-to-edge root view.
    *
-   * Keep the status bar transparent through the compatibility boundary on
-   * releases where the legacy API is supported. Android 15+ owns edge-to-edge.
+   * Give the status bar the resolved day/night app background on releases
+   * where the color API is supported. Android 15+ owns edge-to-edge.
    */
   @Suppress("DEPRECATION")
   private fun normalizeLegacyStatusBarProtection() {
@@ -42,7 +41,7 @@ class MainActivity : ReactActivity() {
 
     window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
     window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-    LegacySystemBarColorCompat.setStatusBarColor(window, Color.TRANSPARENT)
+    LegacySystemBarColorCompat.setStatusBarColor(window, getColor(R.color.app_background))
   }
 
   /**
