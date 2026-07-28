@@ -5923,43 +5923,37 @@ function OrderDetailsContent() {
                   ) : null}
 
                   {showPhoneRow ? (
-                    orderPhoneRawValue ? (
-                      <Pressable
-                        style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
-                        accessibilityRole="link"
-                        accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
-                        onPressIn={(event) => {
-                          event?.stopPropagation?.();
-                          orderPhoneLongPressHandledRef.current = false;
-                        }}
-                        onPress={(event) => {
-                          event?.stopPropagation?.();
-                          if (orderPhoneLongPressHandledRef.current) {
-                            orderPhoneLongPressHandledRef.current = false;
-                            return;
-                          }
-                          void openOrderPhoneDialer();
-                        }}
-                        onLongPress={(event) => {
-                          event?.stopPropagation?.();
-                          orderPhoneLongPressHandledRef.current = true;
-                          void copyOrderPhone();
-                        }}
-                        delayLongPress={450}
-                      >
-                        <LabelValueRow
-                          label={t('order_details_phone')}
-                          valueComponent={<Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>}
-                          hideWhenEmpty={false}
-                        />
-                      </Pressable>
-                    ) : (
-                      <LabelValueRow
-                        label={t('order_details_phone')}
-                        valueComponent={<Text style={base.value}>{orderPhoneDisplayValue}</Text>}
-                        hideWhenEmpty={false}
-                      />
-                    )
+                    <LabelValueRow
+                      label={t('order_details_phone')}
+                      valueComponent={
+                        orderPhoneRawValue ? (
+                          <Text
+                            style={[base.value, styles.link]}
+                            accessibilityRole="link"
+                            accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
+                            onPressIn={() => {
+                              orderPhoneLongPressHandledRef.current = false;
+                            }}
+                            onPress={() => {
+                              if (orderPhoneLongPressHandledRef.current) {
+                                orderPhoneLongPressHandledRef.current = false;
+                                return;
+                              }
+                              void openOrderPhoneDialer();
+                            }}
+                            onLongPress={() => {
+                              orderPhoneLongPressHandledRef.current = true;
+                              void copyOrderPhone();
+                            }}
+                          >
+                            {orderPhoneDisplayValue}
+                          </Text>
+                        ) : (
+                          <Text style={base.value}>{orderPhoneDisplayValue}</Text>
+                        )
+                      }
+                      hideWhenEmpty={false}
+                    />
                   ) : null}
 
                   {showObjectAddressRow ? (
@@ -5967,8 +5961,8 @@ function OrderDetailsContent() {
                       <LabelValueRow
                         label={t('objects_location_coordinates')}
                         valueComponent={(
-                          <Pressable
-                            style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
+                          <Text
+                            style={[base.value, styles.link]}
                             accessibilityRole="link"
                             onPressIn={() => {
                               orderAddressLongPressHandledRef.current = false;
@@ -5986,10 +5980,9 @@ function OrderDetailsContent() {
                               orderAddressLongPressHandledRef.current = true;
                               void copyOrderCoordinates();
                             }}
-                            delayLongPress={450}
                           >
-                            <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
-                          </Pressable>
+                            {`${orderMapLat}, ${orderMapLng}`}
+                          </Text>
                         )}
                         rightActions={
                           <Pressable
@@ -7209,13 +7202,6 @@ function createStyles(theme) {
       display: 'none',
     },
     link: { color: theme.colors.primary },
-    linkPressable: {
-      borderRadius: rad.xs || 6,
-    },
-    linkPressablePressed: {
-      opacity: 0.6,
-      transform: [{ scale: 0.99 }],
-    },
     deletedObjectText: {
       color: theme.colors.textSecondary,
       fontStyle: 'italic',

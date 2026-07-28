@@ -123,11 +123,29 @@ function ExpandableTextRowComponent({
         }
       : undefined;
   const RowContainer = valuePressOnly ? View : Pressable;
+  const hasValueOnlyAction = !!(valueOnlyOnPress || valueOnlyOnLongPress);
   const collapsedContent = (
     <Text
-      style={[base.value, styles.collapsedValue, collapsedValueStyle]}
+      style={[
+        base.value,
+        styles.collapsedValue,
+        collapsedValueStyle,
+        hasValueOnlyAction && valuePressed ? styles.inlineValuePressablePressed : null,
+      ]}
       numberOfLines={1}
       ellipsizeMode="tail"
+      onPressIn={
+        hasValueOnlyAction
+          ? () => {
+              valueLongPressHandledRef.current = false;
+              setValuePressed(true);
+            }
+          : undefined
+      }
+      onPressOut={hasValueOnlyAction ? () => setValuePressed(false) : undefined}
+      onPress={valueOnlyOnPress}
+      onLongPress={valueOnlyOnLongPress}
+      accessibilityRole={valueOnlyOnPress ? 'link' : undefined}
     >
       {normalizedCollapsedValue}
     </Text>
@@ -166,36 +184,24 @@ function ExpandableTextRowComponent({
         <View style={base.middleSpacer} />
         <View style={styles.rightWrap}>
           {showCollapsedValue ? (
-            valueOnlyOnPress || valueOnlyOnLongPress ? (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.valueWrap,
-                  styles.inlineValuePressable,
-                  pressed ? styles.inlineValuePressablePressed : null,
-                ]}
-                onPressIn={() => {
-                  valueLongPressHandledRef.current = false;
-                }}
-                onPress={valueOnlyOnPress}
-                onLongPress={valueOnlyOnLongPress}
-                delayLongPress={450}
-                accessibilityRole="link"
-              >
-                {collapsedContent}
-              </Pressable>
-            ) : (
-              <View style={[styles.valueWrap, valuePressed ? styles.inlineValuePressablePressed : null]}>
-                {collapsedContent}
-              </View>
-            )
+            <View style={styles.valueWrap}>
+              {collapsedContent}
+            </View>
           ) : null}
           {showExpandedAction ? (
             <View style={styles.valueWrap}>
-              <Pressable
-                style={({ pressed }) => [styles.inlineValuePressable, pressed ? styles.inlineValuePressablePressed : null]}
+              <Text
+                style={[
+                  base.value,
+                  styles.collapsedValue,
+                  collapsedValueStyle,
+                  valuePressed ? styles.inlineValuePressablePressed : null,
+                ]}
                 onPressIn={() => {
                   valueLongPressHandledRef.current = false;
+                  setValuePressed(true);
                 }}
+                onPressOut={() => setValuePressed(false)}
                 onPress={() => {
                   if (valueLongPressHandledRef.current) {
                     valueLongPressHandledRef.current = false;
@@ -211,13 +217,10 @@ function ExpandableTextRowComponent({
                       }
                     : undefined
                 }
-                delayLongPress={450}
-                hitSlop={theme.components?.interactive?.hitSlop}
+                accessibilityRole="link"
               >
-                <Text style={[base.value, styles.collapsedValue, collapsedValueStyle]}>
-                  {normalizedExpandedActionText}
-                </Text>
-              </Pressable>
+                {normalizedExpandedActionText}
+              </Text>
             </View>
           ) : null}
           {!hasControlledExpansion && measurementValue ? (
@@ -289,9 +292,6 @@ function createStyles(theme) {
     valueWrap: {
       flexShrink: 1,
       minWidth: 0,
-    },
-    inlineValuePressable: {
-      borderRadius: theme.radii.xs,
     },
     inlineValuePressablePressed: {
       opacity: 0.6,
