@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   FadeIn,
@@ -43,6 +43,7 @@ function ExpandableTextRowComponent({
   const [expanded, setExpanded] = useState(Boolean(initiallyExpanded));
   const [textOverflows, setTextOverflows] = useState(false);
   const [valuePressed, setValuePressed] = useState(false);
+  const valueLongPressHandledRef = useRef(false);
   const measurementValue = normalizedValue || normalizedCollapsedValue;
   const hasControlledExpansion = typeof onChevronPress === 'function';
   const canExpand = hasControlledExpansion || textOverflows;
@@ -106,12 +107,22 @@ function ExpandableTextRowComponent({
     : undefined;
   const showValuePressFeedback = showCollapsedValue && !!(rowOnPress || rowOnLongPress);
   const valueOnlyOnPress = valuePressOnly && showCollapsedValue && hasRowPress
-    ? handleRowPress
+    ? () => {
+        if (valueLongPressHandledRef.current) {
+          valueLongPressHandledRef.current = false;
+          return;
+        }
+        handleRowPress();
+      }
     : undefined;
   const valueOnlyOnLongPress =
     valuePressOnly && showCollapsedValue && typeof valueLongPress === 'function'
-      ? valueLongPress
+      ? () => {
+          valueLongPressHandledRef.current = true;
+          valueLongPress();
+        }
       : undefined;
+  const RowContainer = valuePressOnly ? View : Pressable;
   const collapsedContent = (
     <Text
       style={[base.value, styles.collapsedValue, collapsedValueStyle]}
@@ -139,9 +150,8 @@ function ExpandableTextRowComponent({
 
   return (
     <View>
-      <Pressable
+      <RowContainer
         style={base.row}
-        pointerEvents={valuePressOnly ? 'box-none' : 'auto'}
         onPress={rowOnPress}
         onLongPress={rowOnLongPress}
         onPressIn={showValuePressFeedback ? () => setValuePressed(true) : undefined}
@@ -163,6 +173,9 @@ function ExpandableTextRowComponent({
                   styles.inlineValuePressable,
                   pressed ? styles.inlineValuePressablePressed : null,
                 ]}
+                onPressIn={() => {
+                  valueLongPressHandledRef.current = false;
+                }}
                 onPress={valueOnlyOnPress}
                 onLongPress={valueOnlyOnLongPress}
                 delayLongPress={450}
@@ -180,7 +193,25 @@ function ExpandableTextRowComponent({
             <View style={styles.valueWrap}>
               <Pressable
                 style={({ pressed }) => [styles.inlineValuePressable, pressed ? styles.inlineValuePressablePressed : null]}
-                onPress={onValuePress}
+                onPressIn={() => {
+                  valueLongPressHandledRef.current = false;
+                }}
+                onPress={() => {
+                  if (valueLongPressHandledRef.current) {
+                    valueLongPressHandledRef.current = false;
+                    return;
+                  }
+                  onValuePress();
+                }}
+                onLongPress={
+                  typeof valueLongPress === 'function'
+                    ? () => {
+                        valueLongPressHandledRef.current = true;
+                        valueLongPress();
+                      }
+                    : undefined
+                }
+                delayLongPress={450}
                 hitSlop={theme.components?.interactive?.hitSlop}
               >
                 <Text style={[base.value, styles.collapsedValue, collapsedValueStyle]}>
@@ -220,7 +251,7 @@ function ExpandableTextRowComponent({
             </Pressable>
           ) : null}
         </View>
-      </Pressable>
+      </RowContainer>
 
       {canExpand && expanded ? (
         <Animated.View

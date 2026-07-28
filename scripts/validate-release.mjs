@@ -754,12 +754,14 @@ check(
 check(
   orderDetailsScreen.includes('accessibilityLabel={`${t(\'order_details_phone\')}: ${orderPhoneDisplayValue}`}') &&
     orderDetailsScreen.includes('event?.stopPropagation?.();') &&
-    orderDetailsScreen.includes('pointerEvents="box-only"') &&
+    orderDetailsScreen.includes('orderPhoneLongPressHandledRef.current = true') &&
+    orderDetailsScreen.includes('orderAddressLongPressHandledRef.current = true') &&
     orderDetailsScreen.includes('valuePressOnly') &&
     expandableTextRow.includes('valuePressOnly && showCollapsedValue && hasRowPress') &&
-    expandableTextRow.includes("pointerEvents={valuePressOnly ? 'box-none' : 'auto'}") &&
+    expandableTextRow.includes('const RowContainer = valuePressOnly ? View : Pressable') &&
+    expandableTextRow.includes('valueLongPressHandledRef.current = true') &&
     !expandableTextRow.includes('hitSlop={theme.components?.interactive?.hitSlop}\n        accessibilityRole'),
-  'The request phone row must own its responder while the adjacent address action stays confined to its visible value',
+  'Request phone and address actions must use separate native targets and suppress short actions after copy-by-hold',
 );
 check(
   (mediaUploadModal.match(/order_photos_selected_hint/g) || []).length === 1 &&

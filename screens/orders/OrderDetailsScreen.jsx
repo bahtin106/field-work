@@ -5325,6 +5325,8 @@ function OrderDetailsContent() {
     if (!orderPhoneRawValue) return t('order_details_phone_not_specified');
     return formatRuMask(orderPhoneRawValue);
   }, [canShowOrderPhone, orderPhoneRawValue, t]);
+  const orderPhoneLongPressHandledRef = useRef(false);
+  const orderAddressLongPressHandledRef = useRef(false);
   const openOrderPhoneDialer = useCallback(async () => {
     if (!orderPhoneRawValue) return;
     const dialTarget = toE164(orderPhoneRawValue) || `+${normalizeRu(orderPhoneRawValue)}`;
@@ -5924,21 +5926,26 @@ function OrderDetailsContent() {
                     orderPhoneRawValue ? (
                       <Pressable
                         style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
-                        pointerEvents="box-only"
-                        collapsable={false}
                         accessibilityRole="link"
                         accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
                         onPressIn={(event) => {
                           event?.stopPropagation?.();
+                          orderPhoneLongPressHandledRef.current = false;
                         }}
                         onPress={(event) => {
                           event?.stopPropagation?.();
+                          if (orderPhoneLongPressHandledRef.current) {
+                            orderPhoneLongPressHandledRef.current = false;
+                            return;
+                          }
                           void openOrderPhoneDialer();
                         }}
                         onLongPress={(event) => {
                           event?.stopPropagation?.();
+                          orderPhoneLongPressHandledRef.current = true;
                           void copyOrderPhone();
                         }}
+                        delayLongPress={450}
                       >
                         <LabelValueRow
                           label={t('order_details_phone')}
@@ -5963,12 +5970,23 @@ function OrderDetailsContent() {
                           <Pressable
                             style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                             accessibilityRole="link"
+                            onPressIn={() => {
+                              orderAddressLongPressHandledRef.current = false;
+                            }}
                             onPress={() => {
+                              if (orderAddressLongPressHandledRef.current) {
+                                orderAddressLongPressHandledRef.current = false;
+                                return;
+                              }
                               void openCoordinatesInPreferredMap(orderMapLat, orderMapLng).then((result) => {
                                 if (!result.opened) showToast(t('map_app_open_error'));
                               });
                             }}
-                            onLongPress={copyOrderCoordinates}
+                            onLongPress={() => {
+                              orderAddressLongPressHandledRef.current = true;
+                              void copyOrderCoordinates();
+                            }}
+                            delayLongPress={450}
                           >
                             <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
                           </Pressable>
