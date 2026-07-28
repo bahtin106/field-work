@@ -141,6 +141,7 @@ function ExpandableTextRowComponent({
     <View>
       <Pressable
         style={base.row}
+        pointerEvents={valuePressOnly ? 'box-none' : 'auto'}
         onPress={rowOnPress}
         onLongPress={rowOnLongPress}
         onPressIn={showValuePressFeedback ? () => setValuePressed(true) : undefined}

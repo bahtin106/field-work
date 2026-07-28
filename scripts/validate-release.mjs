@@ -757,6 +757,7 @@ check(
     orderDetailsScreen.includes('pointerEvents="box-only"') &&
     orderDetailsScreen.includes('valuePressOnly') &&
     expandableTextRow.includes('valuePressOnly && showCollapsedValue && hasRowPress') &&
+    expandableTextRow.includes("pointerEvents={valuePressOnly ? 'box-none' : 'auto'}") &&
     !expandableTextRow.includes('hitSlop={theme.components?.interactive?.hitSlop}\n        accessibilityRole'),
   'The request phone row must own its responder while the adjacent address action stays confined to its visible value',
 );
