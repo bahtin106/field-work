@@ -606,6 +606,15 @@ check(
   'Accessible order rows must preserve the selected object location mode instead of inferring it from coordinates',
 );
 check(
+  requestApi.includes('export async function hydrateRequestObjectLocations') &&
+    requestApi.includes(".from('client_objects_secure')") &&
+    requestApi.includes('!readExplicitObjectLocationMode(row)') &&
+    requestApi.includes('object_location_mode: objectItem.location_mode') &&
+    requestApi.includes('await hydrateRequestObjectLocations(Array.isArray(data) ? data : [])') &&
+    myOrdersScreen.includes('await hydrateRequestObjectLocations('),
+  'Request lists must hydrate missing object location modes from the secure object projection before rendering addresses',
+);
+check(
   orderSort.includes("preferredField.startsWith('createdDate')") &&
     orderSort.includes('ORDER_SORT_KEYS.createdAsc') &&
     orderSort.includes('ORDER_SORT_KEYS.departureAsc') &&

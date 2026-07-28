@@ -22,6 +22,23 @@ import { buildClientObjectLocationSummary } from '../objects/addressing';
 
 const DEFAULT_PAGE_SIZE = 20;
 const SECURE_ORDER_SELECT_COLUMNS = '*';
+const OBJECT_LOCATION_SELECT_COLUMNS = [
+  'id',
+  'name',
+  'country',
+  'region',
+  'district',
+  'city',
+  'street',
+  'house',
+  'postal_code',
+  'floor',
+  'entrance',
+  'apartment',
+  'geo_lat',
+  'geo_lng',
+  'location_mode',
+].join(', ');
 // PostgreSQL accepts canonical UUID strings regardless of their version bits.
 // Do not reject imported or legacy identifiers solely because their version is unusual.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -187,6 +204,76 @@ function normalizeOrder(row) {
     geo_lat: address.geo_lat || null,
     geo_lng: address.geo_lng || null,
   };
+}
+
+function readExplicitObjectLocationMode(row) {
+  const mode = String(
+    row?.object?.location_mode ||
+      row?.client_object?.location_mode ||
+      row?.object_location_mode ||
+      '',
+  )
+    .trim()
+    .toLowerCase();
+  return mode === 'map' || mode === 'address' ? mode : '';
+}
+
+export async function hydrateRequestObjectLocations(rows: any[] = []) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const objectIds = Array.from(
+    new Set(
+      safeRows
+        .filter(
+          (row) =>
+            normalizeOrderAddressMode(row?.address_mode) === 'object' &&
+            !readExplicitObjectLocationMode(row),
+        )
+        .map((row) => String(row?.object_id || '').trim())
+        .filter((id) => isUuid(id)),
+    ),
+  );
+
+  if (!objectIds.length) return safeRows.map(normalizeOrder);
+
+  try {
+    const { data, error } = await supabase
+      .from('client_objects_secure')
+      .select(OBJECT_LOCATION_SELECT_COLUMNS)
+      .in('id', objectIds);
+    if (error) throw error;
+
+    const objectsById = new Map<string, any>();
+    const objectRows = Array.isArray(data) ? (data as any[]) : [];
+    objectRows.forEach((objectItem) => {
+      const id = String(objectItem?.id || '').trim();
+      if (id) objectsById.set(id, objectItem);
+    });
+
+    return safeRows.map((row) => {
+      const objectId = String(row?.object_id || '').trim();
+      const objectItem = objectsById.get(objectId);
+      if (!objectItem) return normalizeOrder(row);
+
+      const mergedObject = {
+        ...(row?.client_object || {}),
+        ...(row?.object || {}),
+        ...objectItem,
+      };
+      return normalizeOrder({
+        ...row,
+        object: mergedObject,
+        object_location_mode: objectItem.location_mode,
+        object_name: objectItem.name || row?.object_name,
+        object_summary:
+          buildClientObjectLocationSummary(mergedObject, { compact: true }) ||
+          row?.object_summary,
+      });
+    });
+  } catch {
+    // The list itself remains usable if the lightweight object projection is
+    // temporarily unavailable; a later refresh can retry the enrichment.
+    return safeRows.map(normalizeOrder);
+  }
 }
 
 async function enrichOrderWithExtraFields(row) {
@@ -379,7 +466,8 @@ export async function listRequests(params: any = {}) {
 
     const { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
     if (error) throw error;
-    return warmExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
+    const rows = await hydrateRequestObjectLocations(Array.isArray(data) ? data : []);
+    return warmExecutorNames(rows);
   });
 }
 
@@ -515,7 +603,8 @@ export async function listCalendarRequests({
     const { data, error } = await query;
     if (error) throw error;
 
-    const rows = warmExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
+    const hydratedRows = await hydrateRequestObjectLocations(Array.isArray(data) ? data : []);
+    const rows = warmExecutorNames(hydratedRows);
     if (normalizedScope === 'my' && userId) return rows.filter((row) => row.assigned_to === userId);
 
     return rows;

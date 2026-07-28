@@ -82,7 +82,10 @@ import {
   prefetchExecutorNames,
   seedExecutorNames,
 } from '../../src/features/requests/executorNameCache';
-import { listRequests } from '../../src/features/requests/api';
+import {
+  hydrateRequestObjectLocations,
+  listRequests,
+} from '../../src/features/requests/api';
 import {
   applyOrderRelationFilters,
   hasRelationFilters,
@@ -2006,7 +2009,10 @@ function MyOrdersContent() {
           normalizedSortKey,
         ).range(from, to);
         if (pageError) throw pageError;
-        return enrichOrdersWithExecutorNames(Array.isArray(rows) ? rows : []);
+        const hydratedRows = await hydrateRequestObjectLocations(
+          Array.isArray(rows) ? rows : [],
+        );
+        return enrichOrdersWithExecutorNames(hydratedRows);
       };
 
       let data = null;
