@@ -4,17 +4,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import {
   AppState,
   Appearance,
-  findNodeHandle,
   FlatList,
-  Keyboard,
   Platform,
   ScrollView,
   SectionList,
   Text,
-  TextInput,
   useColorScheme,
 } from 'react-native';
-import { KeyboardAwareScrollView } from '../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../lib/keyboardControllerCompat';
 import { tokens } from './tokens';
 
 const STORAGE_KEY = 'THEME_MODE_V2';
@@ -637,36 +637,9 @@ export const ThemeProvider = ({ children }) => {
         Comp.defaultProps = { ...(Comp.defaultProps || {}), ...props };
       };
 
-      const dismissFocusedOnOutsideTap = (e) => {
-        try {
-          const focusedInput =
-            TextInput.State && typeof TextInput.State.currentlyFocusedInput === 'function'
-              ? TextInput.State.currentlyFocusedInput()
-              : null;
-          const focusedField =
-            TextInput.State && typeof TextInput.State.currentlyFocusedField === 'function'
-              ? TextInput.State.currentlyFocusedField()
-              : null;
-          const focusedHandle = focusedInput ? findNodeHandle(focusedInput) : focusedField;
-          if (!focusedHandle) return false;
-
-          const target = e?.nativeEvent?.target;
-          if (target && target === focusedHandle) return false;
-
-          if (focusedInput && TextInput.State?.blurTextInput) {
-            TextInput.State.blurTextInput(focusedInput);
-          } else if (focusedField && TextInput.State?.blurTextInput) {
-            TextInput.State.blurTextInput(focusedField);
-          }
-          Keyboard.dismiss();
-        } catch {}
-        return false;
-      };
-
       const common = {
         keyboardShouldPersistTaps: 'never',
-        keyboardDismissMode: 'on-drag',
-        onStartShouldSetResponderCapture: dismissFocusedOnOutsideTap,
+        keyboardDismissMode: SMOOTH_KEYBOARD_DISMISS_MODE,
         ...(Platform.OS === 'android' ? { nestedScrollEnabled: true } : null),
       };
       setDefaults(ScrollView, common);
@@ -674,7 +647,7 @@ export const ThemeProvider = ({ children }) => {
       setDefaults(SectionList, common);
       setDefaults(KeyboardAwareScrollView, {
         keyboardShouldPersistTaps: 'handled',
-        keyboardDismissMode: 'none',
+        keyboardDismissMode: SMOOTH_KEYBOARD_DISMISS_MODE,
         contentInsetAdjustmentBehavior: Platform.OS === 'ios' ? 'always' : 'automatic',
         bottomOffset: theme.components?.keyboardAware?.bottomOffset ?? 20,
         extraKeyboardSpace: theme.components?.keyboardAware?.extraKeyboardSpace ?? 0,

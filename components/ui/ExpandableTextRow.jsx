@@ -49,9 +49,9 @@ function ExpandableTextRowComponent({
     theme._raw?.timings?.panelToggleMs ?? theme.timings?.panelToggleMs ?? theme.components?.listItem?.height;
   const chevronHitSlop = useMemo(
     () => ({
-      top: Math.max(theme.components?.interactive?.hitSlop?.top ?? 10, 14),
+      top: 4,
       right: Math.max(theme.components?.interactive?.hitSlop?.right ?? 10, 14),
-      bottom: Math.max(theme.components?.interactive?.hitSlop?.bottom ?? 10, 14),
+      bottom: 4,
       // keep left hitSlop small to avoid overlapping neighboring action (e.g., "Карта")
       left: Math.min(Math.max(theme.components?.interactive?.hitSlop?.left ?? 6, 6), 8),
     }),
@@ -129,7 +129,6 @@ function ExpandableTextRowComponent({
         onPressIn={showValuePressFeedback ? () => setValuePressed(true) : undefined}
         onPressOut={showValuePressFeedback ? () => setValuePressed(false) : undefined}
         delayLongPress={450}
-        hitSlop={theme.components?.interactive?.hitSlop}
         accessibilityRole={rowOnPress || rowOnLongPress ? 'button' : undefined}
         accessibilityState={canExpand ? { expanded } : undefined}
       >

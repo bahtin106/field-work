@@ -20,7 +20,10 @@ import Card from '../../../components/ui/Card';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
-import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../../lib/keyboardControllerCompat';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import {
   ENTITY_FIELD_TYPES,
@@ -871,7 +874,7 @@ export default function FieldEditorScreen() {
         ref={scrollRef}
         contentContainerStyle={s.content}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="none"
+        keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
         bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 20}
         extraKeyboardSpace={theme.components?.keyboardAware?.extraKeyboardSpace ?? 0}
         stickyHeaderIndices={[0]}

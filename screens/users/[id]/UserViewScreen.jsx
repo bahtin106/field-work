@@ -156,9 +156,17 @@ export default function UserView() {
   const roleLabel = ROLE_LABELS[role] || t('role_worker');
 
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
-  const meIsAdmin = !!userData?.meIsAdmin;
-  const myUid = userData?.myUid || null;
-  const isOwnProfile = !!myUid && myUid === userId;
+  const authProfileId = String(authProfile?.id || authProfile?.profile_id || '').trim();
+  const authUserId = String(authUser?.id || '').trim();
+  const targetProfileId = String(userData?.id || userId || '').trim();
+  const targetUserId = String(userData?.userId || userData?.user_id || '').trim();
+  const myUid = String(userData?.myUid || authUserId || '').trim();
+  const meIsAdmin =
+    !!userData?.meIsAdmin ||
+    String(authProfile?.role || '').trim().toLowerCase() === 'admin';
+  const isOwnProfile = [authProfileId, authUserId, myUid]
+    .filter(Boolean)
+    .some((candidate) => candidate === targetProfileId || candidate === targetUserId);
   const canEdit = meIsAdmin || isOwnProfile;
   const authAccountType = String(authUser?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin =

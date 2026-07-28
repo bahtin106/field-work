@@ -20,7 +20,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../lib/keyboardControllerCompat';
 
 import { useAuth } from '../../components/hooks/useAuth';
 import {
@@ -5918,36 +5921,33 @@ function OrderDetailsContent() {
                   ) : null}
 
                   {showPhoneRow ? (
-                    <LabelValueRow
-                      label={t('order_details_phone')}
-                      valueComponent={
-                        orderPhoneRawValue ? (
-                          <Pressable
-                            style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
-                            accessibilityRole="link"
-                            onPress={openOrderPhoneDialer}
-                            onLongPress={copyOrderPhone}
-                          >
-                            <Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>
-                          </Pressable>
-                        ) : (
-                          <Text style={base.value}>{orderPhoneDisplayValue}</Text>
-                        )
-                      }
-                      rightActions={
-                        orderPhoneRawValue ? (
-                          <Pressable
-                            style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('a11y_copy_phone')}
-                            onPress={copyOrderPhone}
-                          >
-                            <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
-                          </Pressable>
-                        ) : null
-                      }
-                      hideWhenEmpty={false}
-                    />
+                    orderPhoneRawValue ? (
+                      <Pressable
+                        style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
+                        accessibilityRole="link"
+                        accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
+                        onPress={(event) => {
+                          event?.stopPropagation?.();
+                          void openOrderPhoneDialer();
+                        }}
+                        onLongPress={(event) => {
+                          event?.stopPropagation?.();
+                          void copyOrderPhone();
+                        }}
+                      >
+                        <LabelValueRow
+                          label={t('order_details_phone')}
+                          valueComponent={<Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>}
+                          hideWhenEmpty={false}
+                        />
+                      </Pressable>
+                    ) : (
+                      <LabelValueRow
+                        label={t('order_details_phone')}
+                        valueComponent={<Text style={base.value}>{orderPhoneDisplayValue}</Text>}
+                        hideWhenEmpty={false}
+                      />
+                    )
                   ) : null}
 
                   {showObjectAddressRow ? (
@@ -6951,7 +6951,7 @@ function OrderDetailsContent() {
           contentContainerStyle={styles.financeEntryModalScrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
+          keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
           automaticallyAdjustKeyboardInsets
           enableFallbackAutomaticScroll={false}
           enableFallbackFocusedInputUpdate={false}

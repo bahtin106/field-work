@@ -373,9 +373,7 @@ export default function MediaUploadModal({
   const photoContent = (
     <>
       <Text style={s.subtitle}>
-        {selectionMode
-          ? t('order_photos_selected_hint').replace('{count}', String(selectedCount))
-          : t('order_photos_count').replace('{count}', String(count))}
+        {t('order_photos_count').replace('{count}', String(count))}
       </Text>
       {unavailableCount > 0 ? (
         <Text style={s.warningText}>
@@ -470,11 +468,9 @@ function buildStyles(theme) {
       gap: sp.sm,
     },
     footerLabel: {
-      fontSize: ty.sizes.xs,
+      fontSize: ty.sizes.sm,
       fontWeight: ty.weight?.semibold || '600',
-      color: cl.textSecondary,
-      textTransform: 'uppercase',
-      letterSpacing: 0.5,
+      color: cl.text,
     },
     footerRow: {
       flexDirection: 'row',

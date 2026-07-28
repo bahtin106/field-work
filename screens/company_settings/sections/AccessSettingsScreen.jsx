@@ -9,7 +9,10 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
-import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../../lib/keyboardControllerCompat';
 import { START_PRESET, usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -381,7 +384,7 @@ export default function AccessSettingsScreen() {
       <KeyboardAwareScrollView
         contentContainerStyle={s.screenContent}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="none"
+        keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
         showsVerticalScrollIndicator={false}
         bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 20}
         extraKeyboardSpace={theme.components?.keyboardAware?.extraKeyboardSpace ?? 0}

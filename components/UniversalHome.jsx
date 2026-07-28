@@ -941,18 +941,25 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   useEffect(() => {
     if (!homeCriticalReady || !isFocused) return undefined;
     const likelyRoutes = [
-      canCreateOrders ? HOME_ROUTES.createOrder : null,
-      !isSoloAdmin ? HOME_ROUTES.appSettings : null,
       isAdmin ? HOME_ROUTES.companySettings : null,
-      HOME_ROUTES.support,
+      !isSoloAdmin ? HOME_ROUTES.appSettings : null,
+      canCreateOrders ? HOME_ROUTES.createOrder : null,
+      isReadOnlyBySubscription ? HOME_ROUTES.billing : null,
     ].filter(Boolean);
     const cancellations = likelyRoutes.map((route, index) =>
       scheduleUiIdleTask(() => {
         preloadRouteScreen(route);
-      }, { delayMs: 450 + index * 700, idleTimeoutMs: 1800 }),
+      }, { delayMs: index * 220, idleTimeoutMs: 700 }),
     );
     return () => cancellations.forEach((cancel) => cancel());
-  }, [canCreateOrders, homeCriticalReady, isAdmin, isFocused, isSoloAdmin]);
+  }, [
+    canCreateOrders,
+    homeCriticalReady,
+    isAdmin,
+    isFocused,
+    isReadOnlyBySubscription,
+    isSoloAdmin,
+  ]);
 
   if (shouldShowHomeLoader) {
     return (

@@ -562,7 +562,7 @@ export default {
   order_photos_delete_single_title: 'Delete photo?',
   order_photos_delete_single_message: 'This photo will be moved to Trash for 30 days.',
   order_photos_delete_many_title: 'Delete selected photos?',
-  order_photos_delete_many_message: '{count} photos will be moved to Trash for 30 days.',
+  order_photos_delete_many_message: 'Selected photos ({count}) will remain in Trash for 30 days.',
   order_photos_delete_single_confirm: 'Delete',
   order_photos_delete_single_cancel: 'Cancel',
   camera_flash: 'Flash',

@@ -9,7 +9,10 @@ import {
   Text,
   View,
 } from 'react-native';
-import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../lib/keyboardControllerCompat';
 
 import Screen from '../../components/layout/Screen';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
@@ -609,7 +612,7 @@ function LoginScreenContent() {
           style={styles.modalScroll}
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
+          keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.modalText}>{t('login_recover_modal_text')}</Text>
@@ -667,7 +670,7 @@ function LoginScreenContent() {
           style={styles.modalScroll}
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
+          keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
           showsVerticalScrollIndicator={false}
         >
           <TextField

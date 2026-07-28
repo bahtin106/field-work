@@ -27,16 +27,16 @@ class MainActivity : ReactActivity() {
   }
 
   /**
-   * Android 6-9 and some Huawei builds can retain the legacy translucent-status
-   * flag after the splash screen. That flag makes the system draw its own dark
-   * protection layer over an otherwise transparent status bar.
+   * Some Android and Huawei builds retain a legacy status-bar background after
+   * the splash screen. That makes the system draw its own protection color over
+   * the themed edge-to-edge root view.
    *
-   * Keep the edge-to-edge transparent status bar, but remove only that legacy
-   * protection. Android 10+ uses enforceStatusBarContrast from the app theme.
+   * Keep the status bar transparent through the compatibility boundary on
+   * releases where the legacy API is supported. Android 15+ owns edge-to-edge.
    */
   @Suppress("DEPRECATION")
   private fun normalizeLegacyStatusBarProtection() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    if (Build.VERSION.SDK_INT >= 35) {
       return
     }
 

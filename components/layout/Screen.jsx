@@ -3,7 +3,10 @@ import { useIsFocused, useRoute } from '@react-navigation/native';
 import { useNavigation, usePathname, useSegments } from 'expo-router';
 import React from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../lib/keyboardControllerCompat';
 import { useI18nVersion } from '../../src/i18n';
 import { FormAutoScrollProvider } from '../../src/shared/forms/FormAutoScrollContext';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -91,7 +94,7 @@ export default function Screen({
             ]}
             refreshControl={refreshControl}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="none"
+            keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
             showsVerticalScrollIndicator={false}
             enableAutomaticScroll={isScreenFocused}
             bottomOffset={keyboardBottomOffset}

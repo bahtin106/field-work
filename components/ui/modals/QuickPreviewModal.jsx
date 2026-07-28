@@ -13,7 +13,6 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -29,7 +28,7 @@ import {
 } from './iosModalCoordinator';
 
 const ANCHOR_GAP = 8;
-const EMERGE_SPRING = { damping: 22, stiffness: 280, mass: 0.65 };
+const OPEN_EASING = Easing.bezier(0.2, 0, 0, 1);
 
 export default function QuickPreviewModal({
   visible,
@@ -52,8 +51,8 @@ export default function QuickPreviewModal({
   const tagFontSize = Math.max(10, (theme.typography.sizes.xs ?? 12) - 1);
 
   const opacity = useSharedValue(0);
-  const scale = useSharedValue(0.88);
-  const slideY = useSharedValue(20);
+  const scale = useSharedValue(0.96);
+  const slideY = useSharedValue(16);
   const [rendered, setRendered] = React.useState(visible);
   const [nativeVisible, setNativeVisible] = React.useState(false);
   const [nativeDismissPending, setNativeDismissPending] = React.useState(false);
@@ -98,19 +97,19 @@ export default function QuickPreviewModal({
   React.useEffect(() => {
     if (visible) {
       setRendered(true);
-      opacity.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) });
-      scale.value = withSpring(1, EMERGE_SPRING);
-      slideY.value = withSpring(0, EMERGE_SPRING);
+      opacity.value = withTiming(1, { duration: 180, easing: OPEN_EASING });
+      scale.value = withTiming(1, { duration: 200, easing: OPEN_EASING });
+      slideY.value = withTiming(0, { duration: 220, easing: OPEN_EASING });
       return;
     }
 
-    const dur = 180;
+    const dur = 160;
     const ease = Easing.bezier(0.3, 0, 0.8, 0.15);
     opacity.value = withTiming(0, { duration: dur, easing: ease }, (finished) => {
       if (finished) runOnJS(setNotRendered)();
     });
-    scale.value = withTiming(0.88, { duration: dur, easing: ease });
-    slideY.value = withTiming(16, { duration: dur, easing: ease });
+    scale.value = withTiming(0.97, { duration: dur, easing: ease });
+    slideY.value = withTiming(10, { duration: dur, easing: ease });
   }, [opacity, scale, slideY, visible, setNotRendered]);
 
   React.useEffect(() => {

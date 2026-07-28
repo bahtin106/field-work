@@ -39,6 +39,7 @@ const legacySystemBarCompat = read(
 const legacySystemBarVisitor = read(
   'android/buildSrc/src/main/groovy/com/monitorapp/build/LegacySystemBarColorApiVisitorFactory.groovy',
 );
+const mainActivity = read('android/app/src/main/java/com/monitorapp/monitor/MainActivity.kt');
 const systemBars = read('lib/systemBars.js');
 const externalUrls = read('config/externalUrls.js');
 const appRuntime = read('config/appRuntime.js');
@@ -69,6 +70,7 @@ const allOrdersRoute = read('app/orders/all-orders.jsx');
 const orderDetailsRoute = read('app/orders/[id].jsx');
 const bottomNavigation = read('components/navigation/BottomNav.jsx');
 const universalHome = read('components/UniversalHome.jsx');
+const userViewScreen = read('screens/users/[id]/UserViewScreen.jsx');
 const bottomNavigationGuard = read('src/shared/navigation/bottomNavigationGuard.js');
 const textField = read('components/ui/TextField.jsx');
 const phoneInput = read('components/ui/PhoneInput.jsx');
@@ -98,6 +100,7 @@ const photoQueue = read('src/shared/media/orderPhotoQueue.js');
 const cachedImage = read('components/ui/CachedImage.jsx');
 const photoGrid = read('app/orders/components/PhotoGrid.jsx');
 const quickPreviewModal = read('components/ui/modals/QuickPreviewModal.jsx');
+const dialog = read('components/ui/Dialog.jsx');
 const fullscreenImageViewer = read('app/orders/components/FullscreenImageViewer.jsx');
 const baseModal = read('components/ui/modals/BaseModal.jsx');
 const confirmAlertModals = read('components/ui/modals/ConfirmAlertModals.jsx');
@@ -105,6 +108,11 @@ const selectModal = read('components/ui/modals/SelectModal.jsx');
 const multiSelectModal = read('components/ui/modals/MultiSelectModal.jsx');
 const dateTimeModal = read('components/ui/modals/DateTimeModal.jsx');
 const mediaUploadModal = read('app/orders/components/OrderPhotosModal.jsx');
+const themeProvider = read('theme/ThemeProvider.jsx');
+const ruTranslations = read('src/i18n/ru.js');
+const objectLocationModeMigration = read(
+  'supabase/migrations/20260728190000_expose_order_object_location_mode.sql',
+);
 const signedMediaUrl = read('src/shared/media/signedUrl.js');
 const mediaAssets = read('src/shared/media/assets.js');
 const emailServer = read('email-server.cjs');
@@ -291,6 +299,11 @@ check(
 check(
   !systemBars.match(/StatusBar\.set(?:Translucent|BackgroundColor)|NavigationBar\.set(?:Behavior|BackgroundColor)Async/),
   'System bar integration must not call APIs unsupported by edge-to-edge',
+);
+check(
+  mainActivity.includes('Build.VERSION.SDK_INT >= 35') &&
+    mainActivity.includes('LegacySystemBarColorCompat.setStatusBarColor(window, Color.TRANSPARENT)'),
+  'Pre-Android 15 devices must normalize manufacturer status-bar protection to the edge-to-edge background',
 );
 check(
   gradle.includes('LegacySystemBarColorApiVisitorFactory') &&
@@ -583,6 +596,12 @@ check(
   'Object lists, client summaries, filters, and matching must honor the active object location mode',
 );
 check(
+  requestApi.includes('row.object_location_mode') &&
+    requestApi.includes('object_location_mode: objectLocationMode') &&
+    objectLocationModeMigration.includes('co.location_mode as object_location_mode'),
+  'Accessible order rows must preserve the selected object location mode instead of inferring it from coordinates',
+);
+check(
   orderSort.includes("preferredField.startsWith('createdDate')") &&
     orderSort.includes('ORDER_SORT_KEYS.createdAsc') &&
     orderSort.includes('ORDER_SORT_KEYS.departureAsc') &&
@@ -607,6 +626,18 @@ check(
     bottomNavigation.includes('scheduleUiIdleTask') &&
     universalHome.includes('scheduleUiIdleTask'),
   'Route modules must preload during idle time, never inside the active press gesture',
+);
+check(
+  universalHome.indexOf('isAdmin ? HOME_ROUTES.companySettings') <
+    universalHome.indexOf('!isSoloAdmin ? HOME_ROUTES.appSettings') &&
+    universalHome.includes('delayMs: index * 220'),
+  'High-use home settings routes must be warmed early, with company settings first for administrators',
+);
+check(
+  userViewScreen.includes("String(authProfile?.role || '').trim().toLowerCase() === 'admin'") &&
+    userViewScreen.includes("const authUserId = String(authUser?.id || '').trim()") &&
+    userViewScreen.includes('const canEdit = meIsAdmin || isOwnProfile'),
+  'Employee edit permission must be available from the authenticated session before detail data refetches',
 );
 check(
   orderDetailsScreen.includes('const bgTasks = [];') &&
@@ -692,6 +723,33 @@ check(
     quickPreviewModal.includes('notifyIOSModalDismissed') &&
     quickPreviewModal.includes("visible={Platform.OS === 'ios' ? nativeVisible : true}"),
   'Quick previews opened from another modal must participate in the shared iOS modal stack',
+);
+check(
+  !baseModal.includes('withSpring') &&
+    !dialog.includes('withSpring') &&
+    !quickPreviewModal.includes('withSpring') &&
+    baseModal.includes('const OPEN_EASING = Easing.bezier(0.2, 0, 0, 1)'),
+  'Modal open and cancelled-drag transitions must use classic non-overshooting timing curves',
+);
+check(
+  keyboardControllerCompat.includes('SMOOTH_KEYBOARD_DISMISS_MODE') &&
+    keyboardControllerCompat.includes('keyboardDismissMode,') &&
+    !themeProvider.includes('onStartShouldSetResponderCapture') &&
+    baseModal.includes('<KeyboardAvoidingView'),
+  'Keyboard movement and dismissal must use one native animated path without responder-capture blur races',
+);
+check(
+  orderDetailsScreen.includes('accessibilityLabel={`${t(\'order_details_phone\')}: ${orderPhoneDisplayValue}`}') &&
+    orderDetailsScreen.includes('event?.stopPropagation?.();') &&
+    !expandableTextRow.includes('hitSlop={theme.components?.interactive?.hitSlop}\n        accessibilityRole'),
+  'The full request phone row must open the dialer without adjacent address hit-target overlap',
+);
+check(
+  (mediaUploadModal.match(/order_photos_selected_hint/g) || []).length === 1 &&
+    ruTranslations.includes(
+      'Выбранные фото ({count}) останутся в корзине на 30 дней.',
+    ),
+  'Photo selection count must appear once and bulk-delete copy must remain concise',
 );
 check(
   fullscreenImageViewer.includes('onDisplay={handleDisplayed}') &&

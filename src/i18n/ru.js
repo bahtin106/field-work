@@ -1290,7 +1290,7 @@
   "order_photos_delete_single_title": "Удалить фото?",
   "order_photos_delete_single_message": "Фото будет перемещено в корзину на 30 дней.",
   "order_photos_delete_many_title": "Удалить выбранные фото?",
-  "order_photos_delete_many_message": "В корзину на 30 дней будет перемещено фотографий: {count}.",
+  "order_photos_delete_many_message": "Выбранные фото ({count}) останутся в корзине на 30 дней.",
   "order_photos_delete_single_confirm": "Удалить",
   "order_photos_delete_single_cancel": "Отмена",
   "viewer_share": "Поделиться",

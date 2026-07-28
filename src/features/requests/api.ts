@@ -141,6 +141,8 @@ function normalizeOrder(row) {
   const clientItem = row.client || null;
   const address = extractOrderAddress(row);
   const addressMode = normalizeOrderAddressMode(row.address_mode);
+  const objectLocationMode =
+    String(objectItem?.location_mode || row.object_location_mode || '').trim() || null;
   const objectSummary =
     buildClientObjectLocationSummary(objectItem, { compact: true }) ||
     String(row.object_summary || '').trim() ||
@@ -166,7 +168,7 @@ function normalizeOrder(row) {
     customer_name: customerName || null,
     object_name: objectItem?.name || String(row.object_name || '').trim() || null,
     object_summary: objectSummary,
-    object_location_mode: String(objectItem?.location_mode || '').trim() || null,
+    object_location_mode: objectLocationMode,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,
     country: address.country || null,
