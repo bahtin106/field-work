@@ -753,16 +753,17 @@ check(
 );
 check(
   orderDetailsScreen.includes('accessibilityLabel={`${t(\'order_details_phone\')}: ${orderPhoneDisplayValue}`}') &&
-    orderDetailsScreen.includes('orderPhoneLongPressHandledRef.current = true') &&
-    orderDetailsScreen.includes('orderAddressLongPressHandledRef.current = true') &&
-    orderDetailsScreen.includes('<Text\n                            style={[base.value, styles.link]}') &&
-    orderDetailsScreen.includes('valuePressOnly') &&
-    expandableTextRow.includes('valuePressOnly && showCollapsedValue && hasRowPress') &&
-    expandableTextRow.includes('const RowContainer = valuePressOnly ? View : Pressable') &&
-    expandableTextRow.includes('valueLongPressHandledRef.current = true') &&
-    expandableTextRow.includes('onPress={valueOnlyOnPress}') &&
+    orderDetailsScreen.includes('onPress={openOrderPhoneDialer}') &&
+    orderDetailsScreen.includes('onLongPress={copyOrderPhone}') &&
+    orderDetailsScreen.includes('onLongPress={copyOrderCoordinates}') &&
+    orderDetailsScreen.includes('onValueLongPress={copyOrderAddress}') &&
+    !orderDetailsScreen.includes('orderPhoneLongPressHandledRef') &&
+    !orderDetailsScreen.includes('orderAddressLongPressHandledRef') &&
+    !orderDetailsScreen.includes('valuePressOnly') &&
+    expandableTextRow.includes('<Pressable\n        style={base.row}') &&
+    expandableTextRow.includes('onLongPress={rowOnLongPress}') &&
     !expandableTextRow.includes('hitSlop={theme.components?.interactive?.hitSlop}\n        accessibilityRole'),
-  'Request phone and address text must own separate native actions and suppress short actions after copy-by-hold',
+  'Request phone and address must use separate native press targets without cross-row hit slop',
 );
 check(
   (mediaUploadModal.match(/order_photos_selected_hint/g) || []).length === 1 &&

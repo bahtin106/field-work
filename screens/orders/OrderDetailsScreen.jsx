@@ -5325,8 +5325,6 @@ function OrderDetailsContent() {
     if (!orderPhoneRawValue) return t('order_details_phone_not_specified');
     return formatRuMask(orderPhoneRawValue);
   }, [canShowOrderPhone, orderPhoneRawValue, t]);
-  const orderPhoneLongPressHandledRef = useRef(false);
-  const orderAddressLongPressHandledRef = useRef(false);
   const openOrderPhoneDialer = useCallback(async () => {
     if (!orderPhoneRawValue) return;
     const dialTarget = toE164(orderPhoneRawValue) || `+${normalizeRu(orderPhoneRawValue)}`;
@@ -5927,27 +5925,19 @@ function OrderDetailsContent() {
                       label={t('order_details_phone')}
                       valueComponent={
                         orderPhoneRawValue ? (
-                          <Text
-                            style={[base.value, styles.link]}
+                          <Pressable
+                            style={({ pressed }) => [
+                              styles.linkPressable,
+                              pressed ? styles.linkPressablePressed : null,
+                            ]}
                             accessibilityRole="link"
                             accessibilityLabel={`${t('order_details_phone')}: ${orderPhoneDisplayValue}`}
-                            onPressIn={() => {
-                              orderPhoneLongPressHandledRef.current = false;
-                            }}
-                            onPress={() => {
-                              if (orderPhoneLongPressHandledRef.current) {
-                                orderPhoneLongPressHandledRef.current = false;
-                                return;
-                              }
-                              void openOrderPhoneDialer();
-                            }}
-                            onLongPress={() => {
-                              orderPhoneLongPressHandledRef.current = true;
-                              void copyOrderPhone();
-                            }}
+                            onPress={openOrderPhoneDialer}
+                            onLongPress={copyOrderPhone}
+                            delayLongPress={450}
                           >
-                            {orderPhoneDisplayValue}
-                          </Text>
+                            <Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>
+                          </Pressable>
                         ) : (
                           <Text style={base.value}>{orderPhoneDisplayValue}</Text>
                         )
@@ -5961,39 +5951,23 @@ function OrderDetailsContent() {
                       <LabelValueRow
                         label={t('objects_location_coordinates')}
                         valueComponent={(
-                          <Text
-                            style={[base.value, styles.link]}
+                          <Pressable
+                            style={({ pressed }) => [
+                              styles.linkPressable,
+                              pressed ? styles.linkPressablePressed : null,
+                            ]}
                             accessibilityRole="link"
-                            onPressIn={() => {
-                              orderAddressLongPressHandledRef.current = false;
-                            }}
                             onPress={() => {
-                              if (orderAddressLongPressHandledRef.current) {
-                                orderAddressLongPressHandledRef.current = false;
-                                return;
-                              }
                               void openCoordinatesInPreferredMap(orderMapLat, orderMapLng).then((result) => {
                                 if (!result.opened) showToast(t('map_app_open_error'));
                               });
                             }}
-                            onLongPress={() => {
-                              orderAddressLongPressHandledRef.current = true;
-                              void copyOrderCoordinates();
-                            }}
+                            onLongPress={copyOrderCoordinates}
+                            delayLongPress={450}
                           >
-                            {`${orderMapLat}, ${orderMapLng}`}
-                          </Text>
-                        )}
-                        rightActions={
-                          <Pressable
-                            style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('common_copy')}
-                            onPress={copyOrderCoordinates}
-                          >
-                            <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
+                            <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
                           </Pressable>
-                        }
+                        )}
                         hideWhenEmpty={false}
                       />
                     ) : (
@@ -6027,7 +6001,6 @@ function OrderDetailsContent() {
                             : null
                         }
                         onValueLongPress={copyOrderAddress}
-                        valuePressOnly
                         forceShow
                       />
                     )
@@ -7202,6 +7175,14 @@ function createStyles(theme) {
       display: 'none',
     },
     link: { color: theme.colors.primary },
+    linkPressable: {
+      borderRadius: rad.xs || 6,
+      minHeight: 36,
+      justifyContent: 'center',
+    },
+    linkPressablePressed: {
+      opacity: 0.6,
+    },
     deletedObjectText: {
       color: theme.colors.textSecondary,
       fontStyle: 'italic',
