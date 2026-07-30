@@ -126,6 +126,7 @@ const BaseModalImpl = (
     onShow,
     onDismiss,
     title = '',
+    titleAccessory = null,
     children,
     footer = null,
     feedback = null,
@@ -716,6 +717,21 @@ const BaseModalImpl = (
                   {title}
                 </Text>
               </View>
+              {titleAccessory ? (
+                <View
+                  style={{
+                    position: 'absolute',
+                    left: modalTokens.closeInset ?? theme.spacing.sm,
+                    top: Math.max(theme.spacing.xs, 6),
+                    width: 32,
+                    height: 32,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {titleAccessory}
+                </View>
+              ) : null}
               <Pressable
                 hitSlop={modalTokens.closeHitSlop ?? 10}
                 onPress={requestClose}

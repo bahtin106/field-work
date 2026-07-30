@@ -2173,9 +2173,11 @@ function MyOrdersContent() {
             prefix: t('order_auto_title_prefix'),
           }),
           includePhones: shouldShowOrderPhoneForRole(o, companySettings, auth.profile?.role),
-          extraTexts: [
-            workTypeOptions.find((item) => String(item?.id || '') === String(o?.work_type_id || ''))?.name,
-          ],
+          extraTexts: useWorkTypesFlag
+            ? [
+                workTypeOptions.find((item) => String(item?.id || '') === String(o?.work_type_id || ''))?.name,
+              ]
+            : [],
         }),
         q,
       );
@@ -2189,6 +2191,7 @@ function MyOrdersContent() {
     filters.values.departureTimeTo,
     filters.values.createdTimeFrom,
     filters.values.createdTimeTo,
+    useWorkTypesFlag,
     workTypeOptions,
     t,
   ]);

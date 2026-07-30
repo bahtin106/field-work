@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Image as RNImage,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   StatusBar,
@@ -46,6 +47,10 @@ const REMOTE_URI_RE = /^https?:\/\//i;
 const GALLERY_WINDOW_SIZE = 3;
 const IMAGE_LOAD_TIMEOUT_MS = 15_000;
 const MAX_IMAGE_RETRY_ATTEMPTS = 2;
+const EDGE_BACK_GESTURE_WIDTH = 28;
+const EDGE_BACK_MIN_DISTANCE = 64;
+const EDGE_BACK_MIN_FLING_DISTANCE = 22;
+const EDGE_BACK_MIN_VELOCITY = 0.55;
 const MIN_PLAUSIBLE_PHOTO_DATE_MS = Date.UTC(2000, 0, 1);
 const MAX_PHOTO_DATE_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
 
@@ -96,6 +101,38 @@ const clampIndex = (index, count) => {
   const safe = Number.isFinite(numeric) ? Math.trunc(numeric) : 0;
   return Math.max(0, Math.min(safe, count - 1));
 };
+
+function createEdgeBackResponder(direction, onClose) {
+  const inwardDistance = (gesture) => Number(gesture?.dx || 0) * direction;
+  return PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) => {
+      const distance = inwardDistance(gesture);
+      return (
+        distance > 8 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2
+      );
+    },
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      const distance = inwardDistance(gesture);
+      return (
+        distance > 8 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2
+      );
+    },
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderRelease: (_event, gesture) => {
+      const distance = inwardDistance(gesture);
+      const velocity = Number(gesture?.vx || 0) * direction;
+      const passedDistance = distance >= EDGE_BACK_MIN_DISTANCE;
+      const passedVelocity =
+        distance >= EDGE_BACK_MIN_FLING_DISTANCE &&
+        velocity >= EDGE_BACK_MIN_VELOCITY;
+      if (passedDistance || passedVelocity) onClose();
+    },
+    onShouldBlockNativeResponder: () => true,
+  });
+}
 
 const measureImage = (uri) =>
   new Promise((resolve) => {
@@ -284,6 +321,19 @@ const ZoomGallery = memo(function ZoomGallery({
 const styles = StyleSheet.create({
   rootFill: {
     flex: 1,
+  },
+  edgeBackGestureArea: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: EDGE_BACK_GESTURE_WIDTH,
+    zIndex: 10,
+  },
+  edgeBackGestureAreaLeft: {
+    left: 0,
+  },
+  edgeBackGestureAreaRight: {
+    right: 0,
   },
   galleryPhoto: {
     backgroundColor: VIEWER_BG,
@@ -683,6 +733,21 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     scheduleDismiss();
   }, [flushRotations, onClose, scheduleDismiss]);
 
+  const leftEdgeBackResponder = useMemo(
+    () =>
+      createEdgeBackResponder(1, () => {
+        if (!modalOverlayOpenRef.current) requestClose();
+      }),
+    [requestClose],
+  );
+  const rightEdgeBackResponder = useMemo(
+    () =>
+      createEdgeBackResponder(-1, () => {
+        if (!modalOverlayOpenRef.current) requestClose();
+      }),
+    [requestClose],
+  );
+
   useEffect(
     () => () => {
       flushRotations();
@@ -1050,6 +1115,19 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                 onTap={handleGalleryTap}
               />
             </View>
+
+            <View
+              collapsable={false}
+              pointerEvents="box-only"
+              style={[styles.edgeBackGestureArea, styles.edgeBackGestureAreaLeft]}
+              {...leftEdgeBackResponder.panHandlers}
+            />
+            <View
+              collapsable={false}
+              pointerEvents="box-only"
+              style={[styles.edgeBackGestureArea, styles.edgeBackGestureAreaRight]}
+              {...rightEdgeBackResponder.panHandlers}
+            />
 
             {imageLoadStates[currentUri] === 'error' ? (
               <View pointerEvents="box-none" style={ds.imageErrorOverlay}>

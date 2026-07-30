@@ -1830,9 +1830,11 @@ function AllOrdersContent() {
             prefix: t('order_auto_title_prefix'),
           }),
           includePhones: shouldShowOrderPhoneForRole(order, companySettings, profile?.role),
-          extraTexts: [
-            workTypes.find((item) => String(item?.id || '') === String(order?.work_type_id || ''))?.name,
-          ],
+          extraTexts: useWorkTypes
+            ? [
+                workTypes.find((item) => String(item?.id || '') === String(order?.work_type_id || ''))?.name,
+              ]
+            : [],
         }),
         q,
       );
@@ -1849,6 +1851,7 @@ function AllOrdersContent() {
     orderFilters.departureTimeTo,
     orders,
     profile?.role,
+    useWorkTypes,
     workTypes,
     t,
   ]);

@@ -102,6 +102,7 @@ export default function YandexDiskIntegrationScreen() {
   const [providerTarget, setProviderTarget] = React.useState('orders');
   const [folderModalVisible, setFolderModalVisible] = React.useState(false);
   const processedOAuthRef = React.useRef('');
+  const processedYandexReturnRef = React.useRef('');
 
   React.useEffect(() => {
     toastRef.current = toast;
@@ -166,6 +167,25 @@ export default function YandexDiskIntegrationScreen() {
         toast.error(toYandexIntegrationMessage(e, t));
       } finally {
         if (!cancelled) setLoading(false);
+        router.replace('/company_settings/sections/yandex-disk');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params, canAccess, refreshStatus, router, t, toast]);
+
+  React.useEffect(() => {
+    const result = String(params?.yandex || '').trim().toLowerCase();
+    if (result !== 'connected' || !canAccess || processedYandexReturnRef.current === result) return;
+    processedYandexReturnRef.current = result;
+
+    let cancelled = false;
+    (async () => {
+      await refreshStatus();
+      if (!cancelled) {
+        toast.success(t('company_integrations_yandex_connected'));
         router.replace('/company_settings/sections/yandex-disk');
       }
     })();

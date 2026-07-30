@@ -5,7 +5,7 @@ type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
 type Json =
@@ -23,6 +23,8 @@ const json = (status: number, body: Record<string, Json>) =>
   });
 
 const DEFAULT_YANDEX_ROOT = '/Монитор';
+const APP_YANDEX_RETURN_URI = 'workorders://company_settings/sections/yandex-disk';
+const DEFAULT_YANDEX_OAUTH_REDIRECT_URI = 'https://supabase.monitorapp.ru/functions/v1/yandex-disk-integration';
 
 function toErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
@@ -48,6 +50,16 @@ function normalizeFolderPath(input: string | null | undefined) {
   if (!raw) return DEFAULT_YANDEX_ROOT;
   if (!raw.startsWith('/')) return `/${raw}`;
   return raw;
+}
+
+function getYandexOAuthRedirectUri() {
+  return Deno.env.get('YANDEX_OAUTH_REDIRECT_URI') || DEFAULT_YANDEX_OAUTH_REDIRECT_URI;
+}
+
+function redirectToYandexDiskScreen(result: 'connected' | 'error') {
+  const target = new URL(APP_YANDEX_RETURN_URI);
+  target.searchParams.set('yandex', result);
+  return new Response(null, { status: 303, headers: { Location: target.toString() } });
 }
 
 async function ensureFolderTree(accessToken: string, fullPath: string) {
@@ -109,7 +121,7 @@ async function getCallerContext(admin: SupabaseAdminClient, token: string) {
 async function exchangeCodeForTokens(code: string) {
   const clientId = Deno.env.get('YANDEX_OAUTH_CLIENT_ID') || '';
   const clientSecret = Deno.env.get('YANDEX_OAUTH_CLIENT_SECRET') || '';
-  const redirectUri = Deno.env.get('YANDEX_OAUTH_REDIRECT_URI') || 'workorders://company_settings/sections/yandex-disk';
+  const redirectUri = getYandexOAuthRedirectUri();
   if (!clientId || !clientSecret) throw new Error('Missing Yandex OAuth credentials');
 
   const body = new URLSearchParams();
@@ -231,12 +243,71 @@ async function getYandexDiskStorageInfo(accessToken: string) {
   return { totalBytes: total, usedBytes: used, freeBytes: free };
 }
 
+async function completeYandexAuthorization(
+  admin: SupabaseAdminClient,
+  code: string,
+  state: string,
+  caller?: { companyId: string; userId: string },
+) {
+  if (!code || !state) throw new Error('Missing code or state');
+
+  const { data: stateRow, error: stateErr } = await admin
+    .from('company_integration_oauth_states')
+    .select('state, company_id, provider, requested_by, expires_at')
+    .eq('state', state)
+    .maybeSingle();
+  if (stateErr || !stateRow) throw new Error('Invalid state');
+  if (stateRow.provider !== 'yandex_disk') throw new Error('Invalid provider state');
+  if (new Date(stateRow.expires_at).getTime() < Date.now()) throw new Error('State expired');
+  if (caller && (String(stateRow.company_id) !== caller.companyId || String(stateRow.requested_by) !== caller.userId)) {
+    throw new Error('State mismatch');
+  }
+
+  const companyId = String(stateRow.company_id);
+  const tokenData = await exchangeCodeForTokens(code);
+  const profile = await getYandexUserInfo(tokenData.access_token);
+  const expiresAt = new Date(Date.now() + Math.max(60, Number(tokenData.expires_in || 3600)) * 1000).toISOString();
+  const { data: prevConn } = await admin
+    .from('company_yandex_disk_connections')
+    .select('folder_path')
+    .eq('company_id', companyId)
+    .maybeSingle();
+  const folderPath = normalizeFolderPath(prevConn?.folder_path || DEFAULT_YANDEX_ROOT);
+
+  const { error: upErr } = await admin.from('company_yandex_disk_connections').upsert(
+    {
+      company_id: companyId,
+      yandex_user_id: profile?.id || null,
+      yandex_login: profile?.login || null,
+      yandex_display_name: profile?.display_name || profile?.real_name || null,
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      token_expires_at: expiresAt,
+      folder_path: folderPath,
+      connected_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      created_by: stateRow.requested_by,
+    },
+    { onConflict: 'company_id' },
+  );
+  if (upErr) throw upErr;
+
+  await admin
+    .from('company_integration_oauth_states')
+    .delete()
+    .eq('state', state);
+
+  const { error: providerErr } = await admin
+    .from('companies')
+    .update({ media_provider: 'yandex_disk' })
+    .eq('id', companyId);
+  if (providerErr) throw providerErr;
+}
+
 export async function handleYandexDiskIntegrationRequest(req: Request) {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
-  if (req.method !== 'POST') return json(405, { success: false, message: 'POST only' });
-
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const serviceRole =
@@ -248,6 +319,21 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
     const admin = createClient(supabaseUrl, serviceRole, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+
+    if (req.method === 'GET') {
+      const callbackUrl = new URL(req.url);
+      const code = String(callbackUrl.searchParams.get('code') || '').trim();
+      const state = String(callbackUrl.searchParams.get('state') || '').trim();
+      if (!code || !state || callbackUrl.searchParams.get('error')) return redirectToYandexDiskScreen('error');
+      try {
+        await completeYandexAuthorization(admin, code, state);
+        return redirectToYandexDiskScreen('connected');
+      } catch (callbackError) {
+        console.error('[yandex-disk-integration callback]', toErrorMessage(callbackError));
+        return redirectToYandexDiskScreen('error');
+      }
+    }
+    if (req.method !== 'POST') return json(405, { success: false, message: 'GET or POST only' });
 
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
     if (!token) return json(401, { success: false, message: 'Unauthorized' });
@@ -337,7 +423,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
 
     if (action === 'start') {
       const clientId = Deno.env.get('YANDEX_OAUTH_CLIENT_ID') || '';
-      const redirectUri = Deno.env.get('YANDEX_OAUTH_REDIRECT_URI') || 'workorders://company_settings/sections/yandex-disk';
+      const redirectUri = getYandexOAuthRedirectUri();
       if (!clientId) return json(500, { success: false, message: 'Missing Yandex OAuth client id' });
 
       const state = crypto.randomUUID();
@@ -374,60 +460,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
     if (action === 'complete') {
       const code = String(body.code || '').trim();
       const state = String(body.state || '').trim();
-      if (!code || !state) return json(400, { success: false, message: 'Missing code or state' });
-
-      const { data: stateRow, error: stateErr } = await admin
-        .from('company_integration_oauth_states')
-        .select('state, company_id, provider, requested_by, expires_at')
-        .eq('state', state)
-        .maybeSingle();
-      if (stateErr || !stateRow) return json(400, { success: false, message: 'Invalid state' });
-      if (stateRow.provider !== 'yandex_disk') return json(400, { success: false, message: 'Invalid provider state' });
-      if (String(stateRow.company_id) !== caller.companyId) return json(403, { success: false, message: 'State mismatch' });
-      if (String(stateRow.requested_by) !== caller.userId) return json(403, { success: false, message: 'State owner mismatch' });
-      if (new Date(stateRow.expires_at).getTime() < Date.now()) {
-        return json(400, { success: false, message: 'State expired' });
-      }
-
-      const tokenData = await exchangeCodeForTokens(code);
-      const profile = await getYandexUserInfo(tokenData.access_token);
-      const expiresAt = new Date(Date.now() + Math.max(60, Number(tokenData.expires_in || 3600)) * 1000).toISOString();
-      const { data: prevConn } = await admin
-        .from('company_yandex_disk_connections')
-        .select('folder_path')
-        .eq('company_id', caller.companyId)
-        .maybeSingle();
-      const folderPath = normalizeFolderPath(prevConn?.folder_path || DEFAULT_YANDEX_ROOT);
-
-      const { error: upErr } = await admin.from('company_yandex_disk_connections').upsert(
-        {
-          company_id: caller.companyId,
-          yandex_user_id: profile?.id || null,
-          yandex_login: profile?.login || null,
-          yandex_display_name: profile?.display_name || profile?.real_name || null,
-          access_token: tokenData.access_token,
-          refresh_token: tokenData.refresh_token,
-          token_expires_at: expiresAt,
-          folder_path: folderPath,
-          connected_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          created_by: caller.userId,
-        },
-        { onConflict: 'company_id' },
-      );
-      if (upErr) throw upErr;
-
-      await admin
-        .from('company_integration_oauth_states')
-        .delete()
-        .eq('state', state);
-
-      const { error: providerErr } = await admin
-        .from('companies')
-        .update({ media_provider: 'yandex_disk' })
-        .eq('id', caller.companyId);
-      if (providerErr) throw providerErr;
-
+      await completeYandexAuthorization(admin, code, state, caller);
       return json(200, { success: true });
     }
 

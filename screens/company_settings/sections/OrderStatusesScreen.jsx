@@ -11,7 +11,7 @@ import SeparatedList from '../../../components/ui/SeparatedList';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
-import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
+import { BaseModal, SelectModal } from '../../../components/ui/modals';
 import MultiSelectModal from '../../../components/ui/modals/MultiSelectModal';
 import { useToast } from '../../../components/ui/ToastProvider';
 import {
@@ -26,7 +26,6 @@ import {
   invalidateCompanyOrderStatuses,
   updateCompanyOrderStatus,
   setCompanyFeedStatusEnabled,
-  setCompanyOrderStatusesEnabled,
   useCompanyOrderStatuses,
 } from '../../../lib/orderStatuses';
 import {
@@ -40,6 +39,11 @@ import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const MAX_NAME_LENGTH = 64;
+const PROTECTED_STATUS_KEYS = new Set(['new', 'done']);
+
+function isProtectedStatus(row) {
+  return PROTECTED_STATUS_KEYS.has(String(row?.status_key || '').trim());
+}
 
 function normalizeName(value) {
   return String(value || '').trim().replace(/\s+/g, ' ');
@@ -55,6 +59,7 @@ function resolveError(error, t) {
   if (lower.includes('replacement_status_not_available') || lower.includes('company_order_status_replacement_required')) {
     return t('order_statuses_error_replacement');
   }
+  if (lower.includes('core_order_status_is_immutable')) return t('order_statuses_core_locked');
   if (lower.includes('company_feed_has_orders')) return t('order_statuses_feed_disable_blocked_message');
   return raw || t('common_unexpected_error');
 }
@@ -79,8 +84,6 @@ export default function OrderStatusesScreen() {
   const { profile, user } = useAuthContext();
   const [companyId, setCompanyId] = React.useState(null);
   const [companyLoading, setCompanyLoading] = React.useState(true);
-  const [masterBusy, setMasterBusy] = React.useState(false);
-  const [disableConfirmVisible, setDisableConfirmVisible] = React.useState(false);
   const [feedBusy, setFeedBusy] = React.useState(false);
   const [feedFieldsModalVisible, setFeedFieldsModalVisible] = React.useState(false);
   const [feedFieldsBusy, setFeedFieldsBusy] = React.useState(false);
@@ -96,14 +99,13 @@ export default function OrderStatusesScreen() {
     canManage && String(user?.user_metadata?.account_type || '').toLowerCase() === 'solo';
   const {
     isLoading: statusesLoading,
-    isEnabled,
     feedEnabled,
     regularStatuses,
     feedStatus,
     settings,
-  } = useCompanyOrderStatuses(companyId, { includeWhenDisabled: true });
+  } = useCompanyOrderStatuses(companyId);
   const s = React.useMemo(() => styles(theme), [theme]);
-  const canAdd = isEnabled && canManage && regularStatuses.length < ORDER_STATUS_LIMIT;
+  const canAdd = canManage && regularStatuses.length < ORDER_STATUS_LIMIT;
 
   React.useEffect(() => {
     let active = true;
@@ -140,22 +142,8 @@ export default function OrderStatusesScreen() {
     queryClient.invalidateQueries({ queryKey: ['requests'] }).catch(() => {});
   }, [companyId, queryClient]);
 
-  const changeMaster = React.useCallback(async (nextValue) => {
-    if (!companyId || !canManage || masterBusy) return;
-    setMasterBusy(true);
-    try {
-      await setCompanyOrderStatusesEnabled(companyId, nextValue, queryClient);
-      refresh();
-      toast.success(nextValue ? t('order_statuses_enabled') : t('order_statuses_disabled'));
-    } catch (error) {
-      toast.error(resolveError(error, t));
-    } finally {
-      setMasterBusy(false);
-    }
-  }, [canManage, companyId, masterBusy, queryClient, refresh, t, toast]);
-
   const changeFeed = React.useCallback(async (nextValue) => {
-    if (!companyId || !canManage || feedBusy || !isEnabled) return;
+    if (!companyId || !canManage || feedBusy) return;
     setFeedBusy(true);
     try {
       if (!nextValue && feedStatus?.id) {
@@ -180,7 +168,7 @@ export default function OrderStatusesScreen() {
     } finally {
       setFeedBusy(false);
     }
-  }, [canManage, companyId, feedBusy, feedStatus?.id, isEnabled, queryClient, refresh, t, toast]);
+  }, [canManage, companyId, feedBusy, feedStatus?.id, queryClient, refresh, t, toast]);
 
   const feedFieldValues = React.useMemo(
     () => normalizeFeedOrderFields(settings?.feed_order_card_fields),
@@ -239,6 +227,11 @@ export default function OrderStatusesScreen() {
 
   const renameStatus = React.useCallback(async () => {
     const row = editModal.row;
+    if (isProtectedStatus(row)) {
+      setEditModal({ visible: false, row: null, name: '', color: '', error: '' });
+      toast.info(t('order_statuses_core_locked'));
+      return;
+    }
     const name = normalizeName(editModal.name);
     const validation = validateName(name, row?.id);
     if (!companyId || !row?.id) return;
@@ -276,6 +269,10 @@ export default function OrderStatusesScreen() {
 
   const openDelete = React.useCallback(async (row) => {
     if (!row?.id || busyId) return;
+    if (isProtectedStatus(row)) {
+      toast.info(t('order_statuses_core_locked'));
+      return;
+    }
     setBusyId(row.id);
     try {
       const usageCount = await getCompanyOrderStatusUsage(row.id);
@@ -298,6 +295,11 @@ export default function OrderStatusesScreen() {
 
   const deleteStatus = React.useCallback(async () => {
     if (!deleteModal.row?.id) return;
+    if (isProtectedStatus(deleteModal.row)) {
+      setDeleteModal(emptyDeleteState());
+      toast.info(t('order_statuses_core_locked'));
+      return;
+    }
     if (deleteModal.usageCount > 0 && !deleteModal.replacement) {
       setDeleteModal((prev) => ({ ...prev, error: t('order_statuses_error_replacement') }));
       return;
@@ -311,7 +313,7 @@ export default function OrderStatusesScreen() {
     } catch (error) {
       setDeleteModal((prev) => ({ ...prev, loading: false, error: resolveError(error, t) }));
     }
-  }, [deleteModal.replacement, deleteModal.row?.id, deleteModal.usageCount, refresh, t, toast]);
+  }, [deleteModal.replacement, deleteModal.row, deleteModal.usageCount, refresh, t, toast]);
 
   const replacementItems = React.useMemo(
     () => regularStatuses
@@ -331,25 +333,7 @@ export default function OrderStatusesScreen() {
   return (
     <Screen background="background" headerOptions={{ title: t('order_statuses_title'), helpTopic: 'order_statuses' }} scroll={false}>
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-        <SectionHeader>{t('order_statuses_title')}</SectionHeader>
-        <Card padded={false}>
-          <View style={s.row}>
-            <View style={s.textWrap}>
-              <Text style={s.title}>{t('order_statuses_enable')}</Text>
-              <Text style={s.hint}>{isEnabled ? t('order_statuses_enabled_hint') : t('order_statuses_disabled_hint')}</Text>
-            </View>
-            {masterBusy ? <ActivityIndicator color={theme.colors.primary} /> : <ThemedSwitch value={isEnabled} onValueChange={(nextValue) => {
-              if (nextValue) {
-                changeMaster(true);
-              } else {
-                setDisableConfirmVisible(true);
-              }
-            }} disabled={!canManage} />}
-          </View>
-        </Card>
-
-        {isEnabled ? <>
-          {!isSoloAdmin ? <>
+        {!isSoloAdmin ? <>
             <SectionHeader>{t('order_statuses_feed_section')}</SectionHeader>
             <Card padded={false} separated>
               <View style={s.row}>
@@ -388,33 +372,41 @@ export default function OrderStatusesScreen() {
                 )}
               </Pressable>
             </Card>
-          </> : null}
+        </> : null}
 
-          <SectionHeader>{t('order_statuses_regular_section')}</SectionHeader>
-          <Card padded={false}>
-            <SeparatedList>
-              {regularStatuses.map((row) => <View key={row.id} style={s.row}>
+        <SectionHeader>{t('order_statuses_regular_section')}</SectionHeader>
+        <Card padded={false}>
+          <SeparatedList>
+            {regularStatuses.map((row) => <View key={row.id} style={s.row}>
                   <View style={[s.colorDot, { backgroundColor: row.color }]} />
                   <Text style={s.statusName} numberOfLines={1}>{getOrderStatusLabel(row.status_key, regularStatuses, t)}</Text>
                   <View style={s.actions}>
                     {busyId === row.id ? <ActivityIndicator color={theme.colors.primary} /> : null}
-                    <Pressable disabled={!canManage || busyId === row.id} onPress={() => setEditModal({ visible: true, row, name: row.name, color: row.color, error: '' })} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_edit')}>
-                      <Feather name="edit-2" size={18} color={theme.colors.textSecondary} />
-                    </Pressable>
-                    <Pressable disabled={!canManage || busyId === row.id} onPress={() => openDelete(row)} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_delete')}>
-                      <Feather name="trash-2" size={18} color={theme.colors.danger} />
-                    </Pressable>
+                    {isProtectedStatus(row) ? (
+                      <View style={s.protectedStatus} accessibilityLabel={t('order_statuses_core_locked')}>
+                        <Feather name="lock" size={16} color={theme.colors.textSecondary} />
+                        <Text style={s.protectedStatusText}>{t('order_statuses_core_badge')}</Text>
+                      </View>
+                    ) : (
+                      <>
+                        <Pressable disabled={!canManage || busyId === row.id} onPress={() => setEditModal({ visible: true, row, name: row.name, color: row.color, error: '' })} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_edit')}>
+                          <Feather name="edit-2" size={18} color={theme.colors.textSecondary} />
+                        </Pressable>
+                        <Pressable disabled={!canManage || busyId === row.id} onPress={() => openDelete(row)} style={({ pressed }) => [s.iconButton, pressed && s.pressed]} accessibilityLabel={t('btn_delete')}>
+                          <Feather name="trash-2" size={18} color={theme.colors.danger} />
+                        </Pressable>
+                      </>
+                    )}
                   </View>
                 </View>)}
-              {!regularStatuses.length ? <View style={s.empty}><Text style={s.hint}>{t('order_statuses_empty')}</Text></View> : null}
-              <Pressable disabled={!canAdd} onPress={() => setCreateModal({ visible: true, name: '', color: getRandomOrderStatusColor(regularStatuses.map((row) => row.color)), error: '' })} style={({ pressed }) => [s.addRow, !canAdd && s.disabled, pressed && s.pressed]}>
-                <Feather name="plus-circle" size={18} color={theme.colors.primary} />
-                <Text style={s.addText}>{t('order_statuses_add')}</Text>
-              </Pressable>
-            </SeparatedList>
-            <Text style={s.limit}>{t('order_statuses_limit_hint').replace('{count}', String(ORDER_STATUS_LIMIT - regularStatuses.length))}</Text>
-          </Card>
-        </> : null}
+            {!regularStatuses.length ? <View style={s.empty}><Text style={s.hint}>{t('order_statuses_empty')}</Text></View> : null}
+            <Pressable disabled={!canAdd} onPress={() => setCreateModal({ visible: true, name: '', color: getRandomOrderStatusColor(regularStatuses.map((row) => row.color)), error: '' })} style={({ pressed }) => [s.addRow, !canAdd && s.disabled, pressed && s.pressed]}>
+              <Feather name="plus-circle" size={18} color={theme.colors.primary} />
+              <Text style={s.addText}>{t('order_statuses_add')}</Text>
+            </Pressable>
+          </SeparatedList>
+          <Text style={s.limit}>{t('order_statuses_limit_hint').replace('{count}', String(ORDER_STATUS_LIMIT - regularStatuses.length))}</Text>
+        </Card>
       </ScrollView>
 
       <BaseModal visible={createModal.visible} onClose={() => setCreateModal({ visible: false, name: '', color: '', error: '' })} title={t('order_statuses_create_title')} feedback={createModal.error ? { message: createModal.error, type: 'warning' } : null} footer={<Actions t={t} onCancel={() => setCreateModal({ visible: false, name: '', color: '', error: '' })} onConfirm={createStatus} confirmTitle={t('btn_create')} loading={busyId === 'create'} disabled={!normalizeName(createModal.name) || !createModal.color} />}>
@@ -463,15 +455,6 @@ export default function OrderStatusesScreen() {
           {t('order_statuses_feed_disable_blocked_message').replace('{count}', String(feedDisableBlocked.count))}
         </Text>
       </BaseModal>
-      <ConfirmModal
-        visible={disableConfirmVisible}
-        title={t('order_statuses_disable_confirm_title')}
-        message={t('order_statuses_disable_confirm_message')}
-        confirmLabel={t('order_statuses_disable_confirm_action')}
-        confirmVariant="destructive"
-        onClose={() => setDisableConfirmVisible(false)}
-        onConfirm={() => changeMaster(false)}
-      />
     </Screen>
   );
 }
@@ -520,6 +503,8 @@ function styles(theme) {
     statusName: { flex: 1, color: theme.colors.text, fontSize: theme.typography.sizes.md },
     colorDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: theme.colors.border },
     actions: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xxs },
+    protectedStatus: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs, minHeight: 44, paddingHorizontal: theme.spacing.sm },
+    protectedStatusText: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm },
     iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
     addRow: { minHeight: theme.components?.listItem?.height ?? 52, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, paddingHorizontal: theme.spacing.lg },
     visibleFieldsRow: { minHeight: theme.components?.listItem?.height ?? 52, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, paddingHorizontal: theme.spacing.lg },

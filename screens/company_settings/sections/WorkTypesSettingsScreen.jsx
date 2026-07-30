@@ -129,8 +129,14 @@ export default function WorkTypesSettings() {
       if (message === 'work_types_update_no_rows' || message === 'work_types_create_no_row') {
         return t('work_types_settings_error_not_available');
       }
-      if (message === 'work_types_delete_no_rows') {
+      if (message === 'work_types_delete_no_rows' || message === 'WORK_TYPE_NOT_FOUND') {
         return t('work_types_settings_error_not_available');
+      }
+      if (message === 'WORK_TYPE_DELETE_FORBIDDEN') {
+        return t('work_types_settings_error_forbidden');
+      }
+      if (message === 'WORK_TYPE_USED_BY_FINANCE_SCHEMES') {
+        return t('work_types_settings_error_used_by_finance_schemes');
       }
       if (normalized.includes('cannot coerce the result to a single json object')) {
         return t('work_types_settings_error_not_available');

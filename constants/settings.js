@@ -34,13 +34,25 @@ export const SETTINGS_SECTIONS = {
         helpTopic: 'form_builder',
       },
       {
+        key: 'phone_visibility',
+        labelKey: 'settings_management_phone_visibility',
+        route: '/company_settings/sections/phone',
+        companyOnly: true,
+        helpTopic: 'phone_visibility',
+      },
+      // `work_types` and `departments` moved to REFERENCE section
+    ],
+  },
+  FINANCES: {
+    titleKey: 'company_settings_sections_finances_title',
+    items: [
+      {
         key: 'finance_rules',
-        labelKey: 'company_settings_sections_management_items_finance_rules',
+        labelKey: 'settings_management_finance_rules',
         route: '/company_settings/sections/finance-rules',
         companyOnly: true,
         helpTopic: 'finance_rules',
       },
-      // `work_types` and `departments` moved to REFERENCE section
     ],
   },
   REFERENCE: {
@@ -116,12 +128,6 @@ export const SETTINGS_SECTIONS = {
         helpTopic: 'cloud_storage',
       },
     ],
-  },
-  DEPARTURE: {
-    titleKey: 'company_settings_sections_departure_title',
-  },
-  PHONE: {
-    titleKey: 'company_settings_sections_phone_title',
   },
 };
 

@@ -371,7 +371,10 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
 
   const handleRouteToFeedToggle = React.useCallback((value) => {
     if (value) {
-      updateConfig({ destination_type: 'feed' });
+      updateConfig({
+        destination_type: 'feed',
+        destination_user_id: null,
+      });
       return;
     }
 
@@ -385,7 +388,10 @@ export default function MessengerBotSettingsScreen({ provider = 'telegram' }) {
 
   const handleAssigneeSelect = React.useCallback((assigneeId) => {
     if ((!assigneeId || assigneeId === '__feed__') && canRouteToFeed) {
-      updateConfig({ destination_type: 'feed' });
+      updateConfig({
+        destination_type: 'feed',
+        destination_user_id: null,
+      });
       setAssigneeModalVisible(false);
       return;
     }

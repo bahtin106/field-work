@@ -102,6 +102,13 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
 
   const companyId = text(profile.company_id) || null;
   if (!companyId) return fail('Company not found', 'COMPANY_NOT_FOUND', 400);
+  const { data: company, error: companyError } = await supabaseAdmin
+    .from('companies')
+    .select('work_mode')
+    .eq('id', companyId)
+    .maybeSingle();
+  if (companyError || !company) return fail('Company not found', 'COMPANY_NOT_FOUND', 404);
+  const previousWorkMode = text(company.work_mode).toLowerCase() === 'solo' ? 'solo' : 'company';
   let switchDetails: Record<string, unknown> | null = null;
 
   if (targetMode === 'solo') {
@@ -264,6 +271,25 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
         });
       }
     }
+
+    // This is the authoritative mode for database-side finance calculations.
+    // The company trigger refreshes only open request snapshots; completed
+    // requests remain historical records.
+    const { error: workModeError } = await supabaseAdmin
+      .from('companies')
+      .update({ work_mode: targetMode })
+      .eq('id', companyId);
+    if (workModeError) {
+      console.error('[switch-account-mode] UPDATE_COMPANY_WORK_MODE_FAILED', {
+        company_id: companyId,
+        actor_user_id: user.id,
+        target_mode: targetMode,
+        error: workModeError,
+      });
+      throw opFail('Unable to update company work mode', 'WORK_MODE_UPDATE_FAILED', {
+        db_error: workModeError.message || null,
+      });
+    }
   } catch (error) {
     const opError = (error as { __operation_failed?: boolean; message?: string; code?: string; details?: Record<string, unknown> | null }) || {};
     const message = opError.message || 'Unable to switch account mode';
@@ -306,6 +332,18 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
         metadataSyncFailed = true;
         metadataSyncError = updateUserError.message || null;
       } else {
+        const { error: rollbackWorkModeError } = await supabaseAdmin
+          .from('companies')
+          .update({ work_mode: previousWorkMode })
+          .eq('id', companyId);
+        if (rollbackWorkModeError) {
+          console.error('[switch-account-mode] ROLLBACK_COMPANY_WORK_MODE_FAILED', {
+            company_id: companyId,
+            actor_user_id: user.id,
+            rollback_mode: previousWorkMode,
+            error: rollbackWorkModeError,
+          });
+        }
         return fail(updateUserError.message || 'Unable to update account mode', 'UPDATE_USER_METADATA_FAILED', 500);
       }
     }

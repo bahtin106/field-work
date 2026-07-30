@@ -93,6 +93,7 @@ function StatsScreenContent() {
 
   // company settings hook must be used inside component body
   const { settings: companySettings } = useCompanySettings();
+  const isSoloFinanceMode = companySettings?.work_mode === 'solo';
   const statusSystem = useCompanyOrderStatuses();
 
   // currency-aware formatter (uses company currency when available)
@@ -581,15 +582,40 @@ function StatsScreenContent() {
       const inProgressOrders = orders?.filter((o) => inProgressStatusAliases.includes(String(o.status || '').trim())).length || 0;
       const newOrders = orders?.filter((o) => newStatusAliases.includes(String(o.status || '').trim())).length || 0;
 
-      const getGross = (o) => Number(o.finance_gross_total ?? o.start_price ?? 0) || 0;
-      const getExtraIncome = (o) => Number(o.finance_income_total ?? 0) || 0;
-      const getExpense = (o) => Number(o.finance_expense_total ?? 0) || 0;
-      const getNet = (o) =>
-        Number(o.finance_net_total ?? getGross(o) + getExtraIncome(o) - getExpense(o)) || 0;
+      const orderIds = (orders || []).map((o) => o.id).filter(Boolean);
+      let snapshots = [];
+      if (orderIds.length > 0) {
+        const snapshotResult = await supabase
+          .from('order_finance_snapshots')
+          .select(
+            'order_id, customer_total, worker_compensation_total, company_cost_total, company_margin_total',
+          )
+          .in('order_id', orderIds);
+        if (snapshotResult.error) throw snapshotResult.error;
+        snapshots = Array.isArray(snapshotResult.data) ? snapshotResult.data : [];
+      }
+      const snapshotsByOrderId = new Map(
+        snapshots.map((snapshot) => [String(snapshot.order_id), snapshot]),
+      );
+      const getSnapshot = (order) => snapshotsByOrderId.get(String(order?.id || '')) || null;
+      const getGross = (order) =>
+        Number(getSnapshot(order)?.customer_total ?? order.finance_gross_total ?? order.start_price ?? 0) || 0;
+      const getWorkerCompensation = (order) =>
+        Number(getSnapshot(order)?.worker_compensation_total ?? 0) || 0;
+      const getCompanyCost = (order) =>
+        Number(getSnapshot(order)?.company_cost_total ?? order.finance_expense_total ?? 0) || 0;
+      const getTotalCost = (order) =>
+        isSoloFinanceMode ? getCompanyCost(order) : getWorkerCompensation(order) + getCompanyCost(order);
+      const getNet = (order) =>
+        Number(
+          getSnapshot(order)?.company_margin_total ??
+            order.finance_net_total ??
+            getGross(order) - getTotalCost(order),
+        ) || 0;
 
-      const totalRevenue = orders?.reduce((sum, o) => sum + getGross(o) + getExtraIncome(o), 0) || 0;
-      const totalCosts = orders?.reduce((sum, o) => sum + getExpense(o), 0) || 0;
-      const netProfit = orders?.reduce((sum, o) => sum + getNet(o), 0) || 0;
+      const totalRevenue = orders?.reduce((sum, order) => sum + getGross(order), 0) || 0;
+      const totalCosts = orders?.reduce((sum, order) => sum + getTotalCost(order), 0) || 0;
+      const netProfit = orders?.reduce((sum, order) => sum + getNet(order), 0) || 0;
 
       // Status breakdown
       const statusRows = statusSystem.isEnabled
@@ -614,28 +640,25 @@ function StatsScreenContent() {
         .filter((item) => item.count > 0);
 
       let expenseByRecipient = [];
-      const orderIds = (orders || []).map((o) => o.id).filter(Boolean);
-      if (orderIds.length > 0) {
-        const { data: entries } = await supabase
-          .from('order_finance_entries')
-          .select(
-            'kind, calculated_amount, recipient_user_id, recipient:profiles!order_finance_entries_recipient_user_id_fkey(first_name, middle_name, last_name, full_name)',
-          )
-          .in('order_id', orderIds);
-        const grouped = new Map();
-        for (const entry of entries || []) {
-          if (String(entry?.kind || '') !== 'expense') continue;
-          const key = String(entry?.recipient_user_id || 'no_recipient');
-          const prev = grouped.get(key) || {
+      if (!isSoloFinanceMode) {
+        const usersById = new Map(
+          (users || []).map((user) => [String(user?.id || ''), user]),
+        );
+        const groupedCompensation = new Map();
+        for (const order of orders || []) {
+          const amount = getWorkerCompensation(order);
+          if (amount <= 0) continue;
+          const key = String(order?.assigned_to || 'no_recipient');
+          const user = usersById.get(key);
+          const previous = groupedCompensation.get(key) || {
             key,
-            name: formatPersonName(entry?.recipient, t('stats_no_recipient')),
+            name: formatPersonName(user, t('stats_no_recipient')),
             amount: 0,
           };
-          prev.amount += Number(entry?.calculated_amount || 0) || 0;
-          grouped.set(key, prev);
+          previous.amount += amount;
+          groupedCompensation.set(key, previous);
         }
-        expenseByRecipient = Array.from(grouped.values())
-          .filter((row) => row.amount > 0)
+        expenseByRecipient = Array.from(groupedCompensation.values())
           .sort((a, b) => b.amount - a.amount)
           .slice(0, 6);
       }
@@ -670,7 +693,17 @@ function StatsScreenContent() {
     } catch (error) {
       console.error('Error loading stats:', error);
     }
-  }, [selectedUserId, periodRange, period, TOK, statusSystem.isEnabled, statusSystem.regularStatuses, t]);
+  }, [
+    selectedUserId,
+    periodRange,
+    period,
+    TOK,
+    isSoloFinanceMode,
+    statusSystem.isEnabled,
+    statusSystem.regularStatuses,
+    t,
+    users,
+  ]);
 
   // Initial load
   useEffect(() => {
@@ -834,7 +867,7 @@ function StatsScreenContent() {
               <Text style={[styles.statValue, { color: TOK.SUCCESS }]}>
                 {fRUB(stats.netProfit)}
               </Text>
-              <Text style={styles.statLabel}>{t('stats_net_profit')}</Text>
+              <Text style={styles.statLabel}>{t(isSoloFinanceMode ? 'stats_personal_income' : 'stats_net_profit')}</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{stats.performance.avgOrdersPerDay.toFixed(1)}</Text>
@@ -951,7 +984,9 @@ function StatsScreenContent() {
               <Text style={styles.statusCount}>{fRUB(stats.totalCosts)}</Text>
             </View>
             <View style={[styles.statusItem, { borderBottomWidth: 0 }]}>
-              <Text style={[styles.statusName, { fontWeight: '700' }]}>{t('stats_net_profit')}</Text>
+              <Text style={[styles.statusName, { fontWeight: '700' }]}>
+                {t(isSoloFinanceMode ? 'stats_personal_income' : 'stats_net_profit')}
+              </Text>
               <Text style={[styles.statusCount, { color: TOK.SUCCESS }]}>
                 {fRUB(stats.netProfit)}
               </Text>
@@ -959,10 +994,10 @@ function StatsScreenContent() {
           </View>
         </View>
 
-        {stats.expenseByRecipient.length > 0 && (
+        {!isSoloFinanceMode && stats.expenseByRecipient.length > 0 && (
           <View style={styles.section}>
             <SectionHeader style={styles.sectionTitle}>
-              {t('stats_expenses_by_recipient')}
+              {t('stats_worker_compensation_by_executor')}
             </SectionHeader>
             <View style={styles.chartCard}>
               {stats.expenseByRecipient.map((item, index) => (
