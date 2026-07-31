@@ -514,7 +514,7 @@ export async function listSupportRequests({ limit = 200, includeCompleted = fals
   return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, profilesById, companiesById));
 }
 
-export async function listMySupportRequests({ userId, limit = 100 } = {}) {
+export async function listMySupportRequests({ userId, limit = 100, forcePhotoRefresh = false } = {}) {
   const id = String(userId || '').trim();
   if (!id) return [];
   const safeLimit = Math.max(1, Math.min(300, Number(limit) || 100));
@@ -544,7 +544,10 @@ export async function listMySupportRequests({ userId, limit = 100 } = {}) {
     ...row,
     photo_urls: attachmentsByFeedbackId.get(String(row?.id || '').trim()) || [],
   }));
-  const rowsWithResolvedPhotos = await resolveSupportPhotoUrls(rowsWithPhotos);
+  const rowsWithResolvedPhotos = await resolveSupportPhotoUrls(
+    rowsWithPhotos,
+    { forceRefresh: forcePhotoRefresh },
+  );
   return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, new Map(), new Map()));
 }
 

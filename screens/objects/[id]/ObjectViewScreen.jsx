@@ -189,6 +189,8 @@ export default function ObjectViewScreen() {
   const [objectMediaInfoBySource, setObjectMediaInfoBySource] = React.useState({});
   const [viewerIndex, setViewerIndex] = React.useState(0);
   const [viewerCategoryLabel, setViewerCategoryLabel] = React.useState('');
+  const viewerRawPhotosRef = React.useRef([]);
+  const viewerCategoryRef = React.useRef(null);
   const objectMediaRef = React.useRef({});
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
@@ -634,6 +636,8 @@ export default function ObjectViewScreen() {
       .filter((item) => item.raw && item.display);
     if (!pairs.length) return;
     const nextIndex = pairs.findIndex((item) => item.originalIndex === index);
+    viewerRawPhotosRef.current = pairs.map((item) => item.raw);
+    viewerCategoryRef.current = category || null;
     setViewerCategoryLabel(label || '');
     setViewerPhotos(pairs.map((item) => item.display));
     setViewerPhotoMetadata(pairs.map((item) => item.metadata));
@@ -644,6 +648,32 @@ export default function ObjectViewScreen() {
   const closeViewer = React.useCallback(() => {
     setViewerVisible(false);
   }, []);
+
+  const handleViewerImageRetry = React.useCallback(async (photoIndex) => {
+    const category = String(viewerCategoryRef.current || '').trim();
+    const sourceUrl = String(viewerRawPhotosRef.current?.[photoIndex] || '').trim();
+    if (!objectId || !category || !sourceUrl) return '';
+    const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
+      objectId,
+      categories: [category],
+      mediaByCategory: { [category]: [sourceUrl] },
+    });
+    if (Object.keys(displayUrls).length) {
+      setResolvedObjectMediaUrls((prev) =>
+        mergeObjectMediaUrlMapPreservingLocal(prev, displayUrls),
+      );
+    }
+    if (Object.keys(thumbnailUrls).length) {
+      setObjectMediaThumbUrls((prev) =>
+        mergeObjectMediaUrlMapPreservingLocal(prev, thumbnailUrls),
+      );
+    }
+    if (Object.keys(mediaInfoBySource).length) {
+      setObjectMediaInfoBySource((prev) => ({ ...prev, ...mediaInfoBySource }));
+    }
+    return String(displayUrls[sourceUrl] || '').trim() ||
+      (isRenderableObjectMediaUrl(sourceUrl) ? sourceUrl : '');
+  }, [objectId]);
 
   if (!canViewObjects) {
     return (
@@ -941,6 +971,7 @@ export default function ObjectViewScreen() {
         imageMetadata={viewerPhotoMetadata}
         initialIndex={viewerIndex}
         onClose={closeViewer}
+        onRetryImage={handleViewerImageRetry}
         categoryLabel={viewerCategoryLabel}
       />
     </SafeAreaView>

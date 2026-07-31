@@ -34,6 +34,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
+import { useNavigation } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -63,6 +64,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
 
   const [permission, requestPermission, getPermission] = useCameraPermissions();
   const cameraRef = useRef(null);
@@ -140,6 +142,20 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
       permissionPromptedForThisOpenRef.current = false;
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+
+    try {
+      navigation.setOptions({ orientation: 'portrait_up' });
+    } catch {}
+
+    return () => {
+      try {
+        navigation.setOptions({ orientation: 'default' });
+      } catch {}
+    };
+  }, [navigation, visible]);
 
   // ── Take picture ───────────────────────────────────────────
   const handleTakePicture = useCallback(async () => {
@@ -346,6 +362,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
               flash={cameraFacing === 'back' && torch ? 'on' : 'off'}
               enableTorch={cameraFacing === 'back' && torch}
               mode="picture"
+              responsiveOrientationWhenOrientationLocked
               active={!previewVisible}
               onCameraReady={() => setCameraReady(true)}
             />

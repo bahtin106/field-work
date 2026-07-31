@@ -63,6 +63,7 @@ export default function SupportRequestsScreen() {
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [viewerImages, setViewerImages] = React.useState([]);
   const [viewerIndex, setViewerIndex] = React.useState(0);
+  const viewerRequestIdRef = React.useRef('');
 
   React.useLayoutEffect(() => {
     nav.setParams({ headerTitle: t('support_requests_title') });
@@ -92,10 +93,29 @@ export default function SupportRequestsScreen() {
     };
   }, [queryClient, queryKey, userId]);
 
-  const openViewer = React.useCallback((images, index) => {
+  const openViewer = React.useCallback((requestId, images, index) => {
+    viewerRequestIdRef.current = String(requestId || '').trim();
     setViewerImages(Array.isArray(images) ? images : []);
     setViewerIndex(index);
   }, []);
+
+  const handleRetryViewerImage = React.useCallback(async (photoIndex) => {
+    const requestId = viewerRequestIdRef.current;
+    if (!requestId) return '';
+    const refreshedList = await listMySupportRequests({
+      userId,
+      limit: 150,
+      forcePhotoRefresh: true,
+    });
+    const refreshed = refreshedList.find(
+      (item) => String(item?.id || '') === requestId,
+    );
+    const refreshedPhotos = Array.isArray(refreshed?.photoUrls) ? refreshed.photoUrls : [];
+    if (!refreshed || !refreshedPhotos.length) return '';
+    queryClient.setQueryData(queryKey, refreshedList);
+    setViewerImages(refreshedPhotos);
+    return String(refreshedPhotos[photoIndex] || '').trim();
+  }, [queryClient, queryKey, userId]);
 
   const renderItem = React.useCallback(
     ({ item }) => {
@@ -120,7 +140,7 @@ export default function SupportRequestsScreen() {
               {photos.slice(0, 4).map((url, index) => (
                 <Pressable
                   key={`${item.id}-${url}-${index}`}
-                  onPress={() => openViewer(photos, index)}
+                  onPress={() => openViewer(item.id, photos, index)}
                   style={({ pressed }) => [styles(theme).photoPressable, pressed && { opacity: 0.82 }]}
                 >
                   <Image source={url} style={styles(theme).photo} contentFit="cover" cachePolicy="memory-disk" />
@@ -214,6 +234,7 @@ export default function SupportRequestsScreen() {
         images={viewerImages}
         initialIndex={viewerIndex}
         onClose={() => setViewerImages([])}
+        onRetryImage={handleRetryViewerImage}
         categoryLabel={t('admin_feedback_photo')}
       />
     </Screen>

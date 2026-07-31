@@ -5,6 +5,7 @@ import React, {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -158,12 +159,19 @@ const BaseModalImpl = (
   disablePanCloseRef.current = disablePanClose;
 
   const [rnVisible, setRnVisible] = useState(false);
+  const rnVisibleRef = useRef(false);
+  rnVisibleRef.current = rnVisible;
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
   const [modalKey, _setModalKey] = useState(0);
   const iosModalIdRef = useRef(null);
   const iosSuspendedRef = useRef(false);
   const openRef = useRef(null);
+  const resumeRef = useRef(null);
   const suspendRef = useRef(null);
+  const skipNextOpenAnimationRef = useRef(false);
+  const openAnimationStartedRef = useRef(false);
+  const closingRef = useRef(false);
+  const transitionIdRef = useRef(0);
   const dismissNotifiedRef = useRef(false);
   const nestedRequestCloseStackRef = useRef([]);
   const registerNestedRequestClose = useCallback((handler) => {
@@ -300,15 +308,19 @@ const BaseModalImpl = (
     } catch {}
   };
 
-  const doUnmount = () => {
+  const doUnmount = (transitionId) => {
+    if (transitionId !== transitionIdRef.current) return;
+    closingRef.current = false;
     if (Platform.OS === 'ios' && !embedded) {
       setNativeDismissPending(true);
+      rnVisibleRef.current = false;
       setRnVisible(false);
       try {
         onClose?.();
       } catch {}
       return;
     }
+    rnVisibleRef.current = false;
     setRnVisible(false);
     try {
       onClose?.();
@@ -322,45 +334,80 @@ const BaseModalImpl = (
   // All properties use matched non-overshooting timings for cohesion.
 
   const runOpenAnimation = () => {
+    if (openAnimationStartedRef.current) return;
+    openAnimationStartedRef.current = true;
     op.value = withTiming(1, { duration: 180, easing: OPEN_EASING });
-    cardOp.value = presentationRef.current
-      ? 1
-      : withTiming(1, { duration: 180, easing: OPEN_EASING });
+    cardOp.value = withTiming(1, { duration: 160, easing: OPEN_EASING });
     ty.value = withTiming(0, { duration: 240, easing: OPEN_EASING });
     sc.value = withTiming(1, { duration: 200, easing: OPEN_EASING });
   };
 
   const open = () => {
+    const alreadyMounted = rnVisibleRef.current;
+    transitionIdRef.current += 1;
+    closingRef.current = false;
     // Set invisible starting position, then mount
     dismissNotifiedRef.current = false;
+    skipNextOpenAnimationRef.current = false;
+    openAnimationStartedRef.current = false;
     setNativeDismissPending(false);
     op.value = 0;
-    cardOp.value = isSheet ? 1 : 0;
+    cardOp.value = 0;
     ty.value = isSheet ? 64 : 12;
     sc.value = isSheet ? 1 : 0.96;
-    if (!rnVisible) setRnVisible(true);
+    if (!alreadyMounted) {
+      rnVisibleRef.current = true;
+      setRnVisible(true);
+      return;
+    }
+    runOpenAnimation();
     // Animation triggered by <Modal onShow> — guarantees native mount is done
   };
   openRef.current = open;
+  resumeRef.current = () => {
+    transitionIdRef.current += 1;
+    closingRef.current = false;
+    dismissNotifiedRef.current = false;
+    skipNextOpenAnimationRef.current = true;
+    openAnimationStartedRef.current = true;
+    setNativeDismissPending(false);
+    op.value = 1;
+    cardOp.value = 1;
+    ty.value = 0;
+    sc.value = 1;
+    if (!rnVisibleRef.current) {
+      rnVisibleRef.current = true;
+      setRnVisible(true);
+    }
+  };
   suspendRef.current = () => {
-    if (!rnVisible) return;
+    if (!rnVisibleRef.current) return;
+    transitionIdRef.current += 1;
+    closingRef.current = false;
     iosSuspendedRef.current = true;
     setNativeDismissPending(true);
+    rnVisibleRef.current = false;
     setRnVisible(false);
   };
 
   const close = () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    const transitionId = transitionIdRef.current + 1;
+    transitionIdRef.current = transitionId;
     // Card slides down off-screen — no scale, no card fade.
     // M3 "emphasized accelerate": starts slow, accelerates away like gravity.
     const closingSheet = presentationRef.current;
     ty.value = withTiming(closingSheet ? sheetMaxH + 40 : 10, {
-      duration: closingSheet ? 250 : 160,
+      duration: closingSheet ? 220 : 160,
       easing: closingSheet
         ? Easing.bezier(0.3, 0, 0.8, 0.15)
         : Easing.in(Easing.quad),
+    }, (finished) => {
+      if (finished) runOnJS(doUnmount)(transitionId);
     });
     sc.value = withTiming(closingSheet ? 1 : 0.97, {
-      duration: closingSheet ? 250 : 160,
+      duration: closingSheet ? 220 : 160,
       easing: Easing.in(Easing.quad),
     });
     cardOp.value = closingSheet
@@ -371,10 +418,8 @@ const BaseModalImpl = (
       });
     // Backdrop fades out slightly faster — card is already moving
     op.value = withTiming(0, {
-      duration: closingSheet ? 200 : 160,
+      duration: closingSheet ? 180 : 160,
       easing: Easing.out(Easing.quad),
-    }, (fin) => {
-      if (fin) runOnJS(doUnmount)();
     });
   };
 
@@ -447,10 +492,11 @@ const BaseModalImpl = (
     }),
   ).current;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (Platform.OS !== 'ios' || embedded) return undefined;
     const id = registerIOSModal({
       present: () => openRef.current?.(),
+      resume: () => resumeRef.current?.(),
       suspend: () => suspendRef.current?.(),
     });
     iosModalIdRef.current = id;
@@ -460,7 +506,7 @@ const BaseModalImpl = (
     };
   }, [embedded]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (Platform.OS === 'ios' && !embedded) {
       const id = iosModalIdRef.current;
       if (!id) return;
@@ -540,10 +586,17 @@ const BaseModalImpl = (
         visible: !!rnVisible,
         transparent: true,
         presentationStyle: 'overFullScreen',
+        hardwareAccelerated: Platform.OS === 'android',
+        statusBarTranslucent: Platform.OS === 'android',
+        navigationBarTranslucent: Platform.OS === 'android',
         animationType: 'none',
         onRequestClose: () => handleContainerRequestCloseRef.current(),
         onShow: () => {
-          runOpenAnimation();
+          if (skipNextOpenAnimationRef.current) {
+            skipNextOpenAnimationRef.current = false;
+          } else {
+            runOpenAnimation();
+          }
           try {
             onShow?.();
           } catch {}
@@ -551,6 +604,7 @@ const BaseModalImpl = (
         onDismiss: () => {
           const wasSuspended = Platform.OS === 'ios' && iosSuspendedRef.current;
           iosSuspendedRef.current = false;
+          rnVisibleRef.current = false;
           setRnVisible(false);
           setNativeDismissPending(false);
           if (Platform.OS === 'ios' && iosModalIdRef.current != null) {

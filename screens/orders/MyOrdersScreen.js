@@ -2,7 +2,7 @@ import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/n
 import { useQueryClient } from '@tanstack/react-query';
 import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -22,6 +22,7 @@ import DynamicOrderCard from '../../components/DynamicOrderCard';
 import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import StatusSelectModal from '../../components/filters/StatusSelectModal';
+import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useAuth } from '../../components/hooks/useAuth';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
@@ -244,8 +245,6 @@ function rankStatusFilterOptions(options = [], usage = {}) {
     })
     .map(({ option }) => option);
 }
-
-const SortSelectModal = lazy(() => import('../../components/filters/SortSelectModal'));
 
 function buildScopedStorageKey(prefix, scopeKey) {
   return `${prefix}:${String(scopeKey || 'anonymous')}`;
@@ -2843,17 +2842,15 @@ function MyOrdersContent() {
         />
       ) : null}
       {sortVisible ? (
-        <Suspense fallback={null}>
-          <SortSelectModal
-            visible={sortVisible}
-            onClose={() => setSortVisible(false)}
-            options={sortOptions}
-            value={normalizedSortKey}
-            onChange={(nextSort) => {
-              if (nextSort) setSortKey(nextSort);
-            }}
-          />
-        </Suspense>
+        <SortSelectModal
+          visible={sortVisible}
+          onClose={() => setSortVisible(false)}
+          options={sortOptions}
+          value={normalizedSortKey}
+          onChange={(nextSort) => {
+            if (nextSort) setSortKey(nextSort);
+          }}
+        />
       ) : null}
     </Screen>
   );

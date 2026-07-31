@@ -12,23 +12,29 @@ const removeFromStack = (id) => {
   }
 };
 
-const present = (id) => {
+const present = (id, { resuming = false } = {}) => {
   const entry = entries.get(id);
   if (!entry || !entry.requested) return false;
   activeId = id;
-  entry.present();
+  if (resuming) entry.resume();
+  else entry.present();
   return true;
 };
 
 const resumePrevious = () => {
   while (suspendedStack.length) {
-    if (present(suspendedStack.pop())) return;
+    if (present(suspendedStack.pop(), { resuming: true })) return;
   }
 };
 
-export const registerIOSModal = ({ present: presentModal, suspend: suspendModal }) => {
+export const registerIOSModal = ({ present: presentModal, resume: resumeModal, suspend: suspendModal }) => {
   const id = nextId++;
-  entries.set(id, { present: presentModal, requested: false, suspend: suspendModal });
+  entries.set(id, {
+    present: presentModal,
+    requested: false,
+    resume: resumeModal || presentModal,
+    suspend: suspendModal,
+  });
   return id;
 };
 
@@ -47,7 +53,11 @@ export const requestIOSModalPresentation = (id) => {
   const entry = entries.get(id);
   if (!entry) return;
   entry.requested = true;
-  if (activeId === id || pendingId === id) return;
+  if (activeId === id) {
+    entry.resume();
+    return;
+  }
+  if (pendingId === id) return;
   if (activeId == null) {
     present(id);
     return;

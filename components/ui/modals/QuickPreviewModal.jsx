@@ -53,7 +53,9 @@ export default function QuickPreviewModal({
   const opacity = useSharedValue(0);
   const scale = useSharedValue(0.96);
   const slideY = useSharedValue(16);
-  const [rendered, setRendered] = React.useState(visible);
+  const [rendered, setRendered] = React.useState(false);
+  const renderedRef = React.useRef(false);
+  renderedRef.current = rendered;
   const [nativeVisible, setNativeVisible] = React.useState(false);
   const [nativeDismissPending, setNativeDismissPending] = React.useState(false);
   const [cardSize, setCardSize] = React.useState({ width: 0, height: 0 });
@@ -63,25 +65,115 @@ export default function QuickPreviewModal({
   const iosSuspendedRef = React.useRef(false);
   const nativeVisibleRef = React.useRef(false);
   const presentRef = React.useRef(null);
+  const resumeRef = React.useRef(null);
   const suspendRef = React.useRef(null);
+  const nativeShownRef = React.useRef(false);
+  const layoutReadyRef = React.useRef(false);
+  const openAnimationStartedRef = React.useRef(false);
+  const closingRef = React.useRef(false);
+  const transitionIdRef = React.useRef(0);
 
-  presentRef.current = () => {
-    nativeVisibleRef.current = true;
+  const runOpenAnimation = React.useCallback(() => {
+    if (
+      openAnimationStartedRef.current ||
+      !nativeShownRef.current ||
+      !layoutReadyRef.current
+    ) return;
+    openAnimationStartedRef.current = true;
+    opacity.value = withTiming(1, { duration: 180, easing: OPEN_EASING });
+    scale.value = withTiming(1, { duration: 200, easing: OPEN_EASING });
+    slideY.value = withTiming(0, { duration: 220, easing: OPEN_EASING });
+  }, [opacity, scale, slideY]);
+
+  const finishClose = React.useCallback((transitionId) => {
+    if (transitionId !== transitionIdRef.current) return;
+    closingRef.current = false;
+    renderedRef.current = false;
+    setRendered(false);
+    if (Platform.OS === 'ios') {
+      nativeVisibleRef.current = false;
+      setNativeDismissPending(true);
+      setNativeVisible(false);
+    }
+  }, []);
+
+  const open = React.useCallback(() => {
+    const canRestartInPlace =
+      renderedRef.current && nativeShownRef.current && layoutReadyRef.current;
+    transitionIdRef.current += 1;
+    closingRef.current = false;
+    nativeShownRef.current = false;
+    layoutReadyRef.current = false;
+    openAnimationStartedRef.current = false;
+    opacity.value = 0;
+    scale.value = 0.96;
+    slideY.value = 16;
+    if (!canRestartInPlace) {
+      setCardSize((previous) =>
+        previous.width || previous.height ? { width: 0, height: 0 } : previous,
+      );
+    }
+    renderedRef.current = true;
+    setRendered(true);
     setNativeDismissPending(false);
+    if (Platform.OS === 'ios') {
+      nativeVisibleRef.current = true;
+      setNativeVisible(true);
+    }
+    if (canRestartInPlace) {
+      nativeShownRef.current = true;
+      layoutReadyRef.current = true;
+      runOpenAnimation();
+    }
+  }, [opacity, runOpenAnimation, scale, slideY]);
+
+  const resume = React.useCallback(() => {
+    transitionIdRef.current += 1;
+    closingRef.current = false;
+    nativeShownRef.current = true;
+    layoutReadyRef.current = true;
+    openAnimationStartedRef.current = true;
+    opacity.value = 1;
+    scale.value = 1;
+    slideY.value = 0;
+    renderedRef.current = true;
+    setRendered(true);
+    setNativeDismissPending(false);
+    nativeVisibleRef.current = true;
     setNativeVisible(true);
-  };
+  }, [opacity, scale, slideY]);
+
+  const close = React.useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    const transitionId = transitionIdRef.current + 1;
+    transitionIdRef.current = transitionId;
+    const duration = 160;
+    const easing = Easing.bezier(0.3, 0, 0.8, 0.15);
+    opacity.value = withTiming(0, { duration, easing }, (finished) => {
+      if (finished) runOnJS(finishClose)(transitionId);
+    });
+    scale.value = withTiming(0.97, { duration, easing });
+    slideY.value = withTiming(10, { duration, easing });
+  }, [finishClose, opacity, scale, slideY]);
+
+  presentRef.current = open;
+  resumeRef.current = resume;
   suspendRef.current = () => {
     if (!nativeVisibleRef.current) return;
+    transitionIdRef.current += 1;
+    closingRef.current = false;
     iosSuspendedRef.current = true;
     nativeVisibleRef.current = false;
     setNativeDismissPending(true);
     setNativeVisible(false);
   };
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (Platform.OS !== 'ios') return undefined;
     const id = registerIOSModal({
       present: () => presentRef.current?.(),
+      resume: () => resumeRef.current?.(),
       suspend: () => suspendRef.current?.(),
     });
     iosModalIdRef.current = id;
@@ -91,48 +183,35 @@ export default function QuickPreviewModal({
     };
   }, []);
 
-  const setNotRendered = React.useCallback(() => setRendered(false), []);
-
   // ── "Material Emerge" — fade + slide-up + scale-up ──────────
-  React.useEffect(() => {
-    if (visible) {
-      setRendered(true);
-      opacity.value = withTiming(1, { duration: 180, easing: OPEN_EASING });
-      scale.value = withTiming(1, { duration: 200, easing: OPEN_EASING });
-      slideY.value = withTiming(0, { duration: 220, easing: OPEN_EASING });
+  React.useLayoutEffect(() => {
+    if (Platform.OS === 'ios') {
+      const id = iosModalIdRef.current;
+      if (!id) return;
+      if (visible) requestIOSModalPresentation(id);
+      else {
+        releaseIOSModal(id);
+        if (nativeVisibleRef.current) close();
+      }
       return;
     }
-
-    const dur = 160;
-    const ease = Easing.bezier(0.3, 0, 0.8, 0.15);
-    opacity.value = withTiming(0, { duration: dur, easing: ease }, (finished) => {
-      if (finished) runOnJS(setNotRendered)();
-    });
-    scale.value = withTiming(0.97, { duration: dur, easing: ease });
-    slideY.value = withTiming(10, { duration: dur, easing: ease });
-  }, [opacity, scale, slideY, visible, setNotRendered]);
-
-  React.useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-    const id = iosModalIdRef.current;
-    if (!id) return;
-    if (rendered) {
-      requestIOSModalPresentation(id);
-      return;
-    }
-    releaseIOSModal(id);
-    if (nativeVisibleRef.current) {
-      nativeVisibleRef.current = false;
-      setNativeDismissPending(true);
-      setNativeVisible(false);
-    }
-  }, [rendered]);
+    if (visible) open();
+    else if (rendered) close();
+    // Visibility is the transition trigger; rendered changes are transition results.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   const aBackdrop = useAnimatedStyle(() => ({ opacity: opacity.value }));
   const aCard = useAnimatedStyle(() => ({
     opacity: opacity.value,
     transform: [{ translateY: slideY.value }, { scale: scale.value }],
   }));
+
+  React.useLayoutEffect(() => {
+    if (!rendered || !cardSize.width || !cardSize.height) return;
+    layoutReadyRef.current = true;
+    runOpenAnimation();
+  }, [cardSize.height, cardSize.width, rendered, runOpenAnimation]);
 
   const maxWidth = Math.min(520, screenWidth - horizontalMargin * 2);
   const preferredWidth = Math.min(maxWidth, Math.max(340, Math.round(screenWidth * 0.84)));
@@ -209,9 +288,16 @@ export default function QuickPreviewModal({
     <Modal
       visible={Platform.OS === 'ios' ? nativeVisible : true}
       transparent
+      hardwareAccelerated={Platform.OS === 'android'}
+      statusBarTranslucent={Platform.OS === 'android'}
+      navigationBarTranslucent={Platform.OS === 'android'}
       animationType="none"
       presentationStyle="overFullScreen"
       onRequestClose={onClose}
+      onShow={() => {
+        nativeShownRef.current = true;
+        runOpenAnimation();
+      }}
       onDismiss={() => {
         const wasSuspended = iosSuspendedRef.current;
         iosSuspendedRef.current = false;
@@ -248,6 +334,13 @@ export default function QuickPreviewModal({
           const nextWidth = event?.nativeEvent?.layout?.width || 0;
           const nextHeight = event?.nativeEvent?.layout?.height || 0;
           if (!nextWidth || !nextHeight) return;
+          const sizeUnchanged =
+            Math.abs(cardSize.width - nextWidth) < 1 &&
+            Math.abs(cardSize.height - nextHeight) < 1;
+          if (sizeUnchanged) {
+            layoutReadyRef.current = true;
+            runOpenAnimation();
+          }
           setCardSize((prev) => {
             if (Math.abs(prev.width - nextWidth) < 1 && Math.abs(prev.height - nextHeight) < 1) {
               return prev;

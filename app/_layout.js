@@ -33,7 +33,10 @@ import {
   rememberPublicAuthRoute,
   resetPublicAuthRoute,
 } from '../lib/authFlowNavigationState';
-import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
+import {
+  bootstrapPushForUserWithOptions,
+  syncChangedPushTokenForUser,
+} from '../lib/pushAutoSetup';
 import patchRouter from '../lib/navigation/patchRouter';
 import dismissToRoute from '../lib/navigation/dismissToRoute';
 import {
@@ -156,7 +159,6 @@ function RootLayoutInner() {
   const accessCheckInFlightRef = useRef(false);
   const lastAccessCheckAtRef = useRef(0);
   const pushSyncInFlightRef = useRef(null);
-  const pushSyncDoneForUserRef = useRef(null);
   const lastHandledNotificationKeyRef = useRef('');
   const notificationIdsByOrderRef = useRef(new Map());
   const previousAuthStateRef = useRef(isAuthenticated);
@@ -557,7 +559,6 @@ function RootLayoutInner() {
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return undefined;
-    if (pushSyncDoneForUserRef.current === user.id) return undefined;
 
     let active = true;
     const runBootstrap = async (requestPermission) => {
@@ -565,9 +566,7 @@ function RootLayoutInner() {
       pushSyncInFlightRef.current = user.id;
       try {
         const result = await bootstrapPushForUserWithOptions(user.id, { requestPermission });
-        if (active && requestPermission && result?.ok) {
-          pushSyncDoneForUserRef.current = user.id;
-        }
+        return result;
       } catch {} finally {
         if (pushSyncInFlightRef.current === user.id) {
           pushSyncInFlightRef.current = null;
@@ -594,6 +593,10 @@ function RootLayoutInner() {
         runBootstrap(false).catch(() => {});
       }
     });
+    const pushTokenSub = Notifications.addPushTokenListener((devicePushToken) => {
+      if (!active || authSnapshotRef.current.userId !== String(user.id)) return;
+      syncChangedPushTokenForUser(user.id, devicePushToken).catch(() => {});
+    });
 
     return () => {
       active = false;
@@ -602,6 +605,7 @@ function RootLayoutInner() {
         bootstrapTask?.cancel?.();
       } catch {}
       appStateSub?.remove?.();
+      pushTokenSub?.remove?.();
     };
   }, [isAuthenticated, isInitializing, user?.id]);
 

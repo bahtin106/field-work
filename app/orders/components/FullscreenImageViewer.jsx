@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image as RNImage,
@@ -162,6 +162,8 @@ const GalleryPhoto = memo(function GalleryPhoto({
   loadingLabel,
   onFallbackActivated,
   onLoadStateChange,
+  onRefreshUri,
+  onDisplayedUri,
 }) {
   const [activeUri, setActiveUri] = useState(uri);
   const [retryAttempt, setRetryAttempt] = useState(0);
@@ -169,6 +171,8 @@ const GalleryPhoto = memo(function GalleryPhoto({
   const retryTimerRef = useRef(null);
   const loadTimeoutRef = useRef(null);
   const retryScheduledRef = useRef(false);
+  const refreshAttemptedRef = useRef(false);
+  const refreshRequestRef = useRef(0);
   const { resolution } = useImageResolution({ uri: activeUri });
 
   const clearLoadTimeout = useCallback(() => {
@@ -199,8 +203,55 @@ const GalleryPhoto = memo(function GalleryPhoto({
       }, 450 * nextAttempt);
       return;
     }
+    if (onRefreshUri && !refreshAttemptedRef.current) {
+      refreshAttemptedRef.current = true;
+      retryScheduledRef.current = true;
+      const requestId = refreshRequestRef.current + 1;
+      refreshRequestRef.current = requestId;
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        if (refreshRequestRef.current !== requestId) return;
+        retryScheduledRef.current = false;
+        setLoadState('error');
+      }, IMAGE_LOAD_TIMEOUT_MS);
+      void Promise.resolve(onRefreshUri(activeUri))
+        .then((value) => {
+          if (refreshRequestRef.current !== requestId) return;
+          if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+          }
+          retryScheduledRef.current = false;
+          const refreshedUri = String(value || '').trim();
+          if (!refreshedUri) {
+            setLoadState('error');
+            return;
+          }
+          setActiveUri(refreshedUri);
+          setRetryAttempt(0);
+          setLoadState('loading');
+        })
+        .catch(() => {
+          if (refreshRequestRef.current !== requestId) return;
+          if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+          }
+          retryScheduledRef.current = false;
+          setLoadState('error');
+        });
+      return;
+    }
     setLoadState('error');
-  }, [activeUri, clearLoadTimeout, fallbackUri, loadState, onFallbackActivated, retryAttempt]);
+  }, [
+    activeUri,
+    clearLoadTimeout,
+    fallbackUri,
+    loadState,
+    onFallbackActivated,
+    onRefreshUri,
+    retryAttempt,
+  ]);
 
   const handleDisplayed = useCallback(() => {
     retryScheduledRef.current = false;
@@ -210,7 +261,8 @@ const GalleryPhoto = memo(function GalleryPhoto({
       retryTimerRef.current = null;
     }
     setLoadState('ready');
-  }, [clearLoadTimeout]);
+    onDisplayedUri?.(activeUri);
+  }, [activeUri, clearLoadTimeout, onDisplayedUri]);
 
   const restartLoadTimeout = useCallback(() => {
     clearLoadTimeout();
@@ -224,6 +276,8 @@ const GalleryPhoto = memo(function GalleryPhoto({
       retryTimerRef.current = null;
     }
     retryScheduledRef.current = false;
+    refreshAttemptedRef.current = false;
+    refreshRequestRef.current += 1;
     setActiveUri(uri);
     setRetryAttempt(0);
     setLoadState('loading');
@@ -240,6 +294,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
 
   useEffect(
     () => () => {
+      refreshRequestRef.current += 1;
       clearLoadTimeout();
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     },
@@ -409,6 +464,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const nativeDismissPendingRef = useRef(false);
   const onNativeDismissRef = useRef(onNativeDismiss);
   const presentRef = useRef(null);
+  const resumeRef = useRef(null);
   const suspendRef = useRef(null);
   onNativeDismissRef.current = onNativeDismiss;
 
@@ -443,8 +499,17 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const [manualRetryNonce, setManualRetryNonce] = useState(0);
   const [nativeVisible, setNativeVisible] = useState(false);
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
+  const [resumeWithoutNativeAnimation, setResumeWithoutNativeAnimation] = useState(false);
 
   presentRef.current = () => {
+    setResumeWithoutNativeAnimation(false);
+    nativeVisibleRef.current = true;
+    nativeDismissPendingRef.current = false;
+    setNativeDismissPending(false);
+    setNativeVisible(true);
+  };
+  resumeRef.current = () => {
+    setResumeWithoutNativeAnimation(true);
     nativeVisibleRef.current = true;
     nativeDismissPendingRef.current = false;
     setNativeDismissPending(false);
@@ -462,12 +527,16 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const overlayBg = useMemo(() => withAlpha(VIEWER_BG, VIEWER_OVERLAY_ALPHA), []);
   const currentUri = localImages[currentIndex] || '';
   const galleryKey = `${imageSignature}:${viewerIndex}:${manualRetryNonce}`;
+  const topInset =
+    Platform.OS === 'android'
+      ? Math.max(insets.top || 0, StatusBar.currentHeight || 0)
+      : insets.top || 0;
 
   const ds = useMemo(() => {
     const { spacing, radii, typography, colors } = theme;
     return StyleSheet.create({
       header: {
-        paddingTop: (insets.top || 0) + spacing.md,
+        paddingTop: topInset + spacing.md,
         paddingHorizontal: spacing.lg,
         paddingBottom: spacing.sm,
         flexDirection: 'row',
@@ -582,12 +651,13 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         paddingVertical: spacing.lg,
       },
     });
-  }, [insets.bottom, insets.top, theme]);
+  }, [insets.bottom, theme, topInset]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (Platform.OS !== 'ios' || embedded) return undefined;
     const id = registerIOSModal({
       present: () => presentRef.current?.(),
+      resume: () => resumeRef.current?.(),
       suspend: () => suspendRef.current?.(),
     });
     iosModalIdRef.current = id;
@@ -597,7 +667,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     };
   }, [embedded]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (Platform.OS !== 'ios' || embedded) return;
     const id = iosModalIdRef.current;
     if (!id) return;
@@ -1010,6 +1080,27 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     setLocalFallbackImages((prev) => prev.map((value, imageIndex) => (imageIndex === index ? '' : value)));
   }, []);
 
+  const handleDisplayedUri = useCallback((index, displayedUri) => {
+    const nextUri = String(displayedUri || '').trim();
+    if (!nextUri) return;
+    setLocalImages((previous) => {
+      if (previous[index] === nextUri) return previous;
+      return previous.map((uri, imageIndex) => (imageIndex === index ? nextUri : uri));
+    });
+    setLocalFallbackImages((previous) => {
+      if (!previous[index]) return previous;
+      return previous.map((uri, imageIndex) => (imageIndex === index ? '' : uri));
+    });
+  }, []);
+
+  const refreshImageUri = useCallback(
+    (index, failedUri) => {
+      if (!onRetryImage) return '';
+      return onRetryImage(index, failedUri);
+    },
+    [onRetryImage],
+  );
+
   const handleImageLoadStateChange = useCallback((uri, state) => {
     const key = String(uri || '').trim();
     if (!key) return;
@@ -1059,9 +1150,21 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         loadingLabel={t('viewer_image_loading')}
         onFallbackActivated={(nextUri) => handleFallbackActivated(index, nextUri)}
         onLoadStateChange={handleImageLoadStateChange}
+        onRefreshUri={onRetryImage ? (failedUri) => refreshImageUri(index, failedUri) : undefined}
+        onDisplayedUri={(displayedUri) => handleDisplayedUri(index, displayedUri)}
       />
     ),
-    [handleFallbackActivated, handleImageLoadStateChange, localFallbackImages, t, viewportHeight, viewportWidth],
+    [
+      handleDisplayedUri,
+      handleFallbackActivated,
+      handleImageLoadStateChange,
+      localFallbackImages,
+      onRetryImage,
+      refreshImageUri,
+      t,
+      viewportHeight,
+      viewportWidth,
+    ],
   );
 
   const galleryKeyExtractor = useCallback((uri, index) => `${index}:${uri}`, []);
@@ -1075,7 +1178,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     : {
         visible: Platform.OS === 'ios' ? nativeVisible : visible,
         transparent: false,
-        animationType: 'fade',
+        animationType: resumeWithoutNativeAnimation ? 'none' : 'fade',
         presentationStyle: 'fullScreen',
         hardwareAccelerated: true,
         onRequestClose: requestClose,

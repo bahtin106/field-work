@@ -261,7 +261,6 @@ export async function handlePushTokenSyncRequest(req: Request) {
             invalid_reason: 'ReassignedToAnotherAccount',
           })
           .eq('device_id', deviceId)
-          .neq('token', pushToken)
           .eq('is_valid', true);
         if (invalidateOldErr) {
           console.error('[push-token-sync][invalidate-old-device-tokens]', normalizeError(invalidateOldErr));

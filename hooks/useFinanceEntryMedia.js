@@ -7,6 +7,7 @@ import {
   listMediaAssets,
 } from '../src/shared/media/assets';
 import { prefetchMediaUrls } from '../src/shared/media/imagePipeline';
+import { isSignedMediaUrlStale } from '../src/shared/media/signedUrl';
 
 function isLikelyYandexLink(url) {
   const raw = String(url || '').toLowerCase();
@@ -45,7 +46,11 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
   const getDisplayUrl = useCallback(
     (sourceUrl) => {
       if (!sourceUrl) return '';
-      return resolvedUrls[sourceUrl] || thumbUrls[sourceUrl] || sourceUrl;
+      const resolved = String(resolvedUrls[sourceUrl] || '').trim();
+      if (resolved && !isSignedMediaUrlStale(resolved)) return resolved;
+      const thumbnail = String(thumbUrls[sourceUrl] || '').trim();
+      if (thumbnail && !isSignedMediaUrlStale(thumbnail)) return thumbnail;
+      return isLikelyYandexLink(sourceUrl) ? '' : sourceUrl;
     },
     [resolvedUrls, thumbUrls],
   );
@@ -53,7 +58,10 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
   const getThumbnailUrl = useCallback(
     (sourceUrl) => {
       if (!sourceUrl) return '';
-      return thumbUrls[sourceUrl] || getDisplayUrl(sourceUrl);
+      const thumbnail = String(thumbUrls[sourceUrl] || '').trim();
+      return thumbnail && !isSignedMediaUrlStale(thumbnail)
+        ? thumbnail
+        : getDisplayUrl(sourceUrl);
     },
     [getDisplayUrl, thumbUrls],
   );
@@ -227,12 +235,22 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
     setResolvedUrls((prev) => ({ ...prev, [source]: nextDisplay }));
   }, []);
 
+  const refreshDisplayUrl = useCallback(async (sourceUrl) => {
+    const source = String(sourceUrl || '').trim();
+    if (!source) return '';
+    const data = await inspectUrls([source]);
+    const refreshed = String(data?.resolved_urls?.[source] || '').trim();
+    if (refreshed && !isSignedMediaUrlStale(refreshed)) return refreshed;
+    return isLikelyYandexLink(source) ? '' : source;
+  }, [inspectUrls]);
+
   return {
     getDisplayUrl,
     getThumbnailUrl,
     getMediaInfo,
     getIssue,
     inspectUrls,
+    refreshDisplayUrl,
     removeFromCache,
     setDisplayUrl,
     isLikelyYandexLink,

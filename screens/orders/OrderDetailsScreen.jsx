@@ -1079,7 +1079,6 @@ function OrderDetailsContent() {
   const [financeEntryDiscardConfirmVisible, setFinanceEntryDiscardConfirmVisible] = useState(false);
   const [financeEntryViewModalVisible, setFinanceEntryViewModalVisible] = useState(false);
   const [financeEntryViewMediaEnabled, setFinanceEntryViewMediaEnabled] = useState(false);
-  const [pendingFinanceEntryEdit, setPendingFinanceEntryEdit] = useState(null);
   const [financeEntryDeleteConfirmVisible, setFinanceEntryDeleteConfirmVisible] = useState(false);
   const [financeEntryPhotosModalVisible, setFinanceEntryPhotosModalVisible] = useState(false);
   const [financeEntryLocalPending, setFinanceEntryLocalPending] = useState([]);
@@ -3103,15 +3102,8 @@ function OrderDetailsContent() {
 
   const startEditFinanceEntryFromView = useCallback(() => {
     if (!selectedFinanceEntry) return;
-    setPendingFinanceEntryEdit(selectedFinanceEntry);
-    closeFinanceEntryView();
-  }, [closeFinanceEntryView, selectedFinanceEntry]);
-
-  const handleFinanceEntryViewDismiss = useCallback(() => {
-    if (!pendingFinanceEntryEdit) return;
-    setPendingFinanceEntryEdit(null);
-    openEditFinanceEntry(pendingFinanceEntryEdit);
-  }, [openEditFinanceEntry, pendingFinanceEntryEdit]);
+    openEditFinanceEntry(selectedFinanceEntry);
+  }, [openEditFinanceEntry, selectedFinanceEntry]);
 
   const handleFinanceKindSelect = useCallback((item) => {
     setPendingFinanceEntryKind(item?.id || 'company_cost');
@@ -3424,6 +3416,12 @@ function OrderDetailsContent() {
   const closeFinanceEntryViewer = useCallback(() => {
     setFinanceViewerVisible(false);
   }, []);
+
+  const handleFinanceViewerImageRetry = useCallback((viewerIdx) => {
+    const rawUrl = String(financeViewerRawPhotosRef.current?.[viewerIdx] || '').trim();
+    if (!rawUrl) return '';
+    return financeEntryMedia.refreshDisplayUrl(rawUrl);
+  }, [financeEntryMedia]);
 
   useEffect(() => {
     if (!financeViewerVisible) return;
@@ -3806,7 +3804,8 @@ function OrderDetailsContent() {
         }
       }
 
-      await Promise.all([
+      const returnToEntryView = financeEntryViewModalVisible && Boolean(financeEntryDraft.id);
+      const [entriesRefetchResult] = await Promise.all([
         financeEntriesQuery.refetch(),
         financeSnapshotQuery.refetch(),
       ]);
@@ -3820,7 +3819,15 @@ function OrderDetailsContent() {
       setFinanceEntryModalVisible(false);
       setFinanceEntrySubmitAttempt(false);
       setFinanceEntryFieldErrors({});
-      setSelectedFinanceEntry(null);
+      if (returnToEntryView) {
+        const refreshedEntry = (Array.isArray(entriesRefetchResult?.data)
+          ? entriesRefetchResult.data
+          : []
+        ).find((entry) => String(entry?.id || '') === String(savedEntryId));
+        setSelectedFinanceEntry((current) => refreshedEntry || current);
+      } else {
+        setSelectedFinanceEntry(null);
+      }
       if (mediaErrors.length > 0) {
         showWarning(
           t(
@@ -3843,6 +3850,7 @@ function OrderDetailsContent() {
     deleteFinanceEntryPhotoByUrl,
     financeEntriesQuery,
     financeEntryDraft,
+    financeEntryViewModalVisible,
     financeEntryMedia,
     financeSnapshotQuery,
     id,
@@ -5894,7 +5902,11 @@ function OrderDetailsContent() {
     0,
   );
   const customerFinanceTotal =
-    Number(financeSnapshot?.customer_total ?? grossTotal + financeIncomeTotal - financeDiscountTotal) || 0;
+    Number(
+      financeSnapshot?.customer_total ??
+        order.finance_gross_total ??
+        grossTotal + financeIncomeTotal - financeDiscountTotal,
+    ) || 0;
   const workerBaseCompensationTotal =
     Number(financeSnapshot?.worker_base_compensation_total ?? 0) || 0;
   const workerCompensationTotal =
@@ -6120,6 +6132,7 @@ function OrderDetailsContent() {
                   ? undefined
                   : handleFinanceViewerRotateSave
               }
+              onRetryImage={handleFinanceViewerImageRetry}
               categoryLabel={financeViewerCategoryLabel}
             />
           </Suspense>
@@ -7365,7 +7378,6 @@ function OrderDetailsContent() {
         onRequestClose={closeFinanceEntryView}
         onClose={closeFinanceEntryView}
         onShow={scheduleFinanceEntryMediaWarmup}
-        onDismiss={handleFinanceEntryViewDismiss}
         title={
           selectedFinanceEntry
             ? financeEntryDisplayTitle(selectedFinanceEntry)
