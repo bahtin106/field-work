@@ -15,11 +15,11 @@ import {
   useUpsertOrderCustomerPaymentMutation,
 } from '../../src/features/payments/queries';
 import { getOrderPaymentSummary } from '../../src/features/payments/model';
+import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
-import InfoHintButton from '../ui/InfoHintButton';
 import LabelValueRow from '../ui/LabelValueRow';
 import TextField from '../ui/TextField';
 import { useToast } from '../ui/ToastProvider';
@@ -459,7 +459,7 @@ export default function OrderPaymentsModal({
               <TextField
                 label={t('order_payments_money_holder')}
                 labelAccessory={
-                  <InfoHintButton
+                  <HelpInfoButton
                     size={24}
                     onPress={() => setMoneyHolderHelpVisible(true)}
                     accessibilityLabel={t('order_payments_money_holder_help_title')}

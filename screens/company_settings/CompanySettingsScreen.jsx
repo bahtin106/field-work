@@ -16,11 +16,12 @@ import Screen from '../../components/layout/Screen';
 import UIButton from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import Checkbox from '../../components/ui/Checkbox';
+import LabelValueRow from '../../components/ui/LabelValueRow';
 import SectionHeader from '../../components/ui/SectionHeader';
 import ThemedSwitch from '../../components/ui/ThemedSwitch';
 import { BaseModal, ConfirmModal, SelectModal } from '../../components/ui/modals';
 import ModalActionsRow from '../../components/ui/modals/ModalActionsRow';
-import TextField, { SelectField } from '../../components/ui/TextField';
+import TextField, { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings';
 import { EXCHANGE_RATE_ENDPOINTS } from '../../config/externalUrls';
@@ -30,9 +31,14 @@ import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 
 import Feather from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
+import {
+  broadcastCompanySettingsChanged,
+  COMPANY_SETTINGS_QUERY_KEY,
+  fetchCompanySettingsByCompanyId,
+} from '../../lib/companySettingsQuery';
 import { normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
 import { FUNCTIONS } from '../../lib/constants';
+import { getAppVersion } from '../../lib/appVersion';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
 import { saveUserLocale } from '../../lib/userLocale';
@@ -257,6 +263,7 @@ export default function CompanySettings() {
   const pathname = usePathname();
   const { user, profile, isInitializing, mergeAuthUserMetadata } = useAuthContext();
   const { t } = useTranslation();
+  const appVersion = getAppVersion();
   const queryClient = useQueryClient();
   const companyId = profile?.company_id || null;
   const companyQueryKey = React.useMemo(
@@ -403,6 +410,7 @@ export default function CompanySettings() {
     React.useState(false);
   const [partialPaymentsDraftEnabled, setPartialPaymentsDraftEnabled] = React.useState(false);
   const [partialPaymentsSaving, setPartialPaymentsSaving] = React.useState(false);
+  const [orderHistorySaving, setOrderHistorySaving] = React.useState(false);
   const [currencyRate, setCurrencyRate] = React.useState('');
   const [fetchRateError, setFetchRateError] = React.useState(null);
   const [_currencyModalKey, _setCurrencyModalKey] = React.useState(0);
@@ -529,6 +537,42 @@ export default function CompanySettings() {
     Number(paymentMethodSettingsDraft.cash === true) +
     Number(paymentMethodSettingsDraft.cashless === true);
   const partialPaymentsEnabled = companyData?.use_partial_payments === true;
+  const orderHistoryEnabled = companyData?.order_history_enabled === true;
+
+  const toggleOrderHistory = React.useCallback(async (nextValue) => {
+    if (orderHistorySaving || !companyId) return;
+    const enabled = nextValue === true;
+    setOrderHistorySaving(true);
+    try {
+      const { error } = await supabase.rpc('set_company_order_history_enabled_v1', {
+        p_enabled: enabled,
+      });
+      if (error) throw error;
+
+      queryClient.setQueryData(companyQueryKey, (previous) => ({
+        ...(previous && typeof previous === 'object' ? previous : {}),
+        order_history_enabled: enabled,
+      }));
+      await Promise.all([
+        refreshCompany(),
+        queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ['requests', 'activity'] }),
+      ]);
+      void broadcastCompanySettingsChanged(companyId, ['order_history_enabled']);
+      toast.success(t(enabled
+        ? 'settings_order_history_enabled_toast'
+        : 'settings_order_history_disabled_toast'));
+    } catch (error) {
+      const message = String(error?.message || '').trim();
+      toast.error(
+        /admin permission required|permission denied|forbidden/i.test(message)
+          ? t('settings_order_history_permission_error')
+          : t('settings_order_history_save_error'),
+      );
+    } finally {
+      setOrderHistorySaving(false);
+    }
+  }, [companyId, companyQueryKey, orderHistorySaving, queryClient, refreshCompany, t, toast]);
 
   const openPaymentMethodsModal = React.useCallback(() => {
     if (paymentMethodSettingsSaving) return;
@@ -1492,6 +1536,18 @@ export default function CompanySettings() {
           </View>
         ) : null}
 
+        {isSoloWorkMode ? (
+          <View style={s.sectionWrap}>
+            <SectionHeader>{t('settings_sections_about_title')}</SectionHeader>
+            <Card paddedXOnly separated>
+              <LabelValueRow
+                label={t('settings_sections_about_items_version')}
+                value={appVersion || t('common_dash')}
+              />
+            </Card>
+          </View>
+        ) : null}
+
         <View style={s.sectionWrap}>
           <SectionHeader>{t('settings_sections_reference_title')}</SectionHeader>
           <Card paddedXOnly separated>
@@ -1535,6 +1591,15 @@ export default function CompanySettings() {
         <View style={s.sectionWrap}>
           <SectionHeader>{sectionTitles.MANAGEMENT}</SectionHeader>
           <Card paddedXOnly separated>
+            {isSoloWorkMode ? (
+              <SwitchField
+                label={t('settings_order_history_title')}
+                labelAccessory={<HelpInfoButton topicId="order_history" size={22} />}
+                value={orderHistoryEnabled}
+                disabled={orderHistorySaving || _isLoadingCompany}
+                onValueChange={(value) => void toggleOrderHistory(value)}
+              />
+            ) : null}
             {SETTINGS_SECTIONS.MANAGEMENT.items
               .filter((it) =>
                 !['work_types', 'departments'].includes(it.key) &&

@@ -64,12 +64,12 @@ import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import ClearButton from '../../components/ui/ClearButton';
 import SectionHeader from '../../components/ui/SectionHeader';
-import InfoHintButton from '../../components/ui/InfoHintButton';
 import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import MediaUploadRow from '../../components/media/MediaUploadRow';
 import MediaUploadModal from '../../components/media/MediaUploadModal';
 import OrderPaymentsModal from '../../components/payments/OrderPaymentsModal';
+import OrderActivityModal from '../../components/orders/OrderActivityModal';
 import { OrderStatusCapsuleView } from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import AnimatedChevron from '../../components/ui/AnimatedChevron';
@@ -144,6 +144,7 @@ import {
 } from '../../src/features/payments/queries';
 import { isValidOptionalMobilePhone, toE164MobilePhoneOrNull } from '../../src/shared/validation/phone';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -676,6 +677,7 @@ function OrderDetailsContent() {
   const isSoloFinanceMode =
     companySettings?.work_mode === 'solo' ||
     (companySettings?.work_mode !== 'company' && isSoloAdmin);
+  const orderHistoryEnabled = !isSoloFinanceMode || companySettings?.order_history_enabled === true;
   const mediaProvider = companySettings?.media_provider === 'yandex_disk' ? 'yandex_disk' : 'beget_s3';
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -894,9 +896,17 @@ function OrderDetailsContent() {
     role || authRole,
   );
   const canViewFinanceAll = has('canViewFinanceAll');
+  const canViewFinanceOwn = has('canViewFinanceOwn');
+  const canViewFinanceForOrder = canViewFinanceAll || (
+    canViewFinanceOwn &&
+    !!order?.assigned_to &&
+    String(order.assigned_to) === String(authUserId || '')
+  );
+  const canViewOrderAmount = has('canViewOrderAmount');
+  const canEditOrderAmount = !isTrashMode && has('canEditOrderAmount');
   const isOrderFinanceEnabled = isOrderFinanceEnabledFromMap(orderFieldsByKey);
   const isOrderFinanceEntriesEnabled = isOrderFinanceEntriesEnabledFromMap(orderFieldsByKey);
-  const canViewFinanceSection = canViewFinanceAll && isOrderFinanceEnabled && showFeedFinanceField;
+  const canViewFinanceSection = canViewFinanceForOrder && isOrderFinanceEnabled && showFeedFinanceField;
   const canManageFinanceEntries = !isTrashMode && has('canEditFinanceEntries');
   const canAddFinanceEntries =
     !isTrashMode && has('canEditFinanceEntries') && isOrderFinanceEntriesEnabled && showFeedFinanceField;
@@ -1056,6 +1066,10 @@ function OrderDetailsContent() {
   const [warningMessage, setWarningMessage] = useState('');
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [activityModalVisible, setActivityModalVisible] = useState(false);
+  useEffect(() => {
+    if (!orderHistoryEnabled && activityModalVisible) setActivityModalVisible(false);
+  }, [activityModalVisible, orderHistoryEnabled]);
   const [statusSaving, setStatusSaving] = useState(false);
   const [pendingStatusSelection, setPendingStatusSelection] = useState(null);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -1608,7 +1622,7 @@ function OrderDetailsContent() {
         case 'assigned_to':
           return effectiveEditToFeed ? null : effectiveEditAssigneeId;
         case 'start_price':
-          return canEditFinances ? amount : amount || '';
+          return canEditOrderAmount ? amount : amount || '';
         default:
           return null;
       }
@@ -1626,7 +1640,7 @@ function OrderDetailsContent() {
       effectiveEditAssigneeId,
       effectiveEditToFeed,
       amount,
-      canEditFinances,
+      canEditOrderAmount,
     ],
   );
 
@@ -4530,7 +4544,7 @@ function OrderDetailsContent() {
           : null,
       status: nextStatus,
       urgent,
-      ...(canEditFinances ? { start_price: parseMoney(amount) } : {}),
+      ...(canEditOrderAmount ? { start_price: parseMoney(amount) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
 
@@ -4624,7 +4638,7 @@ function OrderDetailsContent() {
     effectiveEditToFeed,
     order,
     urgent,
-    canEditFinances,
+    canEditOrderAmount,
     amount,
     parseMoney,
     useWorkTypes,
@@ -5963,48 +5977,80 @@ function OrderDetailsContent() {
   const showDistributionFinanceSection = canViewFinanceSection === true && !isSoloFinanceMode;
   const showInitialCostLine =
     canViewFinanceSection &&
+    canViewOrderAmount &&
+    isOrderFieldVisible('start_price');
+  const showStandaloneOrderAmount =
+    canViewOrderAmount &&
+    !canViewFinanceSection &&
+    isOrderFinanceEnabled &&
     isOrderFieldVisible('start_price');
   const showExecutorRow = !isInFeedStatus && !isSoloAdmin && isOrderFieldVisible('assigned_to');
   const financeSchemeRule = financeSchemeRuleQuery.data;
-  const financeSchemeRuleDescription = (() => {
-    if (!financeSnapshot?.scheme_version_id || !financeSchemeRule) return '';
+  const financeSchemeExplanation = (() => {
+    const emptyExplanation = {
+      ruleDescription: '',
+      calculationBase: '',
+      formula: '',
+      limitAdjustment: '',
+    };
+    if (!financeSnapshot?.scheme_version_id || !financeSchemeRule) return emptyExplanation;
 
     const template = (key, values) =>
       Object.entries(values).reduce(
         (message, [name, value]) => message.replace(`{${name}}`, String(value)),
         t(key),
       );
+    const compensationMode = String(financeSchemeRule?.compensation_mode || 'manual');
     const percent = Number(financeSchemeRule?.percent_value ?? 0);
     const percentText = `${new Intl.NumberFormat(undefined, {
       maximumFractionDigits: 2,
     }).format(Number.isFinite(percent) ? percent : 0)}%`;
+    const percentBaseId = String(financeSchemeRule?.percent_base || 'customer_total');
     const percentBaseKey = {
       customer_total: 'finance_snapshot_scheme_rule_base_customer_total',
       base_price: 'finance_snapshot_scheme_rule_base_initial_amount',
       income_total: 'finance_snapshot_scheme_rule_base_additional_work',
-    }[String(financeSchemeRule?.percent_base || 'customer_total')];
+    }[percentBaseId];
     const percentBase = t(percentBaseKey || 'finance_snapshot_scheme_rule_base_customer_total');
-    const fixedAmount = formatMoney(financeSchemeRule?.fixed_amount, currency);
+    const fixedAmountNumber = Number(financeSchemeRule?.fixed_amount ?? 0) || 0;
+    const fixedAmount = formatMoney(fixedAmountNumber, currency);
+    const customerTotal = Number(financeSnapshot?.customer_total ?? 0) || 0;
+    const percentBaseAmount = Number({
+      customer_total: financeSnapshot?.customer_total,
+      base_price: financeSnapshot?.customer_base_total,
+      income_total: financeSnapshot?.customer_charge_total,
+    }[percentBaseId] ?? 0) || 0;
+    const usesPercentBase = [
+      'worker_percent',
+      'company_percent',
+      'worker_fixed_plus_percent',
+    ].includes(compensationMode);
     let ruleText;
+    let amountBeforeLimits = null;
+    let formula = '';
 
-    switch (String(financeSchemeRule?.compensation_mode || 'manual')) {
+    switch (compensationMode) {
       case 'worker_percent':
         ruleText = template('finance_snapshot_scheme_rule_worker_percent', {
           percent: percentText,
           base: percentBase,
         });
+        amountBeforeLimits = percentBaseAmount * percent / 100;
         break;
       case 'company_percent':
         ruleText = template('finance_snapshot_scheme_rule_company_percent', {
           percent: percentText,
           base: percentBase,
         });
+        amountBeforeLimits = customerTotal - (percentBaseAmount * percent / 100);
         break;
       case 'worker_fixed':
         ruleText = template('finance_snapshot_scheme_rule_worker_fixed', { amount: fixedAmount });
+        amountBeforeLimits = fixedAmountNumber;
         break;
       case 'company_fixed':
         ruleText = template('finance_snapshot_scheme_rule_company_fixed', { amount: fixedAmount });
+        amountBeforeLimits = customerTotal - fixedAmountNumber;
         break;
       case 'worker_fixed_plus_percent':
         ruleText = template('finance_snapshot_scheme_rule_worker_fixed_plus_percent', {
@@ -6012,33 +6058,103 @@ function OrderDetailsContent() {
           percent: percentText,
           base: percentBase,
         });
+        amountBeforeLimits = fixedAmountNumber + (percentBaseAmount * percent / 100);
         break;
       default:
         ruleText = t('finance_snapshot_scheme_rule_manual');
+    }
+
+    const normalizedAmountBeforeLimits = Number.isFinite(amountBeforeLimits)
+      ? Math.max(Math.round(amountBeforeLimits * 100) / 100, 0)
+      : null;
+    const formulaResult = normalizedAmountBeforeLimits === null
+      ? ''
+      : formatMoney(normalizedAmountBeforeLimits, currency);
+    const formattedBaseAmount = formatMoney(percentBaseAmount, currency);
+    const formattedCustomerTotal = formatMoney(customerTotal, currency);
+
+    switch (compensationMode) {
+      case 'worker_percent':
+        formula = template('finance_snapshot_scheme_formula_worker_percent', {
+          base: formattedBaseAmount,
+          percent: percentText,
+          result: formulaResult,
+        });
+        break;
+      case 'company_percent':
+        formula = template('finance_snapshot_scheme_formula_company_percent', {
+          total: formattedCustomerTotal,
+          base: formattedBaseAmount,
+          percent: percentText,
+          result: formulaResult,
+        });
+        break;
+      case 'worker_fixed':
+        formula = template('finance_snapshot_scheme_formula_worker_fixed', {
+          amount: fixedAmount,
+          result: formulaResult,
+        });
+        break;
+      case 'company_fixed':
+        formula = template('finance_snapshot_scheme_formula_company_fixed', {
+          total: formattedCustomerTotal,
+          amount: fixedAmount,
+          result: formulaResult,
+        });
+        break;
+      case 'worker_fixed_plus_percent':
+        formula = template('finance_snapshot_scheme_formula_worker_fixed_plus_percent', {
+          amount: fixedAmount,
+          base: formattedBaseAmount,
+          percent: percentText,
+          result: formulaResult,
+        });
+        break;
+      default:
+        formula = '';
     }
 
     const minimum = financeSchemeRule?.minimum_worker_amount;
     const maximum = financeSchemeRule?.maximum_worker_amount;
     const hasMinimum = minimum !== null && minimum !== undefined;
     const hasMaximum = maximum !== null && maximum !== undefined;
+    let ruleDescription = ruleText;
     if (hasMinimum && hasMaximum) {
-      return `${ruleText} ${template('finance_snapshot_scheme_rule_limit_range', {
+      ruleDescription = `${ruleText} ${template('finance_snapshot_scheme_rule_limit_range', {
         min: formatMoney(minimum, currency),
         max: formatMoney(maximum, currency),
       })}`;
-    }
-    if (hasMinimum) {
-      return `${ruleText} ${template('finance_snapshot_scheme_rule_limit_min', {
+    } else if (hasMinimum) {
+      ruleDescription = `${ruleText} ${template('finance_snapshot_scheme_rule_limit_min', {
         amount: formatMoney(minimum, currency),
       })}`;
-    }
-    if (hasMaximum) {
-      return `${ruleText} ${template('finance_snapshot_scheme_rule_limit_max', {
+    } else if (hasMaximum) {
+      ruleDescription = `${ruleText} ${template('finance_snapshot_scheme_rule_limit_max', {
         amount: formatMoney(maximum, currency),
       })}`;
     }
-    return ruleText;
+
+    const limitAdjustment = normalizedAmountBeforeLimits !== null &&
+      Math.abs(normalizedAmountBeforeLimits - workerBaseCompensationTotal) >= 0.005
+      ? template('finance_snapshot_scheme_limit_applied_value', {
+          before: formatMoney(normalizedAmountBeforeLimits, currency),
+          after: formatMoney(workerBaseCompensationTotal, currency),
+        })
+      : '';
+
+    return {
+      ruleDescription,
+      calculationBase: usesPercentBase
+        ? template('finance_snapshot_scheme_calculation_base_value', {
+            amount: formattedBaseAmount,
+            base: percentBase,
+          })
+        : '',
+      formula,
+      limitAdjustment,
+    };
   })();
+  const financeSchemeRuleDescription = financeSchemeExplanation.ruleDescription;
   const showDepartureDateRow =
     isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time');
   const departureCalendarDate = parseOrderDateOnly(order?.time_window_start);
@@ -6215,6 +6331,21 @@ function OrderDetailsContent() {
               {t('order_details_general_data')}
             </SectionHeader>
             <Card paddedXOnly separated>
+              {!isTrashMode && order?.id && orderHistoryEnabled && has('canViewOrderHistory') ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t('order_activity_title')}
+                  accessibilityHint={t('order_activity_row_accessibility_hint')}
+                  accessibilityState={{ expanded: activityModalVisible }}
+                  onPress={() => setActivityModalVisible(true)}
+                  style={({ pressed }) => [base.row, pressed ? { opacity: 0.7 } : null]}
+                >
+                  <Text style={[base.label, { flex: 1, minWidth: 0 }]}>{t('order_activity_title')}</Text>
+                  <View style={base.rightWrap}>
+                    <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />
+                  </View>
+                </Pressable>
+              ) : null}
               {showOrderStatusRow ? <>
                 <View style={base.row}>
                   <Text style={base.label}>{t('order_details_status')}</Text>
@@ -6481,6 +6612,36 @@ function OrderDetailsContent() {
               </>
             ) : null}
 
+            {showStandaloneOrderAmount ? (
+              <>
+                <SectionHeader>{t('order_details_finance_data')}</SectionHeader>
+                <Card paddedXOnly>
+                  <Pressable
+                    style={({ pressed }) => [canEditOrderAmount && pressed && { opacity: 0.7 }]}
+                    disabled={!canEditOrderAmount}
+                    onPress={() => {
+                      if (!canEditOrderAmount) return;
+                      setAmountDraft(String(order?.start_price ?? ''));
+                      setAmountEditModalVisible(true);
+                    }}
+                  >
+                    <LabelValueRow
+                      label={t('order_finance_initial_cost')}
+                      value={formatMoney(order.start_price, currency)}
+                      hideWhenEmpty={false}
+                      rightActions={canEditOrderAmount ? (
+                        <Feather
+                          name="chevron-right"
+                          size={theme.icons?.sm ?? 18}
+                          color={theme.colors.textSecondary}
+                        />
+                      ) : null}
+                    />
+                  </Pressable>
+                </Card>
+              </>
+            ) : null}
+
             {canViewFinanceSection ? (
               <>
                 <SectionHeader>
@@ -6636,7 +6797,7 @@ function OrderDetailsContent() {
                                     hideWhenEmpty={false}
                                     rightActions={
                                       <View style={styles.financeMoneyHolderActions}>
-                                        <InfoHintButton
+                                        <HelpInfoButton
                                           size={22}
                                           onPress={() => setFinanceMoneyHolderHelpVisible(true)}
                                           accessibilityLabel={t('order_payments_money_holder_help_title')}
@@ -6659,10 +6820,10 @@ function OrderDetailsContent() {
 
                             {showInitialCostLine ? (
                               <Pressable
-                                style={({ pressed }) => [canEditFinances && pressed && { opacity: 0.7 }]}
-                                disabled={!canEditFinances}
+                                style={({ pressed }) => [canEditOrderAmount && pressed && { opacity: 0.7 }]}
+                                disabled={!canEditOrderAmount}
                                 onPress={() => {
-                                  if (!canEditFinances) return;
+                                  if (!canEditOrderAmount) return;
                                   setAmountDraft(String(order?.start_price ?? ''));
                                   setAmountEditModalVisible(true);
                                 }}
@@ -6672,7 +6833,7 @@ function OrderDetailsContent() {
                                   value={formatMoney(order.start_price, currency)}
                                     hideWhenEmpty={false}
                                     rightActions={
-                                      canEditFinances ? (
+                                      canEditOrderAmount ? (
                                         <Feather
                                           name="chevron-right"
                                           size={theme.icons?.sm ?? 18}
@@ -6796,37 +6957,29 @@ function OrderDetailsContent() {
                           ) : (
                             <>
                               {financeSnapshot?.scheme_name ? (
-                                <>
-                                  <Pressable
-                                    style={({ pressed }) => [
-                                      { width: '100%' },
-                                      pressed ? styles.financeSectionRowPressed : null,
-                                    ]}
-                                    onPress={() => setFinanceSchemeViewModalVisible(true)}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={t('finance_snapshot_scheme')}
-                                  >
-                                    <LabelValueRow
-                                      label={t('finance_snapshot_scheme')}
-                                      value={financeSnapshot.scheme_name}
-                                      hideWhenEmpty={false}
-                                      maxValueLines={2}
-                                      rightActions={
-                                        <Feather
-                                          name="chevron-right"
-                                          size={theme.icons?.sm ?? 18}
-                                          color={theme.colors.textSecondary}
-                                        />
-                                      }
-                                    />
-                                  </Pressable>
-                                  <View style={base.sep} />
+                                <Pressable
+                                  style={({ pressed }) => [
+                                    { width: '100%' },
+                                    pressed ? styles.financeSectionRowPressed : null,
+                                  ]}
+                                  onPress={() => setFinanceSchemeViewModalVisible(true)}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={t('finance_snapshot_worker_scheme_amount')}
+                                  accessibilityHint={t('finance_snapshot_scheme_calculation_accessibility_hint')}
+                                >
                                   <LabelValueRow
                                     label={t('finance_snapshot_worker_scheme_amount')}
                                     value={formatMoney(workerBaseCompensationTotal, currency)}
                                     hideWhenEmpty={false}
+                                    rightActions={
+                                      <Feather
+                                        name="chevron-right"
+                                        size={theme.icons?.sm ?? 18}
+                                        color={theme.colors.textSecondary}
+                                      />
+                                    }
                                   />
-                                </>
+                                </Pressable>
                               ) : null}
                               {workerAdjustmentEntries.map((entry, index) => {
                                 const effect = resolveFinanceEffect(entry);
@@ -7210,6 +7363,13 @@ function OrderDetailsContent() {
         />
       ) : null}
 
+      <OrderActivityModal
+        visible={activityModalVisible && orderHistoryEnabled}
+        onClose={() => setActivityModalVisible(false)}
+        orderId={order?.id || null}
+        version={order?.updated_at || null}
+      />
+
       <BaseModal
         visible={amountEditModalVisible}
         onClose={() => setAmountEditModalVisible(false)}
@@ -7569,12 +7729,12 @@ function OrderDetailsContent() {
       <BaseModal
         visible={financeSchemeViewModalVisible}
         onClose={() => setFinanceSchemeViewModalVisible(false)}
-        title={financeSnapshot?.scheme_name || t('finance_snapshot_scheme')}
-        maxHeightRatio={0.7}
+        title={t('finance_snapshot_scheme_calculation_title')}
+        maxHeightRatio={0.78}
         footer={
           <View style={styles.financeEntryModalActions}>
             <Button
-              title={t('btn_cancel')}
+              title={t('btn_close')}
               variant="secondary"
               onPress={() => setFinanceSchemeViewModalVisible(false)}
             />
@@ -7591,16 +7751,76 @@ function OrderDetailsContent() {
           </View>
         }
       >
+        <Card paddedXOnly separated style={styles.financeSchemeSummaryCard}>
+          <LabelValueRow
+            label={t('finance_snapshot_worker_scheme_amount')}
+            valueComponent={
+              <Text style={[base.value, styles.financeSchemeSummaryAmount]}>
+                {formatMoney(workerBaseCompensationTotal, currency)}
+              </Text>
+            }
+            hideWhenEmpty={false}
+          />
+          <LabelValueRow
+            label={t('finance_snapshot_scheme')}
+            value={financeSnapshot?.scheme_name || '—'}
+            maxValueLines={3}
+            hideWhenEmpty={false}
+          />
+        </Card>
         {financeSchemeRuleQuery.isLoading ? (
           <View style={styles.financeSchemeRuleLoading}>
             <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Text style={styles.financeSchemeViewHint}>{t('finance_snapshot_scheme_rule_loading')}</Text>
+            <Text style={styles.financeSchemeLoadingText}>{t('finance_snapshot_scheme_rule_loading')}</Text>
           </View>
         ) : financeSchemeRuleDescription ? (
-          <>
-            <Text style={base.label}>{t('finance_snapshot_scheme_rule')}</Text>
-            <Text style={styles.financeSchemeRuleText}>{financeSchemeRuleDescription}</Text>
-          </>
+          <View style={styles.financeSchemeExplanation}>
+            <View>
+              <Text style={styles.financeSchemeExplanationLabel}>{t('finance_snapshot_scheme_rule')}</Text>
+              <Text style={styles.financeSchemeRuleText}>{financeSchemeRuleDescription}</Text>
+            </View>
+            {financeSchemeExplanation.calculationBase ? (
+              <View>
+                <Text style={styles.financeSchemeExplanationLabel}>
+                  {t('finance_snapshot_scheme_calculation_base')}
+                </Text>
+                <Text style={styles.financeSchemeRuleText}>
+                  {financeSchemeExplanation.calculationBase}
+                </Text>
+              </View>
+            ) : null}
+            {financeSchemeExplanation.formula ? (
+              <View>
+                <Text style={styles.financeSchemeExplanationLabel}>
+                  {t('finance_snapshot_scheme_calculation_formula')}
+                </Text>
+                <Text style={styles.financeSchemeFormulaText}>
+                  {financeSchemeExplanation.formula}
+                </Text>
+              </View>
+            ) : null}
+            {financeSchemeExplanation.limitAdjustment ? (
+              <View>
+                <Text style={styles.financeSchemeExplanationLabel}>
+                  {t('finance_snapshot_scheme_calculation_limit')}
+                </Text>
+                <Text style={styles.financeSchemeRuleText}>
+                  {financeSchemeExplanation.limitAdjustment}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : financeSchemeRuleQuery.isError ? (
+          <View style={styles.financeSchemeRuleError}>
+            <Text style={styles.financeSchemeViewHint}>
+              {t('finance_snapshot_scheme_rule_error')}
+            </Text>
+            <Button
+              title={t('btn_retry')}
+              variant="secondary"
+              onPress={() => financeSchemeRuleQuery.refetch()}
+            />
+          </View>
         ) : (
           <Text style={styles.financeSchemeViewHint}>{t('finance_snapshot_scheme_rule_unavailable')}</Text>
         )}
@@ -7940,15 +8160,46 @@ function createStyles(theme) {
       lineHeight: typo.lineHeights?.md,
       marginTop: sp.lg || 16,
     },
+    financeSchemeSummaryCard: {
+      marginBottom: sp.lg || 16,
+    },
+    financeSchemeSummaryAmount: {
+      color: theme.colors.primary,
+      fontWeight: typo.weight?.bold || '700',
+    },
+    financeSchemeExplanation: {
+      gap: sp.lg || 16,
+    },
+    financeSchemeExplanationLabel: {
+      color: theme.colors.textSecondary,
+      fontSize: typo.sizes?.sm || 15,
+      fontWeight: typo.weight?.semibold || '600',
+    },
     financeSchemeRuleLoading: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: sp.sm || 8,
     },
+    financeSchemeLoadingText: {
+      color: theme.colors.textSecondary,
+      fontSize: typo.sizes?.sm || 15,
+      lineHeight: typo.lineHeights?.md,
+      flexShrink: 1,
+    },
+    financeSchemeRuleError: {
+      gap: sp.md || 12,
+    },
     financeSchemeRuleText: {
       color: theme.colors.text,
       fontSize: typo.sizes?.md || 16,
       lineHeight: typo.lineHeights?.md,
+      marginTop: sp.xs || 6,
+    },
+    financeSchemeFormulaText: {
+      color: theme.colors.text,
+      fontSize: typo.sizes?.md || 16,
+      lineHeight: typo.lineHeights?.md,
+      fontWeight: typo.weight?.semibold || '600',
       marginTop: sp.xs || 6,
     },
     financeEntryModalScroll: {

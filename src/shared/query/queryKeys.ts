@@ -19,6 +19,7 @@ export const queryKeys = {
     ],
     calendar: (params = {}) => ['requests', 'calendar', params],
     detail: (id) => ['requests', 'detail', String(id || '')],
+    activity: (id) => ['requests', 'activity', String(id || '')],
     assigneeName: (userId) => ['requests', 'assignee-name', String(userId || '')],
     filterOptions: () => ['requests', 'filter-options'],
     executors: (companyId = null) => ['requests', 'executors', String(companyId || '')],

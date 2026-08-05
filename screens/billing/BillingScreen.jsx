@@ -53,7 +53,6 @@ import { TBL } from '../../lib/constants';
 import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
 
 const BILLING_PROFILE_FALLBACK_STALE_MS = 60 * 1000;
-const BILLING_MEMBER_STATS_STALE_MS = 10 * 1000;
 const { width: WINDOW_WIDTH } = Dimensions.get('window');
 const BILLING_PORTAL_URL = getBillingPortalUrl();
 
@@ -222,28 +221,6 @@ export default function BillingScreen() {
     refetchOnReconnect: true,
   });
 
-  const { data: memberStatsFallback } = useQuery({
-    queryKey: ['billingMemberStats', companyId],
-    enabled: isOwner && !!companyId,
-    queryFn: async () => {
-      const { data, error: qErr } = await supabase
-        .from('profiles')
-        .select('id, role, license_state, is_admin_blocked')
-        .eq('company_id', companyId);
-      if (qErr) throw qErr;
-      const rows = (Array.isArray(data) ? data : []).filter(
-        (row) => String(row?.role || '').toLowerCase() !== ROLE.ADMIN,
-      );
-      return {
-        totalEmployees: rows.length,
-        blockedByLicenseCount: rows.filter(
-          (row) => !asBool(row?.is_admin_blocked) && row?.license_state === 'blocked_by_license',
-        ).length,
-      };
-    },
-    staleTime: BILLING_MEMBER_STATS_STALE_MS,
-  });
-
   const manageFilters = useFilters({
     screenKey: `billing_license_manage_${companyId || 'none'}`,
     defaults: { departments: [], roles: [], suspended: null },
@@ -406,15 +383,6 @@ export default function BillingScreen() {
     () => mergedMembers.filter((member) => member?.role !== ROLE.ADMIN),
     [mergedMembers],
   );
-  const totalEmployees = mergedMembers.length > 0
-    ? licenseMembers.length
-    : Number(memberStatsFallback?.totalEmployees || 0);
-  const blockedByLicenseCount = mergedMembers.length > 0
-    ? licenseMembers.filter(
-        (member) =>
-          !member?.admin_blocked && member?.license_state === 'blocked_by_license',
-      ).length
-    : Number(memberStatsFallback?.blockedByLicenseCount || 0);
   const hasStorageUsage = !!storageUsage && typeof storageUsage === 'object';
   const storageLimitBytes = Number(storageUsage?.limit_bytes || STORAGE_LIMITS.COMPANY_TOTAL_BYTES);
   const usedStorageBytes = Number(storageUsage?.total_bytes ?? 0);
@@ -444,7 +412,6 @@ export default function BillingScreen() {
       : theme.colors.success;
 
   const freeSeatsColor = freeSeatsTotal > 0 ? theme.colors.success : theme.colors.danger;
-  const blockedByLicenseColor = blockedByLicenseCount === 0 ? theme.colors.success : theme.colors.danger;
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
 
   const accessRefresh = accessState.refresh;
@@ -458,13 +425,11 @@ export default function BillingScreen() {
       queryClient.invalidateQueries({ queryKey: ['companyStorageUsage', companyId] }),
       queryClient.invalidateQueries({ queryKey: ['companyAccessState', companyId] }),
       queryClient.invalidateQueries({ queryKey: ['companyPaidSeatsTotal', companyId] }),
-      queryClient.invalidateQueries({ queryKey: ['billingMemberStats', companyId] }),
       queryClient.invalidateQueries({ queryKey: ['employees'] }),
       queryClient.refetchQueries({ queryKey: ['companyEntitlements', companyId], exact: true, type: 'active' }),
       queryClient.refetchQueries({ queryKey: ['companyStorageUsage', companyId], exact: true, type: 'active' }),
       queryClient.refetchQueries({ queryKey: ['companyAccessState', companyId], exact: true, type: 'active' }),
       queryClient.refetchQueries({ queryKey: ['companyPaidSeatsTotal', companyId], exact: true, type: 'active' }),
-      queryClient.refetchQueries({ queryKey: ['billingMemberStats', companyId], exact: true, type: 'active' }),
     ]);
   }, [accessRefresh, companyId, queryClient, refetchPaidSeatsRpc, refresh, refreshStorageUsage]);
 
@@ -979,8 +944,6 @@ export default function BillingScreen() {
                           <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
                           <LabelValueRow label={t('billing_used_seats')} value={String(usedSeatsTotal)} />
                           <LabelValueRow label={t('billing_free_seats')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: freeSeatsColor }]}>{freeSeatsTotal}</Text>} />
-                          <LabelValueRow label={t('billing_total_employees')} value={String(totalEmployees)} />
-                          <LabelValueRow label={t('billing_blocked_by_license_count')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: blockedByLicenseColor }]}>{blockedByLicenseCount}</Text>} />
                         </>
                       ) : null}
                     </Card>
@@ -1069,9 +1032,6 @@ export default function BillingScreen() {
           <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
           <LabelValueRow label={t('billing_manage_selected_count')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: displayedSelectedCount <= paidSeatsTotal ? theme.colors.success : theme.colors.danger }]}>{displayedSelectedCount}</Text>} />
         </SeparatedList>
-        <Text style={[styles(theme).muted, styles(theme).manageLicenseHint]}>
-          {t('billing_license_admins_excluded_hint')}
-        </Text>
         <SearchFiltersBar
           value={manageSearch}
           onChangeText={setManageSearch}
@@ -1308,10 +1268,6 @@ const styles = (theme) => StyleSheet.create({
   footerBtnWrap: { flex: 1 },
   footerBtn: { width: '100%' },
   manageSummaryWrap: { borderWidth: theme.components.card.borderWidth, borderColor: theme.colors.border, borderRadius: theme.components.card.radius, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm, backgroundColor: theme.colors.surface, marginBottom: theme.spacing.sm },
-  manageLicenseHint: {
-    marginBottom: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.xs,
-  },
   manageErrorWrap: {
     borderWidth: theme.components.card.borderWidth,
     borderColor: withAlpha(theme.colors.danger, theme.components?.pill?.borderAlpha ?? 0.18),

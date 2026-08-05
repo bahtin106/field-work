@@ -692,7 +692,7 @@ transporter.verify((error) => {
 
 app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmailAuth, async (req, res) => {
   try {
-    const { type, firstName, lastName, resetLink, tempPassword } = req.body;
+    const { type, firstName, lastName, resetLink, tempPassword, source } = req.body;
     const email = normalizeEmail(req.body?.email);
     if (!type || !isValidEmail(email)) {
       return res.status(400).json({ error: 'Missing required fields: type, email' });
@@ -798,6 +798,9 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
       const fullName = `${firstName || ''} ${lastName || ''}`.trim() || '\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c';
       const safeFullName = escapeHtml(fullName);
       const safeTempPassword = escapeHtml(tempPassword);
+      const resetDescription = source === 'self-service'
+        ? '\u0412\u044b \u0437\u0430\u043f\u0440\u043e\u0441\u0438\u043b\u0438 \u043d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0434\u043b\u044f \u0432\u0430\u0448\u0435\u0439 \u0443\u0447\u0435\u0442\u043d\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c \u043d\u0438\u0436\u0435 \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u0430.'
+        : '\u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440 \u0441\u0431\u0440\u043e\u0441\u0438\u043b \u043f\u0430\u0440\u043e\u043b\u044c \u0432\u0430\u0448\u0435\u0439 \u0443\u0447\u0435\u0442\u043d\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c \u043d\u0438\u0436\u0435 \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u0430.';
       subject = '\u041d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0434\u043b\u044f MonitorApp';
       html = `
         <div style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
@@ -808,7 +811,7 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
             </div>
             <div style="padding:28px;">
               <p style="margin:0 0 14px;font-size:16px;">&#1055;&#1088;&#1080;&#1074;&#1077;&#1090;, ${safeFullName}.</p>
-              <p style="margin:0 0 18px;line-height:1.55;color:#374151;">&#1040;&#1076;&#1084;&#1080;&#1085;&#1080;&#1089;&#1090;&#1088;&#1072;&#1090;&#1086;&#1088; &#1089;&#1073;&#1088;&#1086;&#1089;&#1080;&#1083; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100; &#1074;&#1072;&#1096;&#1077;&#1081; &#1091;&#1095;&#1077;&#1090;&#1085;&#1086;&#1081; &#1079;&#1072;&#1087;&#1080;&#1089;&#1080;. &#1048;&#1089;&#1087;&#1086;&#1083;&#1100;&#1079;&#1091;&#1081;&#1090;&#1077; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100; &#1085;&#1080;&#1078;&#1077; &#1076;&#1083;&#1103; &#1074;&#1093;&#1086;&#1076;&#1072;.</p>
+              <p style="margin:0 0 18px;line-height:1.55;color:#374151;">${resetDescription}</p>
               <div style="margin:22px 0;padding:18px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;">
                 <div style="margin-bottom:8px;font-size:13px;font-weight:700;color:#6b7280;text-transform:uppercase;">&#1042;&#1088;&#1077;&#1084;&#1077;&#1085;&#1085;&#1099;&#1081; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100;</div>
                 <div style="font-family:Menlo,Consolas,monospace;font-size:22px;line-height:1.3;font-weight:800;letter-spacing:.04em;color:#111827;">${safeTempPassword}</div>
@@ -821,7 +824,7 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
           </div>
         </div>
       `;
-      text = `\u041d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0434\u043b\u044f MonitorApp\n\n\u041f\u0440\u0438\u0432\u0435\u0442, ${fullName}.\n\n\u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440 \u0441\u0431\u0440\u043e\u0441\u0438\u043b \u043f\u0430\u0440\u043e\u043b\u044c \u0432\u0430\u0448\u0435\u0439 \u0443\u0447\u0435\u0442\u043d\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438.\n\n\u0412\u0440\u0435\u043c\u0435\u043d\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c: ${tempPassword}\n\n\u041f\u043e\u0441\u043b\u0435 \u0432\u0445\u043e\u0434\u0430 \u0441\u043c\u0435\u043d\u0438\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435.`;
+      text = `\u041d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0434\u043b\u044f MonitorApp\n\n\u041f\u0440\u0438\u0432\u0435\u0442, ${fullName}.\n\n${resetDescription}\n\n\u0412\u0440\u0435\u043c\u0435\u043d\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c: ${tempPassword}\n\n\u041f\u043e\u0441\u043b\u0435 \u0432\u0445\u043e\u0434\u0430 \u0441\u043c\u0435\u043d\u0438\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435.`;
     }
 
     const info = await transporter.sendMail({

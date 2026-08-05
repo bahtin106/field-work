@@ -42,8 +42,11 @@ export function extractOrderAddress(source) {
     result[field] = normalized || '';
   }
   result.apartment = String(source?.apartment ?? result.apartment ?? '').trim();
-  result.comment = String(source?.comment ?? source?.entrance_info ?? result.comment ?? '').trim();
-  result.entrance_info = result.comment;
+  // An order's `comment` is its description, while `entrance_info` contains
+  // address-specific entry instructions. They must remain independent when an
+  // existing order is hydrated and saved again.
+  result.comment = String(source?.comment ?? '').trim();
+  result.entrance_info = String(source?.entrance_info ?? '').trim();
   const explicitLocationMode = String(source?.[ORDER_LOCATION_MODE_FIELD] || '').trim().toLowerCase();
   result[ORDER_LOCATION_MODE_FIELD] =
     explicitLocationMode === 'map' || explicitLocationMode === 'address'
@@ -56,10 +59,12 @@ export function extractOrderAddress(source) {
 
 export function extractOrderAddressFromObject(objectItem) {
   const source = objectItem || {};
+  const entryInstructions = String(source?.comment ?? source?.entrance_info ?? '').trim();
   return extractOrderAddress({
     ...source,
     apartment: source?.apartment || '',
-    comment: source?.comment || source?.entrance_info || '',
+    comment: entryInstructions,
+    entrance_info: entryInstructions,
   });
 }
 
@@ -95,6 +100,9 @@ export function filterOrderAddressByObjectFieldSettings(address, objectFieldsByK
 export function toOrderAddressPatch(address) {
   const patch = {};
   for (const field of ORDER_ADDRESS_FIELDS) {
+    // `comment` is the order description and is saved separately by order
+    // forms. Only `entrance_info` belongs to the persisted address snapshot.
+    if (field === 'comment') continue;
     const normalized = String(address?.[field] ?? '').trim();
     patch[field] = normalized || null;
   }

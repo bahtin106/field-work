@@ -6,7 +6,6 @@ import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
-import InfoHintButton from '../../../components/ui/InfoHintButton';
 import SeparatedList from '../../../components/ui/SeparatedList';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
@@ -28,6 +27,7 @@ import {
   useSetCompanyFinanceSchemeEnabledMutation,
   useUpsertCompanyFinanceSchemeMutation,
 } from '../../../src/features/finance/queries';
+import HelpInfoButton from '../../../src/features/helpCenter/HelpInfoButton';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
@@ -1280,7 +1280,7 @@ export default function FinanceRulesSettingsScreen() {
 
 function FinanceInfoButton({ title, message, onPress }) {
   return (
-    <InfoHintButton
+    <HelpInfoButton
       onPress={onPress}
       accessibilityLabel={title}
       accessibilityHint={message}

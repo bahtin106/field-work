@@ -15,6 +15,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
+import LabelValueRow from '../../components/ui/LabelValueRow';
 import SectionHeader from '../../components/ui/SectionHeader';
 import { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
@@ -34,6 +35,7 @@ import { devWarn as __devLog } from '../../src/utils/dev';
 import { useTheme } from '../../theme';
 
 import { TBL } from '../../lib/constants';
+import { getAppVersion } from '../../lib/appVersion';
 import { saveUserLocale } from '../../lib/userLocale';
 import { availableLocales, getLocale, setLocale, t as T } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -162,6 +164,10 @@ const SETTINGS_SECTIONS = Object.freeze([
       { key: 'terms', type: 'select' },
       { key: 'delete-account', type: 'select' },
     ],
+  },
+  {
+    key: 'about',
+    items: [{ key: 'version', type: 'info' }],
   },
 ]);
 
@@ -301,6 +307,7 @@ async function ensurePushPermission() {
 
 export default function AppSettings() {
   const { t } = useTranslation();
+  const appVersion = getAppVersion();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user: authUser, profile: authProfile } = useAuthContext();
@@ -1070,10 +1077,13 @@ export default function AppSettings() {
               disabled: !helpReady,
             };
           }
+          if (sec.key === 'about' && it.key === 'version') {
+            return { ...it, value: appVersion || t('common_dash') };
+          }
           return it;
         }),
       })),
-    [availableMapApps, visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, helpPreferences, helpReady, mapAppsLoading, selectedMapAppId, t],
+    [appVersion, availableMapApps, visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, helpPreferences, helpReady, mapAppsLoading, selectedMapAppId, t],
   );
 
   return (
@@ -1100,7 +1110,9 @@ export default function AppSettings() {
               {sec.items.map((it) => {
                 return (
                   <React.Fragment key={it.key}>
-                    {it.switch ? (
+                    {it.type === 'info' ? (
+                      <LabelValueRow label={it.label} value={it.value} />
+                    ) : it.switch ? (
                       <SwitchField
                         label={it.label}
                         value={!!it.value}

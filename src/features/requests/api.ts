@@ -199,7 +199,7 @@ function normalizeOrder(row) {
     floor: address.floor || null,
     entrance: address.entrance || null,
     apartment: address.apartment || null,
-    entrance_info: address.comment || address.entrance_info || null,
+    entrance_info: address.entrance_info || null,
     parking_notes: null,
     geo_lat: address.geo_lat || null,
     geo_lng: address.geo_lng || null,

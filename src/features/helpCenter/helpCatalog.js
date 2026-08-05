@@ -151,6 +151,14 @@ export const HELP_TOPICS = Object.freeze({
     actionKey: 'help_topic_partial_payments_action',
     noteKey: 'help_topic_partial_payments_note',
   },
+  order_history: {
+    id: 'order_history',
+    icon: 'archive',
+    titleKey: 'help_topic_order_history_title',
+    bodyKey: 'help_topic_order_history_body',
+    actionKey: 'help_topic_order_history_action',
+    noteKey: 'help_topic_order_history_note',
+  },
   phone_visibility: {
     id: 'phone_visibility',
     icon: 'phone',

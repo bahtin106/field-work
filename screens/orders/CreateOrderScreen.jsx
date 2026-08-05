@@ -281,6 +281,8 @@ function CreateOrderContent() {
   const isSoloAdmin =
     String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
   const soloAdminUserId = String(profile?.id || user?.id || '').trim() || null;
+  const canAssignExecutors = isSoloAdmin || has('canAssignExecutors');
+  const canEditOrderAmount = has('canEditOrderAmount');
   const subscriptionGuard = useSubscriptionGuard(profile?.company_id || null);
   const { settings: companySettings } = useCompanySettings();
   const formStyles = useEditFormStyles();
@@ -430,8 +432,8 @@ function CreateOrderContent() {
   );
 
   const setField = useCallback((key, val) => setForm((s) => ({ ...s, [key]: val })), []);
-  const effectiveAssigneeId = isSoloAdmin ? soloAdminUserId : assigneeId;
-  const effectiveToFeed = isSoloAdmin ? false : toFeed;
+  const effectiveAssigneeId = isSoloAdmin ? soloAdminUserId : (canAssignExecutors ? assigneeId : null);
+  const effectiveToFeed = isSoloAdmin ? false : (canAssignExecutors ? toFeed : true);
   const orderStatusForCreation = useMemo(() => {
     if (!statusSystem.isEnabled) {
       return effectiveToFeed ? t('order_status_in_feed') : t('order_status_new');
@@ -464,7 +466,9 @@ function CreateOrderContent() {
         requiredFirst: true,
         fieldKeys: ['title', 'start_price', 'comment', 'work_type_id'],
       })
-        .filter((field) => isOrderFinanceEnabled || field.fieldKey !== 'start_price')
+        .filter((field) => (
+          (isOrderFinanceEnabled && canEditOrderAmount) || field.fieldKey !== 'start_price'
+        ))
         .map((field) => field.fieldKey);
       return ordered
         .sort((left, right) => {
@@ -473,7 +477,7 @@ function CreateOrderContent() {
           return leftWeight - rightWeight;
         });
     },
-    [isOrderFinanceEnabled, orderFieldSettings],
+    [canEditOrderAmount, isOrderFinanceEnabled, orderFieldSettings],
   );
   const orderedCustomerFieldKeys = useMemo(
     () =>
@@ -498,14 +502,14 @@ function CreateOrderContent() {
         fieldKeys: ['urgent', 'time_window_start', 'departure_time', 'assigned_to'],
       })
         .map((field) => field.fieldKey)
-        .filter((fieldKey) => !(isSoloAdmin && fieldKey === 'assigned_to'))
+        .filter((fieldKey) => !((isSoloAdmin || !canAssignExecutors) && fieldKey === 'assigned_to'))
         .sort((left, right) => {
           const leftWeight = Number.isFinite(priority[left]) ? priority[left] : Number.MAX_SAFE_INTEGER;
           const rightWeight = Number.isFinite(priority[right]) ? priority[right] : Number.MAX_SAFE_INTEGER;
           return leftWeight - rightWeight;
         });
     },
-    [isSoloAdmin, orderFieldSettings],
+    [canAssignExecutors, isSoloAdmin, orderFieldSettings],
   );
   const objectFieldsByKey = useMemo(() => new Map((objectFieldSettings?.fields || []).map((field) => [String(field.fieldKey || field.field_key || ''), field])), [objectFieldSettings]);
   const getVisibleObjectAddressDraft = useCallback(
@@ -1114,10 +1118,12 @@ function CreateOrderContent() {
     if (isFieldRequired('assigned_to') && !effectiveToFeed && !effectiveAssigneeId) {
       nextErrors.assigned_to = { message: t('order_validation_executor_required') };
     }
-    const parsedStartPrice = isOrderFinanceEnabled ? parseDecimalOrNull(form.start_price) : null;
-    if (isOrderFinanceEnabled && String(form.start_price ?? '').trim() && parsedStartPrice === null) {
+    const parsedStartPrice = isOrderFinanceEnabled && canEditOrderAmount
+      ? parseDecimalOrNull(form.start_price)
+      : null;
+    if (isOrderFinanceEnabled && canEditOrderAmount && String(form.start_price ?? '').trim() && parsedStartPrice === null) {
       nextErrors.start_price = { message: t('order_validation_amount_format') };
-    } else if (isOrderFinanceEnabled && parsedStartPrice != null && parsedStartPrice < 0) {
+    } else if (isOrderFinanceEnabled && canEditOrderAmount && parsedStartPrice != null && parsedStartPrice < 0) {
       nextErrors.start_price = { message: t('order_validation_amount_format') };
     }
     if (Object.keys(nextErrors).length) {
@@ -1265,7 +1271,9 @@ function CreateOrderContent() {
       company_id: effectiveCompanyId || null,
       title,
       work_type_id: useWorkTypes ? normalizedWorkTypeId || null : null,
-      start_price: isOrderFinanceEnabled ? parseDecimalOrNull(form.start_price) : null,
+      start_price: isOrderFinanceEnabled && canEditOrderAmount
+        ? parseDecimalOrNull(form.start_price)
+        : null,
       comment: description,
       client_id: selectedClientId || null,
       object_id: resolvedObjectId || null,
@@ -1373,6 +1381,7 @@ function CreateOrderContent() {
     resolveTitleForSave,
     parseDecimalOrNull,
     isOrderFinanceEnabled,
+    canEditOrderAmount,
     queryClient,
     orderStatusForCreation,
   ]);
