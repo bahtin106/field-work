@@ -62,6 +62,13 @@ const ACCESS_SECTIONS = [
       { key: 'canViewFinanceAll', labelKey: 'access_settings_perm_view_finance_all' },
       { key: 'canEditFinanceEntries', labelKey: 'access_settings_perm_edit_finance_entries' },
       { key: 'canManageFinanceRules', labelKey: 'access_settings_perm_manage_finance_rules' },
+    ],
+  },
+  {
+    id: 'statistics',
+    titleKey: 'access_settings_section_statistics',
+    descriptionKey: 'access_settings_section_statistics_description',
+    permissions: [
       { key: 'canViewFinanceStatsAll', labelKey: 'access_settings_perm_view_finance_stats' },
     ],
   },

@@ -57,4 +57,7 @@ export const queryKeys = {
     role: () => ['profile', 'role'],
     companyId: () => ['profile', 'company-id'],
   },
+  statistics: {
+    dashboard: (params = {}) => ['statistics', 'dashboard', params],
+  },
 };

@@ -40,3 +40,9 @@ In a new session, read that file first and resolve its release commit with:
 ```bash
 git log -1 -- docs/google-play-release-notes-1.0.4.md
 ```
+
+## Version 1.1.0 release handoff
+
+Состав релиза, готовый текст Google Play, backend-миграции и контрольные
+суммы AAB зафиксированы в
+[`google-play-release-notes-1.1.0.md`](google-play-release-notes-1.1.0.md).

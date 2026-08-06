@@ -59,6 +59,7 @@ const HOME_ROUTES = {
   createOrder: '/orders/create-order',
   calendar: '/orders/calendar',
   support: '/support',
+  stats: '/stats',
 };
 
 const homeMyOrdersPrefetchStartedByScope = new Set();
@@ -539,6 +540,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     () => navigateTo(HOME_ROUTES.support),
     [navigateTo],
   );
+  const openStatistics = useCallback(
+    () => navigateTo(HOME_ROUTES.stats),
+    [navigateTo],
+  );
   const showFutureFeatureToast = useCallback(() => {
     toast.info(t('feature_future'));
   }, [t, toast]);
@@ -627,8 +632,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           key: 'stats',
           title: t('home_menu_stats'),
           icon: 'bar-chart-2',
-          onPress: showFutureFeatureToast,
-          disabled: true,
+          onPress: openStatistics,
+          route: HOME_ROUTES.stats,
           visible: true,
         },
         {
@@ -663,7 +668,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       isAdmin,
       isSuperAdmin,
       openAppSettings,
-      showFutureFeatureToast,
+      openStatistics,
       openCompanySettings,
       openSupportRequest,
       openAdministration,
@@ -943,6 +948,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     const likelyRoutes = [
       isAdmin ? HOME_ROUTES.companySettings : null,
       !isSoloAdmin ? HOME_ROUTES.appSettings : null,
+      HOME_ROUTES.stats,
       canCreateOrders ? HOME_ROUTES.createOrder : null,
       isReadOnlyBySubscription ? HOME_ROUTES.billing : null,
     ].filter(Boolean);
