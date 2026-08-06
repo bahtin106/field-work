@@ -6,12 +6,11 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme/ThemeProvider';
 
-const EMERGE_SPRING = { damping: 22, stiffness: 480, mass: 0.45 };
+const OPEN_EASING = Easing.bezier(0.2, 0, 0, 1);
 
 export default function Dialog({
   visible,
@@ -36,32 +35,32 @@ export default function Dialog({
   // локальный mount, чтобы плавно убирать из дерева после анимации скрытия
   const [mounted, setMounted] = useState(visible);
   const progress = useSharedValue(0);  // opacity / backdrop
-  const scale = useSharedValue(0.88);
-  const translateY = useSharedValue(28);
+  const scale = useSharedValue(0.96);
+  const translateY = useSharedValue(16);
 
   // ── "Material Emerge" — fade + slide-up + scale-up ──────────
   useEffect(() => {
     if (visible) {
       // Reset to invisible starting position
       progress.value = 0;
-      scale.value = 0.88;
-      translateY.value = 28;
+      scale.value = 0.96;
+      translateY.value = 16;
       setMounted(true);
       // Start animation on next frame — after View has committed
       requestAnimationFrame(() => {
-        progress.value = withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) });
-        scale.value = withSpring(1, EMERGE_SPRING);
-        translateY.value = withSpring(0, EMERGE_SPRING);
+        progress.value = withTiming(1, { duration: 180, easing: OPEN_EASING });
+        scale.value = withTiming(1, { duration: 200, easing: OPEN_EASING });
+        translateY.value = withTiming(0, { duration: 220, easing: OPEN_EASING });
       });
     } else if (mounted) {
       // Dialog shrinks + fades: M3 emphasized-accelerate easing
-      const dur = 200;
+      const dur = 160;
       const ease = Easing.bezier(0.3, 0, 0.8, 0.15);
       progress.value = withTiming(0, { duration: dur, easing: ease }, (f) => {
         if (f) runOnJS(setMounted)(false);
       });
-      scale.value = withTiming(0.85, { duration: dur, easing: ease });
-      translateY.value = withTiming(12, { duration: dur, easing: ease });
+      scale.value = withTiming(0.97, { duration: dur, easing: ease });
+      translateY.value = withTiming(10, { duration: dur, easing: ease });
     }
   }, [mounted, progress, scale, translateY, visible]);
 

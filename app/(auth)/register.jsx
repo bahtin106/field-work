@@ -32,7 +32,10 @@ import {
   isValidPassword,
   normalizeHumanName,
 } from '../../lib/authValidation';
-import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../lib/keyboardControllerCompat';
 import { FUNCTIONS } from '../../lib/constants';
 import { persistPublicAuthRoute, resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { logClientError } from '../../lib/errorLogsClient';
@@ -831,7 +834,7 @@ export default function RegisterScreen() {
         style={styles.flex}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="always"
-        keyboardDismissMode="none"
+        keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
         showsVerticalScrollIndicator={false}
         bottomOffset={keyboardBottomOffset}
         extraKeyboardSpace={extraKeyboardSpace}

@@ -24,7 +24,7 @@ import { useTranslation } from '../src/i18n/useTranslation';
 import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 import { markFirstContent, markScreenMount, measureNetwork } from '../src/shared/perf/devMetrics';
 import { scheduleUiIdleTask } from '../src/shared/perf/uiIdleTask';
-import { hasRoutePreloader, preloadRouteScreen } from '../src/shared/navigation/routePreload';
+import { preloadRouteScreen } from '../src/shared/navigation/routePreload';
 import { queryKeys } from '../src/shared/query/queryKeys';
 import { queryClient as appQueryClient } from '../src/shared/query/queryClient';
 import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
@@ -59,6 +59,7 @@ const HOME_ROUTES = {
   createOrder: '/orders/create-order',
   calendar: '/orders/calendar',
   support: '/support',
+  stats: '/stats',
 };
 
 const homeMyOrdersPrefetchStartedByScope = new Set();
@@ -539,6 +540,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     () => navigateTo(HOME_ROUTES.support),
     [navigateTo],
   );
+  const openStatistics = useCallback(
+    () => navigateTo(HOME_ROUTES.stats),
+    [navigateTo],
+  );
   const showFutureFeatureToast = useCallback(() => {
     toast.info(t('feature_future'));
   }, [t, toast]);
@@ -627,8 +632,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           key: 'stats',
           title: t('home_menu_stats'),
           icon: 'bar-chart-2',
-          onPress: showFutureFeatureToast,
-          disabled: true,
+          onPress: openStatistics,
+          route: HOME_ROUTES.stats,
           visible: true,
         },
         {
@@ -663,7 +668,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       isAdmin,
       isSuperAdmin,
       openAppSettings,
-      showFutureFeatureToast,
+      openStatistics,
       openCompanySettings,
       openSupportRequest,
       openAdministration,
@@ -941,18 +946,26 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   useEffect(() => {
     if (!homeCriticalReady || !isFocused) return undefined;
     const likelyRoutes = [
-      canCreateOrders ? HOME_ROUTES.createOrder : null,
-      !isSoloAdmin ? HOME_ROUTES.appSettings : null,
       isAdmin ? HOME_ROUTES.companySettings : null,
-      HOME_ROUTES.support,
+      !isSoloAdmin ? HOME_ROUTES.appSettings : null,
+      HOME_ROUTES.stats,
+      canCreateOrders ? HOME_ROUTES.createOrder : null,
+      isReadOnlyBySubscription ? HOME_ROUTES.billing : null,
     ].filter(Boolean);
     const cancellations = likelyRoutes.map((route, index) =>
       scheduleUiIdleTask(() => {
         preloadRouteScreen(route);
-      }, { delayMs: 450 + index * 700, idleTimeoutMs: 1800 }),
+      }, { delayMs: index * 220, idleTimeoutMs: 700 }),
     );
     return () => cancellations.forEach((cancel) => cancel());
-  }, [canCreateOrders, homeCriticalReady, isAdmin, isFocused, isSoloAdmin]);
+  }, [
+    canCreateOrders,
+    homeCriticalReady,
+    isAdmin,
+    isFocused,
+    isReadOnlyBySubscription,
+    isSoloAdmin,
+  ]);
 
   if (shouldShowHomeLoader) {
     return (
@@ -1078,7 +1091,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             <Pressable
               key={item.key}
               onPress={item.onPress}
-              onPressIn={item.route && hasRoutePreloader(item.route) ? () => preloadRouteScreen(item.route) : undefined}
               unstable_pressDelay={0}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
@@ -1159,7 +1171,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           <Button
             title={t('home_btn_create_order')}
             onPress={openCreateOrder}
-            onPressIn={() => preloadRouteScreen(HOME_ROUTES.createOrder)}
           />
         </View>
       )}

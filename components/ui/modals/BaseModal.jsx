@@ -5,6 +5,7 @@ import React, {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -27,22 +28,43 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from '@expo/vector-icons/Feather';
-import { FullWindowOverlay } from 'react-native-screens';
 import { applyAndroidNavigationBar, applyAndroidSystemBars } from '../../../lib/systemBars';
 import { t as T } from '../../../src/i18n';
 import { useToastOverlay } from '../ToastProvider';
 import { useTheme } from '../../../theme';
 import { withAlpha as withThemeAlpha } from '../../../theme/colors';
 import DismissKeyboardArea from '../../layout/DismissKeyboardArea';
+import { KeyboardAvoidingView } from '../../../lib/keyboardControllerCompat';
+import {
+  notifyIOSModalDismissed,
+  registerIOSModal,
+  releaseIOSModal,
+  requestIOSModalPresentation,
+  unregisterIOSModal,
+} from './iosModalCoordinator';
 
-const OPEN_SPRING = { damping: 28, stiffness: 500, mass: 0.5 };
+const OPEN_EASING = Easing.bezier(0.2, 0, 0, 1);
 const MIN_TOP_GAP_FROM_STATUS_BAR_DP = 38;
 const EmbeddedModalHostContext = createContext(null);
+
+function ModalWindowBottomSafeArea({ supported, enabled, children }) {
+  if (!supported) return children;
+
+  // Android Modal renders in a separate window, so its safe area must be
+  // measured in that native tree instead of inherited from the activity.
+  return (
+    <SafeAreaView
+      edges={enabled ? ['bottom'] : []}
+      style={{ width: '100%', flexShrink: 1, minHeight: 0 }}
+    >
+      {children}
+    </SafeAreaView>
+  );
+}
 
 export function withAlpha(color, a) {
   const next = withThemeAlpha(color, a);
@@ -105,6 +127,7 @@ const BaseModalImpl = (
     onShow,
     onDismiss,
     title = '',
+    titleAccessory = null,
     children,
     footer = null,
     feedback = null,
@@ -136,8 +159,19 @@ const BaseModalImpl = (
   disablePanCloseRef.current = disablePanClose;
 
   const [rnVisible, setRnVisible] = useState(false);
+  const rnVisibleRef = useRef(false);
+  rnVisibleRef.current = rnVisible;
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
   const [modalKey, _setModalKey] = useState(0);
+  const iosModalIdRef = useRef(null);
+  const iosSuspendedRef = useRef(false);
+  const openRef = useRef(null);
+  const resumeRef = useRef(null);
+  const suspendRef = useRef(null);
+  const skipNextOpenAnimationRef = useRef(false);
+  const openAnimationStartedRef = useRef(false);
+  const closingRef = useRef(false);
+  const transitionIdRef = useRef(0);
   const dismissNotifiedRef = useRef(false);
   const nestedRequestCloseStackRef = useRef([]);
   const registerNestedRequestClose = useCallback((handler) => {
@@ -158,30 +192,19 @@ const BaseModalImpl = (
     [registerNestedRequestClose],
   );
 
-  // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
-  const [kbInset, setKbInset] = useState(0);
+  const keyboardVisibleRef = useRef(false);
 
   useEffect(() => {
     if (!rnVisible) {
-      setKbInset(0);
+      keyboardVisibleRef.current = false;
       return;
     }
-    const showE = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
-    const hideE = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const subShow = Keyboard.addListener(showE, (e) => {
-      try {
-        const windowH = Dimensions.get('window').height;
-        const screenH = Math.max(windowH, Dimensions.get('screen').height);
-        const endY = Number(e?.endCoordinates?.screenY);
-        const hFromEvent = Math.max(0, Number(e?.endCoordinates?.height) || 0);
-        const hFromScreenY = Number.isFinite(endY) ? Math.max(0, screenH - endY) : 0;
-        const metricsHeight = Math.max(0, Number(Keyboard.metrics?.()?.height) || 0);
-        const nextInset = Math.max(hFromEvent, hFromScreenY, metricsHeight);
-        setKbInset(nextInset);
-      } catch {}
+    keyboardVisibleRef.current = Keyboard.isVisible?.() === true;
+    const subShow = Keyboard.addListener('keyboardDidShow', () => {
+      keyboardVisibleRef.current = true;
     });
-    const subHide = Keyboard.addListener(hideE, () => {
-      setKbInset(0);
+    const subHide = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardVisibleRef.current = false;
     });
     return () => {
       try {
@@ -195,6 +218,8 @@ const BaseModalImpl = (
   const windowH = windowDimensions.height;
   const windowW = windowDimensions.width;
   const floatingSheet = isSheet && windowW >= 768;
+  const usesModalWindowBottomInset =
+    Platform.OS === 'android' && !embedded && isSheet && !floatingSheet;
   const sheetCornerRadius = Platform.OS === 'ios' ? 24 : 28;
   const minCardHeight = theme.spacing.xxxl * 3 + theme.spacing.xl;
   const topInsetAllowance = theme.components?.input?.height ?? 48;
@@ -263,34 +288,17 @@ const BaseModalImpl = (
     Number.isFinite(minTopGapFromStatusBar) ? Number(minTopGapFromStatusBar) : 0,
   );
   const extraPad = Number.isFinite(keyboardExtraPadding) ? keyboardExtraPadding : 0;
-  const extraBottom = kbInset > 0 ? kbInset + extraPad : 0;
 
   const op = useSharedValue(0);
   const cardOp = useSharedValue(0);
   const ty = useSharedValue(24);
   const sc = useSharedValue(1);
-  const animatedBottomPad = useSharedValue(baseBottomPad + extraBottom);
 
   const maxAllowedHeight = Math.max(
     minCardHeight,
-    windowH - (topSafeInset + minTopGapFromStatusBarValue) - (baseBottomPad + extraBottom),
+    windowH - (topSafeInset + minTopGapFromStatusBarValue) - baseBottomPad,
   );
   const targetCardMaxHeight = Math.max(minCardHeight, Math.min(sheetMaxH, maxAllowedHeight));
-
-  useEffect(() => {
-    const targetPad = baseBottomPad + extraBottom;
-    const duration = kbInset > 0 ? 180 : 140;
-    animatedBottomPad.value = withTiming(targetPad, {
-      duration,
-      easing: Easing.out(Easing.cubic),
-    });
-  }, [
-    animatedBottomPad,
-    baseBottomPad,
-    extraBottom,
-    kbInset,
-    targetCardMaxHeight,
-  ]);
 
   const notifyDismiss = () => {
     if (dismissNotifiedRef.current) return;
@@ -300,7 +308,19 @@ const BaseModalImpl = (
     } catch {}
   };
 
-  const doUnmount = () => {
+  const doUnmount = (transitionId) => {
+    if (transitionId !== transitionIdRef.current) return;
+    closingRef.current = false;
+    if (Platform.OS === 'ios' && !embedded) {
+      setNativeDismissPending(true);
+      rnVisibleRef.current = false;
+      setRnVisible(false);
+      try {
+        onClose?.();
+      } catch {}
+      return;
+    }
+    rnVisibleRef.current = false;
     setRnVisible(false);
     try {
       onClose?.();
@@ -311,41 +331,83 @@ const BaseModalImpl = (
   // ── "Material Emerge" animation ──────────────────────────────
   // Open:  fade-in + slide-up + scale-up — card materializes from below
   // Close: fade-out + slide-down + scale-down — card dissolves downward
-  // All three properties share matched spring configs for cohesion.
+  // All properties use matched non-overshooting timings for cohesion.
 
   const runOpenAnimation = () => {
-    op.value = withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) });
-    cardOp.value = presentationRef.current
-      ? 1
-      : withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) });
-    ty.value = withSpring(0, OPEN_SPRING);
-    sc.value = withSpring(1, OPEN_SPRING);
+    if (openAnimationStartedRef.current) return;
+    openAnimationStartedRef.current = true;
+    op.value = withTiming(1, { duration: 180, easing: OPEN_EASING });
+    cardOp.value = withTiming(1, { duration: 160, easing: OPEN_EASING });
+    ty.value = withTiming(0, { duration: 240, easing: OPEN_EASING });
+    sc.value = withTiming(1, { duration: 200, easing: OPEN_EASING });
   };
 
   const open = () => {
+    const alreadyMounted = rnVisibleRef.current;
+    transitionIdRef.current += 1;
+    closingRef.current = false;
     // Set invisible starting position, then mount
     dismissNotifiedRef.current = false;
+    skipNextOpenAnimationRef.current = false;
+    openAnimationStartedRef.current = false;
     setNativeDismissPending(false);
     op.value = 0;
-    cardOp.value = isSheet ? 1 : 0;
+    cardOp.value = 0;
     ty.value = isSheet ? 64 : 12;
     sc.value = isSheet ? 1 : 0.96;
-    if (!rnVisible) setRnVisible(true);
+    if (!alreadyMounted) {
+      rnVisibleRef.current = true;
+      setRnVisible(true);
+      return;
+    }
+    runOpenAnimation();
     // Animation triggered by <Modal onShow> — guarantees native mount is done
+  };
+  openRef.current = open;
+  resumeRef.current = () => {
+    transitionIdRef.current += 1;
+    closingRef.current = false;
+    dismissNotifiedRef.current = false;
+    skipNextOpenAnimationRef.current = true;
+    openAnimationStartedRef.current = true;
+    setNativeDismissPending(false);
+    op.value = 1;
+    cardOp.value = 1;
+    ty.value = 0;
+    sc.value = 1;
+    if (!rnVisibleRef.current) {
+      rnVisibleRef.current = true;
+      setRnVisible(true);
+    }
+  };
+  suspendRef.current = () => {
+    if (!rnVisibleRef.current) return;
+    transitionIdRef.current += 1;
+    closingRef.current = false;
+    iosSuspendedRef.current = true;
+    setNativeDismissPending(true);
+    rnVisibleRef.current = false;
+    setRnVisible(false);
   };
 
   const close = () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    const transitionId = transitionIdRef.current + 1;
+    transitionIdRef.current = transitionId;
     // Card slides down off-screen — no scale, no card fade.
     // M3 "emphasized accelerate": starts slow, accelerates away like gravity.
     const closingSheet = presentationRef.current;
     ty.value = withTiming(closingSheet ? sheetMaxH + 40 : 10, {
-      duration: closingSheet ? 250 : 160,
+      duration: closingSheet ? 220 : 160,
       easing: closingSheet
         ? Easing.bezier(0.3, 0, 0.8, 0.15)
         : Easing.in(Easing.quad),
+    }, (finished) => {
+      if (finished) runOnJS(doUnmount)(transitionId);
     });
     sc.value = withTiming(closingSheet ? 1 : 0.97, {
-      duration: closingSheet ? 250 : 160,
+      duration: closingSheet ? 220 : 160,
       easing: Easing.in(Easing.quad),
     });
     cardOp.value = closingSheet
@@ -356,10 +418,8 @@ const BaseModalImpl = (
       });
     // Backdrop fades out slightly faster — card is already moving
     op.value = withTiming(0, {
-      duration: closingSheet ? 200 : 160,
+      duration: closingSheet ? 180 : 160,
       easing: Easing.out(Easing.quad),
-    }, (fin) => {
-      if (fin) runOnJS(doUnmount)();
     });
   };
 
@@ -393,9 +453,6 @@ const BaseModalImpl = (
   handleContainerRequestCloseRef.current = handleContainerRequestClose;
 
   const aBackdrop = useAnimatedStyle(() => ({ opacity: op.value }));
-  const aWrap = useAnimatedStyle(() => ({
-    paddingBottom: animatedBottomPad.value,
-  }));
   const aCard = useAnimatedStyle(() => ({
     opacity: cardOp.value,
     transform: [{ translateY: ty.value }, { scale: sc.value }],
@@ -428,21 +485,46 @@ const BaseModalImpl = (
         if (shouldClose) {
           requestCloseRef.current();
         } else {
-          ty.value = withSpring(0, OPEN_SPRING);
-          sc.value = withSpring(1, OPEN_SPRING);
+          ty.value = withTiming(0, { duration: 180, easing: OPEN_EASING });
+          sc.value = withTiming(1, { duration: 180, easing: OPEN_EASING });
         }
       },
     }),
   ).current;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'ios' || embedded) return undefined;
+    const id = registerIOSModal({
+      present: () => openRef.current?.(),
+      resume: () => resumeRef.current?.(),
+      suspend: () => suspendRef.current?.(),
+    });
+    iosModalIdRef.current = id;
+    return () => {
+      unregisterIOSModal(id);
+      iosModalIdRef.current = null;
+    };
+  }, [embedded]);
+
+  useLayoutEffect(() => {
+    if (Platform.OS === 'ios' && !embedded) {
+      const id = iosModalIdRef.current;
+      if (!id) return;
+      if (visible) {
+        requestIOSModalPresentation(id);
+      } else {
+        releaseIOSModal(id);
+        if (rnVisible) close();
+      }
+      return;
+    }
     if (visible) open();
     else if (rnVisible) close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   useEffect(() => {
-    if ((!embedded && Platform.OS !== 'ios') || !rnVisible) return;
+    if (!embedded || !rnVisible) return;
     const frame = requestAnimationFrame(() => {
       runOpenAnimation();
       try {
@@ -493,40 +575,53 @@ const BaseModalImpl = (
 
   if (!visible && !rnVisible && !nativeDismissPending) return null;
 
-  const ModalContainer = embedded ? View : Platform.OS === 'ios' ? FullWindowOverlay : Modal;
+  const ModalContainer = embedded ? View : Modal;
   const containerProps =
     embedded
       ? {
         style: [StyleSheet.absoluteFill, { zIndex: 100, elevation: 100 }],
         accessibilityViewIsModal: true,
       }
-      : Platform.OS === 'ios'
-      ? { unstable_accessibilityContainerViewIsModal: true }
       : {
         visible: !!rnVisible,
         transparent: true,
         presentationStyle: 'overFullScreen',
+        hardwareAccelerated: Platform.OS === 'android',
+        statusBarTranslucent: Platform.OS === 'android',
+        navigationBarTranslucent: Platform.OS === 'android',
         animationType: 'none',
-        statusBarTranslucent: true,
-        navigationBarTranslucent: true,
         onRequestClose: () => handleContainerRequestCloseRef.current(),
         onShow: () => {
-          runOpenAnimation();
+          if (skipNextOpenAnimationRef.current) {
+            skipNextOpenAnimationRef.current = false;
+          } else {
+            runOpenAnimation();
+          }
           try {
             onShow?.();
           } catch {}
         },
         onDismiss: () => {
-          // Safety-net: ensure state is reset even if native dismisses unexpectedly
+          const wasSuspended = Platform.OS === 'ios' && iosSuspendedRef.current;
+          iosSuspendedRef.current = false;
+          rnVisibleRef.current = false;
           setRnVisible(false);
           setNativeDismissPending(false);
-          notifyDismiss();
+          if (Platform.OS === 'ios' && iosModalIdRef.current != null) {
+            notifyIOSModalDismissed(iosModalIdRef.current, { suspended: wasSuspended });
+          }
+          if (!wasSuspended) notifyDismiss();
         },
       };
 
   return (
     <EmbeddedModalHostContext.Provider value={modalHostValue}>
       <ModalContainer key={modalKey} {...containerProps}>
+      <View
+        collapsable={false}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="box-none"
+      >
       {fullscreenContent ? (
         <View style={StyleSheet.absoluteFill}>{fullscreenContent}</View>
       ) : (
@@ -536,7 +631,7 @@ const BaseModalImpl = (
         style={[StyleSheet.absoluteFill, { zIndex: 0, elevation: 0 }]}
         pointerEvents={rnVisible ? 'box-only' : 'none'}
         onPress={() => {
-          if (kbInset > 0) {
+          if (keyboardVisibleRef.current || Keyboard.isVisible?.() === true) {
             try {
               Keyboard.dismiss();
             } catch {}
@@ -552,12 +647,25 @@ const BaseModalImpl = (
       </Pressable>
 
       {/* Platform-adaptive dialog/sheet container - above backdrop */}
+      <KeyboardAvoidingView
+        behavior="padding"
+        enabled={rnVisible}
+        keyboardVerticalOffset={extraPad}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="box-none"
+      >
       <Animated.View
         style={[
           s.modalWrap,
-          aWrap,
           {
+            position: 'relative',
+            top: undefined,
+            right: undefined,
+            bottom: undefined,
+            left: undefined,
+            flex: 1,
             justifyContent: isSheet ? 'flex-end' : 'center',
+            paddingBottom: baseBottomPad,
             paddingHorizontal: isSheet
               ? floatingSheet
                 ? theme.spacing.xxl
@@ -596,10 +704,10 @@ const BaseModalImpl = (
                 ? Math.max(sheetCornerRadius, modalTokens.radius ?? theme.radii.xl)
                 : dialogTokens.radius ?? theme.radii.xl,
               paddingBottom: isSheet
-                ? kbInset > 0
-                  ? 0
-                  : floatingSheet
-                    ? theme.spacing.sm
+                ? floatingSheet
+                  ? theme.spacing.sm
+                  : usesModalWindowBottomInset
+                    ? 0
                     : insets.bottom
                 : 0,
               backgroundColor: theme.colors.surface,
@@ -612,10 +720,14 @@ const BaseModalImpl = (
             },
           ]}
         >
-          <DismissKeyboardArea
-            enabled={false}
-            style={{ width: '100%', flexShrink: 1, minHeight: 0 }}
+          <ModalWindowBottomSafeArea
+            supported={usesModalWindowBottomInset}
+            enabled
           >
+            <DismissKeyboardArea
+              enabled={false}
+              style={{ width: '100%', flexShrink: 1, minHeight: 0 }}
+            >
           {/* Drag handle */}
             {isSheet && showHandle ? (
               <View style={s.handleHit} {...(disablePanClose ? {} : pan.panHandlers)}>
@@ -659,6 +771,21 @@ const BaseModalImpl = (
                   {title}
                 </Text>
               </View>
+              {titleAccessory ? (
+                <View
+                  style={{
+                    position: 'absolute',
+                    left: modalTokens.closeInset ?? theme.spacing.sm,
+                    top: Math.max(theme.spacing.xs, 6),
+                    width: 32,
+                    height: 32,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {titleAccessory}
+                </View>
+              ) : null}
               <Pressable
                 hitSlop={modalTokens.closeHitSlop ?? 10}
                 onPress={requestClose}
@@ -723,12 +850,15 @@ const BaseModalImpl = (
                 {footer}
               </View>
             ) : null}
-          </DismissKeyboardArea>
+            </DismissKeyboardArea>
+          </ModalWindowBottomSafeArea>
           </Animated.View>
         </Animated.View>
+        </KeyboardAvoidingView>
         </>
       )}
       {embedded || Platform.OS === 'ios' ? null : renderToastOverlay?.() || null}
+      </View>
       </ModalContainer>
     </EmbeddedModalHostContext.Provider>
   );

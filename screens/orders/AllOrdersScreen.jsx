@@ -56,6 +56,7 @@ import { enrichOrdersWithKnownExecutorRows } from '../../src/features/requests/e
 import { listRequests } from '../../src/features/requests/api';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import { useClients } from '../../src/features/clients/queries';
+import { useCompanyObjects } from '../../src/features/objects/queries';
 import { useCompanyTags } from '../../src/features/tags/queries';
 import { buildTagFilterOptions } from '../../src/features/tags/filtering';
 import {
@@ -135,6 +136,14 @@ const ROUTE_FILTER_PARAM_KEYS = Object.freeze([
   'statuses',
   'work_type',
   'client_ids',
+  'object_ids',
+  'filter_entity_type',
+  'filter_entity_id',
+  'filter_entity_label',
+  'reset_order_filters',
+  'relation_client_id',
+  'relation_object_ids',
+  'relation_label',
   'departure_date_from',
   'departure_date_to',
   'departure_time_from',
@@ -175,6 +184,7 @@ const ORDER_FILTER_DEFAULTS = {
   workTypes: [],
   statuses: [],
   clientIds: [],
+  objectIds: [],
   clientTags: [],
   objectTags: [],
   executorId: null,
@@ -231,6 +241,7 @@ function createOrderFilterDefaults() {
     workTypes: [],
     statuses: [],
     clientIds: [],
+    objectIds: [],
     clientTags: [],
     objectTags: [],
   };
@@ -430,6 +441,10 @@ function buildRouteFilterParams(values = {}) {
       Array.isArray(values.clientIds) && values.clientIds.length
         ? values.clientIds.join(',')
         : undefined,
+    object_ids:
+      Array.isArray(values.objectIds) && values.objectIds.length
+        ? values.objectIds.join(',')
+        : undefined,
     departure_date_from: values.departureDateFrom || undefined,
     departure_date_to: values.departureDateTo || undefined,
     departure_time_from: values.departureTimeFrom || undefined,
@@ -533,6 +548,11 @@ function AllOrdersContent() {
     search,
     work_type,
     client_ids,
+    object_ids,
+    filter_entity_type,
+    filter_entity_id,
+    filter_entity_label,
+    reset_order_filters,
     departure_date_from,
     departure_date_to,
     departure_time_from,
@@ -557,6 +577,18 @@ function AllOrdersContent() {
     () => readRouteParam(relation_label),
     [relation_label],
   );
+  const routeEntityFilterType = useMemo(
+    () => readRouteParam(filter_entity_type).toLowerCase(),
+    [filter_entity_type],
+  );
+  const routeEntityFilterId = useMemo(
+    () => readRouteParam(filter_entity_id),
+    [filter_entity_id],
+  );
+  const routeEntityFilterLabel = useMemo(
+    () => readRouteParam(filter_entity_label),
+    [filter_entity_label],
+  );
   const hasLinkedRelationFilter = useMemo(
     () =>
       hasRelationFilters({
@@ -573,12 +605,31 @@ function AllOrdersContent() {
       params: {
         seedFilter: 'all',
         ...(readRouteParam(search) ? { seedSearch: readRouteParam(search) } : {}),
+        ...(readRouteListParam(client_ids).length ? { client_ids: readRouteListParam(client_ids).join(',') } : {}),
+        ...(readRouteListParam(object_ids).length ? { object_ids: readRouteListParam(object_ids).join(',') } : {}),
+        ...(routeEntityFilterType ? { filter_entity_type: routeEntityFilterType } : {}),
+        ...(routeEntityFilterId ? { filter_entity_id: routeEntityFilterId } : {}),
+        ...(routeEntityFilterLabel ? { filter_entity_label: routeEntityFilterLabel } : {}),
+        ...(readRouteParam(reset_order_filters) ? { reset_order_filters: '1' } : {}),
         ...(relationClientId ? { relation_client_id: relationClientId } : {}),
         ...(relationObjectIds.length ? { relation_object_ids: relationObjectIds.join(',') } : {}),
         ...(relationLabel ? { relation_label: relationLabel } : {}),
       },
     });
-  }, [isSoloAdmin, relationClientId, relationLabel, relationObjectIds, router, search]);
+  }, [
+    client_ids,
+    isSoloAdmin,
+    object_ids,
+    relationClientId,
+    relationLabel,
+    relationObjectIds,
+    reset_order_filters,
+    routeEntityFilterId,
+    routeEntityFilterLabel,
+    routeEntityFilterType,
+    router,
+    search,
+  ]);
 
   const [statusFilter, setStatusFilter] = useState(
     resolveAllOrdersStatusSelection(readRouteListParam(statuses), readRouteParam(filter)),
@@ -618,6 +669,7 @@ function AllOrdersContent() {
     Boolean(readRouteParam(search)) ||
     readRouteListParam(work_type).length > 0 ||
     readRouteListParam(client_ids).length > 0 ||
+    readRouteListParam(object_ids).length > 0 ||
     readRouteListParam(executor).length > 0 ||
     Boolean(readRouteParam(departure_date_from)) ||
     Boolean(readRouteParam(departure_date_to)) ||
@@ -654,6 +706,7 @@ function AllOrdersContent() {
     workTypes: readRouteListParam(work_type),
     statuses: readRouteListParam(statuses).map(normalizeAllOrdersStatusFilter).filter(Boolean),
     clientIds: readRouteListParam(client_ids),
+    objectIds: readRouteListParam(object_ids),
     executorId: readRouteListParam(executor)[0] || null,
     executorIds: readRouteListParam(executor),
     departureDateFrom: readRouteParam(departure_date_from) || null,
@@ -698,7 +751,8 @@ function AllOrdersContent() {
       hasExecutorFilter ||
       hasWorkTypeFilter ||
       (Array.isArray(orderFilters.statuses) && orderFilters.statuses.length > 0) ||
-      (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length > 0));
+      (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length > 0) ||
+      (Array.isArray(orderFilters.objectIds) && orderFilters.objectIds.length > 0));
   const setOrderFilterValue = useCallback((key, value) => {
     setOrderFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
@@ -764,8 +818,8 @@ function AllOrdersContent() {
     { enabled: !!companyId && filterDataEnabled },
   );
   const clientOptions = useMemo(
-    () =>
-      (Array.isArray(companyClients) ? companyClients : [])
+    () => {
+      const options = (Array.isArray(companyClients) ? companyClients : [])
         .map((row) => {
           const id = String(row?.id || '').trim();
           if (!id) return null;
@@ -776,9 +830,68 @@ function AllOrdersContent() {
             id;
           return { id, value: id, label };
         })
-        .filter(Boolean),
-    [companyClients],
+        .filter(Boolean);
+      if (
+        routeEntityFilterType === 'client' &&
+        routeEntityFilterId &&
+        routeEntityFilterLabel &&
+        !options.some((item) => item.id === routeEntityFilterId)
+      ) {
+        options.push({
+          id: routeEntityFilterId,
+          value: routeEntityFilterId,
+          label: routeEntityFilterLabel,
+        });
+      }
+      return options;
+    },
+    [companyClients, routeEntityFilterId, routeEntityFilterLabel, routeEntityFilterType],
   );
+  const shouldLoadObjectOptions =
+    !!companyId &&
+    (filtersVisible || (Array.isArray(orderFilters.objectIds) && orderFilters.objectIds.length > 0));
+  const { data: companyObjects = [] } = useCompanyObjects(companyId, {
+    enabled: shouldLoadObjectOptions,
+  });
+  const objectOptions = useMemo(() => {
+    const clientLabelById = new Map(clientOptions.map((item) => [String(item.id), item.label]));
+    const options = (Array.isArray(companyObjects) ? companyObjects : [])
+      .map((row) => {
+        const id = String(row?.id || '').trim();
+        if (!id) return null;
+        const objectName =
+          String(row?.name || '').trim() ||
+          String(row?.summary || '').trim() ||
+          t('objects_unnamed');
+        const clientLabel = clientLabelById.get(String(row?.client_id || '')) || '';
+        return {
+          id,
+          value: id,
+          label: clientLabel ? `${objectName} — ${clientLabel}` : objectName,
+        };
+      })
+      .filter(Boolean);
+    if (
+      routeEntityFilterType === 'object' &&
+      routeEntityFilterId &&
+      routeEntityFilterLabel &&
+      !options.some((item) => item.id === routeEntityFilterId)
+    ) {
+      options.push({
+        id: routeEntityFilterId,
+        value: routeEntityFilterId,
+        label: routeEntityFilterLabel,
+      });
+    }
+    return options.sort((left, right) => left.label.localeCompare(right.label, 'ru'));
+  }, [
+    clientOptions,
+    companyObjects,
+    routeEntityFilterId,
+    routeEntityFilterLabel,
+    routeEntityFilterType,
+    t,
+  ]);
   const hasSelectedTagFilters = Boolean(orderFilters.clientTags?.length || orderFilters.objectTags?.length);
   const shouldLoadTagOptions = !!companyId && (filtersVisible || hasSelectedTagFilters);
   const { data: companyClientTags = [] } = useCompanyTags({
@@ -831,6 +944,9 @@ function AllOrdersContent() {
     if (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length) {
       next.clientIds = orderFilters.clientIds.map(String);
     }
+    if (Array.isArray(orderFilters.objectIds) && orderFilters.objectIds.length) {
+      next.objectIds = orderFilters.objectIds.map(String);
+    }
     if (Array.isArray(orderFilters.clientTags) && orderFilters.clientTags.length) {
       next.clientTags = orderFilters.clientTags.map(String);
     }
@@ -858,6 +974,7 @@ function AllOrdersContent() {
     effectiveStatusFilter,
     normalizedSortKey,
     orderFilters.clientIds,
+    orderFilters.objectIds,
     orderFilters.clientTags,
     orderFilters.createdDateFrom,
     orderFilters.createdDateTo,
@@ -1572,6 +1689,28 @@ function AllOrdersContent() {
       }
     }
 
+    if (Array.isArray(orderFilters.objectIds) && orderFilters.objectIds.length) {
+      const labels = orderFilters.objectIds
+        .map((id) => objectOptions.find((item) => String(item.id) === String(id))?.label)
+        .filter(Boolean);
+      if (labels.length) {
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('routes_objects_object'),
+            values: labels,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('routes_objects_object'),
+            values: labels,
+            countWhenMany: true,
+          }),
+        );
+      }
+    }
+
     const addTagSummary = (label, values) => {
       if (!Array.isArray(values) || values.length === 0) return;
       fullParts.push(summarizeFilterPart({ label, values, countWhenMany: false }));
@@ -1630,6 +1769,7 @@ function AllOrdersContent() {
     locale,
     getStatusLabel,
     orderFilters.clientIds,
+    orderFilters.objectIds,
     orderFilters.clientTags,
     orderFilters.createdDateFrom,
     orderFilters.createdDateTo,
@@ -1643,6 +1783,7 @@ function AllOrdersContent() {
     orderFilters.sumMax,
     orderFilters.sumMin,
     orderFilters.statuses,
+    objectOptions,
     orderStatusOptions,
     statusSystem.isEnabled,
     t,
@@ -1689,9 +1830,11 @@ function AllOrdersContent() {
             prefix: t('order_auto_title_prefix'),
           }),
           includePhones: shouldShowOrderPhoneForRole(order, companySettings, profile?.role),
-          extraTexts: [
-            workTypes.find((item) => String(item?.id || '') === String(order?.work_type_id || ''))?.name,
-          ],
+          extraTexts: useWorkTypes
+            ? [
+                workTypes.find((item) => String(item?.id || '') === String(order?.work_type_id || ''))?.name,
+              ]
+            : [],
         }),
         q,
       );
@@ -1708,6 +1851,7 @@ function AllOrdersContent() {
     orderFilters.departureTimeTo,
     orders,
     profile?.role,
+    useWorkTypes,
     workTypes,
     t,
   ]);
@@ -1723,9 +1867,13 @@ function AllOrdersContent() {
     [feedTotalCount],
   );
   const ordersFacetCounts = useOrderFacetCounts(filteredOrders, panelStatusOptions, {
-    isStatusNarrowed: effectiveStatusFilter !== 'all',
-    scopeKey: String(companyId || profile?.company_id || 'no-company'),
+    enabled: requestsEnabled && effectiveAllowed === true && !statusSystem.isLoading,
+    scope: 'all',
+    scopeKey: initialAllOrdersScopeKey,
     statusOverrides: allOrdersFeedFacetOverride,
+    verifyClientTags: clientTagOptions.length > 0,
+    verifyObjectTags: objectTagOptions.length > 0,
+    verifyObjects: objectOptions.length > 0,
   });
 
   const loadMore = useCallback(async () => {
@@ -1739,6 +1887,9 @@ function AllOrdersContent() {
     ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
     client_ids: Array.isArray(orderFilters.clientIds) ? orderFilters.clientIds.join(',') : '',
     ...buildRouteFilterParams(orderFilters),
+    filter_entity_type: routeEntityFilterType,
+    filter_entity_id: routeEntityFilterId,
+    filter_entity_label: routeEntityFilterLabel,
     relation_client_id: relationClientId,
     relation_object_ids: relationObjectIds.join(','),
     relation_label: relationLabel,
@@ -1749,6 +1900,9 @@ function AllOrdersContent() {
       search: searchQuery,
       ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
       ...buildRouteFilterParams(orderFilters),
+      ...(routeEntityFilterType ? { filter_entity_type: routeEntityFilterType } : {}),
+      ...(routeEntityFilterId ? { filter_entity_id: routeEntityFilterId } : {}),
+      ...(routeEntityFilterLabel ? { filter_entity_label: routeEntityFilterLabel } : {}),
       ...(relationClientId ? { relation_client_id: relationClientId } : {}),
       ...(relationObjectIds.length ? { relation_object_ids: relationObjectIds.join(',') } : {}),
       ...(relationLabel ? { relation_label: relationLabel } : {}),
@@ -1760,6 +1914,9 @@ function AllOrdersContent() {
     relationClientId,
     relationLabel,
     relationObjectIds,
+    routeEntityFilterId,
+    routeEntityFilterLabel,
+    routeEntityFilterType,
     searchQuery,
   ]);
 
@@ -2199,6 +2356,7 @@ function AllOrdersContent() {
         statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
         workTypeOptions={useWorkTypes ? workTypes : []}
         clientOptions={clientOptions}
+        objectOptions={objectOptions}
         clientTagOptions={clientTagOptions}
         objectTagOptions={objectTagOptions}
         facetCounts={ordersFacetCounts}
@@ -2247,6 +2405,10 @@ function AllOrdersContent() {
           setOrderFilters(normalizedNextValues);
           router.setParams({
             ...buildRouteFilterParams(normalizedNextValues),
+            filter_entity_type: undefined,
+            filter_entity_id: undefined,
+            filter_entity_label: undefined,
+            reset_order_filters: undefined,
             filter: nextStatus === MULTIPLE_STATUS_FILTER ? 'all' : nextStatus,
           });
         }}

@@ -13,8 +13,9 @@ const QUALITY_PROBE_INTERVAL_MS = 45_000;
 const QUALITY_CONFIRMATION_DELAY_MS = 5_000;
 const QUALITY_PROBE_TIMEOUT_MS = 6_000;
 const QUALITY_SLOW_RTT_MS = 2_500;
-const QUALITY_RECOVERED_RTT_MS = 1_500;
-const QUALITY_REQUIRED_SAMPLES = 2;
+const QUALITY_RECOVERED_RTT_MS = 2_000;
+const QUALITY_REQUIRED_SLOW_SAMPLES = 3;
+const QUALITY_REQUIRED_GOOD_SAMPLES = 2;
 
 export type OfflineOutboxItem = {
   id: string;
@@ -64,15 +65,6 @@ let cachedOfflineSnapshot: {
   isSyncing: boolean;
 } | null = null;
 const listeners = new Set<Listener>();
-
-function hasPoorTransportHint(state: NetInfoState | null) {
-  const connectionType = String(state?.type || '').toLowerCase();
-  const cellularGeneration = String((state?.details as any)?.cellularGeneration || '').toLowerCase();
-
-  // NetInfo documents cellular generation as an indication, not a speed guarantee.
-  // It is only one sample in the confirmation algorithm below.
-  return connectionType === 'cellular' && cellularGeneration === '2g';
-}
 
 function getConnectionIdentity(state: NetInfoState | null) {
   const type = String(state?.type || 'unknown').toLowerCase();
@@ -214,13 +206,13 @@ function recordNetworkQualitySample(sample: 'slow' | 'good' | 'neutral') {
   if (sample === 'slow') {
     consecutiveSlowSamples += 1;
     consecutiveGoodSamples = 0;
-    if (consecutiveSlowSamples >= QUALITY_REQUIRED_SAMPLES) {
+    if (consecutiveSlowSamples >= QUALITY_REQUIRED_SLOW_SAMPLES) {
       setConfirmedPoorConnection(true);
     }
   } else if (sample === 'good') {
     consecutiveGoodSamples += 1;
     consecutiveSlowSamples = 0;
-    if (consecutiveGoodSamples >= QUALITY_REQUIRED_SAMPLES) {
+    if (consecutiveGoodSamples >= QUALITY_REQUIRED_GOOD_SAMPLES) {
       setConfirmedPoorConnection(false);
     }
   } else {
@@ -253,7 +245,6 @@ async function runNetworkQualityProbe() {
   if (!baseUrl) return;
 
   const connectionIdentity = getConnectionIdentity(lastNetState);
-  const transportHintWasPoor = hasPoorTransportHint(lastNetState);
   const startedAt = Date.now();
   const controller = new AbortController();
   qualityProbeAbortController = controller;
@@ -301,12 +292,19 @@ async function runNetworkQualityProbe() {
   }
 
   const elapsedMs = Date.now() - startedAt;
-  const sample =
-    !requestSucceeded || transportHintWasPoor || elapsedMs >= QUALITY_SLOW_RTT_MS
+  // A cellular generation is only a rough transport hint, and an immediate
+  // probe failure can be caused by the endpoint, TLS, a VPN, or a proxy. Do
+  // not present either as a fact about the user's internet quality. A
+  // successful slow round-trip or a real timeout is measurable evidence.
+  const sample = requestSucceeded
+    ? elapsedMs >= QUALITY_SLOW_RTT_MS
       ? 'slow'
       : elapsedMs <= QUALITY_RECOVERED_RTT_MS
         ? 'good'
-        : 'neutral';
+        : 'neutral'
+    : probeTimedOut
+      ? 'slow'
+      : 'neutral';
   recordNetworkQualitySample(sample);
 }
 

@@ -21,13 +21,13 @@ const PATHS = {
   calendar: '/orders/calendar',
 };
 
-function TabButton({ label, active, onPress, onPressIn, colors, metrics }) {
+function TabButton({ label, active, onPress, colors, metrics }) {
   const accLabel = typeof label === 'string' ? label : String(label || 'Tab');
   return (
     <Pressable
       style={({ pressed }) => [styles.btn, pressed && styles.btnPressed]}
       onPress={onPress}
-      onPressIn={onPressIn}
+      unstable_pressDelay={0}
       android_ripple={{ color: colors.ripple, borderless: false }}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
@@ -243,7 +243,6 @@ function BottomNavInner() {
               onPress={() => {
                 if (activeKey !== 'orders') navigateTab(PATHS.orders);
               }}
-              onPressIn={() => preloadRouteScreen(PATHS.orders)}
               colors={colors}
               metrics={metrics}
             />
@@ -254,7 +253,6 @@ function BottomNavInner() {
               onPress={() => {
                 if (activeKey !== 'all') navigateTab(PATHS.all);
               }}
-              onPressIn={() => preloadRouteScreen(PATHS.all)}
               colors={colors}
               metrics={metrics}
             />
@@ -267,7 +265,6 @@ function BottomNavInner() {
             onPress={() => {
               if (activeKey !== 'orders') navigateTab(PATHS.orders);
             }}
-            onPressIn={() => preloadRouteScreen(PATHS.orders)}
             colors={colors}
             metrics={metrics}
           />
@@ -280,7 +277,6 @@ function BottomNavInner() {
           onPress={() => {
             if (activeKey !== 'calendar') navigateTab(PATHS.calendar);
           }}
-          onPressIn={() => preloadRouteScreen(PATHS.calendar)}
           colors={colors}
           metrics={metrics}
         />

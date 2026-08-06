@@ -1,7 +1,10 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../lib/keyboardControllerCompat';
 import { FormAutoScrollProvider } from '../../src/shared/forms/FormAutoScrollContext';
 import { useTheme } from '../../theme/ThemeProvider';
 import DismissKeyboardArea from './DismissKeyboardArea';
@@ -64,7 +67,7 @@ export default function EditScreenTemplate({
         contentContainerStyle,
       ]}
       keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="none"
+      keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
       showsVerticalScrollIndicator={false}
       contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
       scrollEnabled={scrollEnabled}

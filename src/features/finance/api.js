@@ -13,6 +13,7 @@ const ORDER_FINANCE_SELECT = `
   input_percent,
   percent_base,
   calculated_amount,
+  finance_effect,
   expense_payer,
   photo_urls,
   recipient_user_id,
@@ -24,6 +25,65 @@ const ORDER_FINANCE_SELECT = `
   created_at,
   updated_at,
   recipient:profiles!order_finance_entries_recipient_user_id_fkey(id, first_name, middle_name, last_name, full_name)
+`;
+
+const ORDER_FINANCE_SNAPSHOT_SELECT = `
+  order_id,
+  company_id,
+  scheme_id,
+  scheme_version_id,
+  scheme_name,
+  scheme_version_number,
+  money_holder,
+  customer_base_total,
+  customer_charge_total,
+  customer_discount_total,
+  customer_total,
+  worker_base_compensation_total,
+  worker_bonus_total,
+  worker_deduction_total,
+  worker_compensation_total,
+  worker_reimbursement_total,
+  worker_payable_total,
+  company_cost_total,
+  company_margin_total,
+  worker_paid_total,
+  company_received_total,
+  settlement_direction,
+  settlement_amount,
+  settlement_status,
+  breakdown_json,
+  calculated_at,
+  locked_at
+`;
+
+const FINANCE_SCHEME_SELECT = `
+  id,
+  company_id,
+  name,
+  conditions_json,
+  is_default,
+  is_enabled,
+  priority,
+  current_version_id,
+  archived_at,
+  created_at,
+  updated_at
+`;
+
+const FINANCE_SCHEME_VERSION_SELECT = `
+  id,
+  scheme_id,
+  company_id,
+  version_number,
+  compensation_mode,
+  fixed_amount,
+  percent_value,
+  percent_base,
+  minimum_worker_amount,
+  maximum_worker_amount,
+  configuration_json,
+  created_at
 `;
 
 const FINANCE_RULE_SELECT = `
@@ -75,6 +135,31 @@ function normalizeExpensePayer(value) {
   return String(value || '').trim() === 'executor' ? 'executor' : 'company';
 }
 
+const FINANCE_EFFECTS = new Set([
+  'customer_charge',
+  'customer_discount',
+  'company_cost',
+  'worker_reimbursement',
+  'worker_bonus',
+  'worker_deduction',
+  'worker_payment',
+  'company_remittance',
+]);
+
+function normalizeFinanceEffect(value, kind = 'expense', payer = 'company') {
+  const normalized = String(value || '').trim();
+  if (FINANCE_EFFECTS.has(normalized)) return normalized;
+  if (String(kind || '') === 'income') return 'customer_charge';
+  if (String(kind || '') === 'discount') return 'customer_discount';
+  return normalizeExpensePayer(payer) === 'executor' ? 'worker_reimbursement' : 'company_cost';
+}
+
+function financeEffectKind(effect) {
+  if (effect === 'customer_charge') return 'income';
+  if (effect === 'customer_discount') return 'discount';
+  return 'expense';
+}
+
 function normalizeRuleConditions(value) {
   const fallback = { op: 'all', conditions: [] };
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
@@ -115,18 +200,65 @@ export async function listOrderFinanceEntries(orderId) {
   return Array.isArray(data) ? data : [];
 }
 
+export async function getOrderFinanceSnapshot(orderId) {
+  if (!isValidUuid(orderId)) return null;
+  const { data, error } = await supabase
+    .from('order_finance_snapshots')
+    .select(ORDER_FINANCE_SNAPSHOT_SELECT)
+    .eq('order_id', orderId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+export async function getOrderFinanceSchemeRule(orderId) {
+  if (!isValidUuid(orderId)) return null;
+  const { data, error } = await supabase.rpc('get_order_finance_scheme_rule_v2', {
+    p_order_id: orderId,
+  });
+  if (error) throw error;
+  return data && typeof data === 'object' ? data : null;
+}
+
+export async function setOrderFinanceMoneyHolder({ orderId, moneyHolder }) {
+  if (!isValidUuid(orderId)) throw new Error('Order id is required');
+  const holder = String(moneyHolder || '').trim() === 'executor' ? 'executor' : 'company';
+  const { data, error } = await supabase.rpc('set_order_finance_money_holder_v2', {
+    p_order_id: orderId,
+    p_money_holder: holder,
+  });
+  if (error) throw error;
+  return data !== false;
+}
+
+export async function setOrderFinanceSchemeDisabled({ orderId, isDisabled }) {
+  if (!isValidUuid(orderId)) throw new Error('Order id is required');
+  const { data, error } = await supabase.rpc('set_order_finance_scheme_disabled_v2', {
+    p_order_id: orderId,
+    p_is_disabled: isDisabled === true,
+  });
+  if (error) throw error;
+  return data !== false;
+}
+
 export async function upsertOrderFinanceEntry(payload) {
+  const financeEffect = normalizeFinanceEffect(
+    payload?.finance_effect,
+    payload?.kind,
+    payload?.expense_payer,
+  );
   const row = {
     company_id: normalizeId(payload?.company_id),
     order_id: normalizeId(payload?.order_id),
-    kind: String(payload?.kind || 'expense').trim(),
+    kind: financeEffectKind(financeEffect),
     title: String(payload?.title || '').trim(),
     note: payload?.note ? String(payload.note).trim() : null,
     calc_mode: String(payload?.calc_mode || 'fixed').trim(),
     input_amount: normalizeMoney(payload?.input_amount),
     input_percent: normalizePercent(payload?.input_percent),
-    percent_base: normalizePercentBase(payload?.kind, payload?.percent_base),
-    expense_payer: normalizeExpensePayer(payload?.expense_payer),
+    percent_base: normalizePercentBase(financeEffectKind(financeEffect), payload?.percent_base),
+    finance_effect: financeEffect,
+    expense_payer: financeEffect === 'worker_reimbursement' ? 'executor' : 'company',
     recipient_user_id: normalizeId(payload?.recipient_user_id),
     requires_note: payload?.requires_note === true,
     note_visible: payload?.note_visible !== false,
@@ -265,4 +397,112 @@ export async function deleteCompanyFinanceRule(payload) {
   }
   if (error) throw error;
   return true;
+}
+
+export async function listCompanyFinanceSchemes(companyId) {
+  if (!companyId) return [];
+  const { data: schemes, error: schemesError } = await supabase
+    .from('company_finance_schemes')
+    .select(FINANCE_SCHEME_SELECT)
+    .eq('company_id', companyId)
+    .is('archived_at', null)
+    .order('is_default', { ascending: false })
+    .order('priority', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (schemesError) throw schemesError;
+
+  const rows = Array.isArray(schemes) ? schemes : [];
+  const versionIds = rows.map((row) => row?.current_version_id).filter(Boolean);
+  if (!versionIds.length) return rows.map((row) => ({ ...row, current_version: null }));
+
+  const { data: versions, error: versionsError } = await supabase
+    .from('company_finance_scheme_versions')
+    .select(FINANCE_SCHEME_VERSION_SELECT)
+    .in('id', versionIds);
+  if (versionsError) throw versionsError;
+  const versionsById = new Map(
+    (Array.isArray(versions) ? versions : []).map((version) => [String(version.id), version]),
+  );
+  return rows.map((row) => ({
+    ...row,
+    current_version: versionsById.get(String(row.current_version_id || '')) || null,
+  }));
+}
+
+export async function upsertCompanyFinanceScheme(payload) {
+  const companyId = normalizeId(payload?.company_id);
+  if (!companyId) throw new Error('company_id is required');
+  const name = String(payload?.name || '').trim();
+  if (!name) throw new Error('name is required');
+
+  const rpcPayload = {
+    id: normalizeId(payload?.id),
+    company_id: companyId,
+    name,
+    conditions_json: normalizeRuleConditions(payload?.conditions_json),
+    compensation_mode: String(payload?.compensation_mode || 'manual').trim(),
+    fixed_amount: normalizeMoney(payload?.fixed_amount),
+    percent_value: normalizePercent(payload?.percent_value),
+    percent_base: ['base_price', 'customer_total', 'income_total'].includes(
+      String(payload?.percent_base || ''),
+    )
+      ? String(payload.percent_base)
+      : 'customer_total',
+    minimum_worker_amount:
+      payload?.minimum_worker_amount === null ||
+      payload?.minimum_worker_amount === undefined ||
+      String(payload.minimum_worker_amount).trim() === ''
+        ? null
+        : normalizeMoney(payload.minimum_worker_amount),
+    maximum_worker_amount:
+      payload?.maximum_worker_amount === null ||
+      payload?.maximum_worker_amount === undefined ||
+      String(payload.maximum_worker_amount).trim() === ''
+        ? null
+        : normalizeMoney(payload.maximum_worker_amount),
+    is_default: payload?.is_default === true,
+    is_enabled: payload?.is_enabled !== false,
+    priority: Number.isFinite(Number(payload?.priority)) ? Number(payload.priority) : 100,
+    apply_to_existing: payload?.apply_to_existing === true,
+    configuration_json:
+      payload?.configuration_json &&
+      typeof payload.configuration_json === 'object' &&
+      !Array.isArray(payload.configuration_json)
+        ? payload.configuration_json
+        : {},
+  };
+
+  const { data, error } = await supabase.rpc('upsert_company_finance_scheme_v2', {
+    p_payload: rpcPayload,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function archiveCompanyFinanceScheme({
+  schemeId,
+  recalculateExisting = false,
+}) {
+  if (!schemeId) throw new Error('Scheme id is required');
+  const { data, error } = await supabase.rpc('archive_company_finance_scheme_v2', {
+    p_scheme_id: schemeId,
+    p_recalculate_existing: recalculateExisting === true,
+  });
+  if (error) throw error;
+  return data !== false;
+}
+
+export async function setCompanyFinanceSchemeEnabled({
+  schemeId,
+  isEnabled,
+  recalculateExisting = true,
+}) {
+  if (!schemeId) throw new Error('Scheme id is required');
+  const { data, error } = await supabase.rpc('set_company_finance_scheme_enabled_v2', {
+    p_scheme_id: schemeId,
+    p_is_enabled: isEnabled === true,
+    p_recalculate_existing: recalculateExisting === true,
+  });
+  if (error) throw error;
+  return data !== false;
 }

@@ -7,12 +7,20 @@ import {
   isOfflineLikeError,
 } from '../../shared/offline/offlineStatus';
 import {
+  archiveCompanyFinanceScheme,
   deleteCompanyFinanceRule,
   deleteOrderFinanceEntry,
   excludeOrderFinanceRule,
+  getOrderFinanceSchemeRule,
+  getOrderFinanceSnapshot,
   listCompanyFinanceRules,
+  listCompanyFinanceSchemes,
   listOrderFinanceEntries,
+  setOrderFinanceSchemeDisabled,
+  setCompanyFinanceSchemeEnabled,
+  setOrderFinanceMoneyHolder,
   upsertCompanyFinanceRule,
+  upsertCompanyFinanceScheme,
   upsertOrderFinanceEntry,
 } from './api';
 
@@ -22,7 +30,10 @@ let financeSyncInFlight = null;
 
 export const financeQueryKeys = {
   orderEntries: (orderId) => ['finance', 'order-entries', String(orderId || '')],
+  orderSnapshot: (orderId) => ['finance', 'order-snapshot', String(orderId || '')],
+  orderSchemeRule: (orderId) => ['finance', 'order-scheme-rule', String(orderId || '')],
   companyRules: (companyId) => ['finance', 'company-rules', String(companyId || '')],
+  companySchemes: (companyId) => ['finance', 'company-schemes', String(companyId || '')],
 };
 
 function nowIso() {
@@ -158,6 +169,7 @@ async function runFinanceOutboxSync(queryClient) {
       }));
       if (item?.order_id) {
         queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(item.order_id) });
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderSnapshot(item.order_id) });
         queryClient.invalidateQueries({ queryKey: ['requests', 'detail', String(item.order_id)] });
       }
     } catch (error) {
@@ -207,6 +219,28 @@ export function useOrderFinanceEntries(orderId, options = {}) {
     ...options,
     // Never carry finance rows across identity keys. Showing the previous
     // order's entries while a new order loads can lead to editing the wrong row.
+    placeholderData: () => undefined,
+  });
+}
+
+export function useOrderFinanceSnapshot(orderId, options = {}) {
+  return useQuery({
+    queryKey: financeQueryKeys.orderSnapshot(orderId),
+    queryFn: () => getOrderFinanceSnapshot(orderId),
+    enabled: !!orderId,
+    staleTime: 30 * 1000,
+    ...options,
+    placeholderData: () => undefined,
+  });
+}
+
+export function useOrderFinanceSchemeRule(orderId, options = {}) {
+  return useQuery({
+    queryKey: financeQueryKeys.orderSchemeRule(orderId),
+    queryFn: () => getOrderFinanceSchemeRule(orderId),
+    enabled: !!orderId,
+    staleTime: 30 * 1000,
+    ...options,
     placeholderData: () => undefined,
   });
 }
@@ -267,6 +301,7 @@ export function useUpsertOrderFinanceEntryMutation(orderId) {
       const targetOrderId = String(payload?.order_id || orderId || '');
       if (targetOrderId) {
         queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(targetOrderId) });
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderSnapshot(targetOrderId) });
         queryClient.invalidateQueries({ queryKey: ['requests', 'detail', targetOrderId] });
       }
       queryClient.invalidateQueries({ queryKey: ['requests'] });
@@ -327,6 +362,7 @@ export function useDeleteOrderFinanceEntryMutation(orderId) {
     onSuccess: () => {
       if (orderId) {
         queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(orderId) });
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderSnapshot(orderId) });
         queryClient.invalidateQueries({ queryKey: ['requests', 'detail', String(orderId)] });
       }
       queryClient.invalidateQueries({ queryKey: ['requests'] });
@@ -365,6 +401,89 @@ export function useDeleteCompanyFinanceRuleMutation(companyId) {
       if (companyId) {
         queryClient.invalidateQueries({ queryKey: financeQueryKeys.companyRules(companyId) });
       }
+    },
+  });
+}
+
+export function useSetOrderFinanceMoneyHolderMutation(orderId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: setOrderFinanceMoneyHolder,
+    onSuccess: () => {
+      if (orderId) {
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderSnapshot(orderId) });
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(orderId) });
+        queryClient.invalidateQueries({ queryKey: ['requests', 'detail', String(orderId)] });
+      }
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+    },
+  });
+}
+
+export function useSetOrderFinanceSchemeDisabledMutation(orderId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: setOrderFinanceSchemeDisabled,
+    onSuccess: () => {
+      if (orderId) {
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderSnapshot(orderId) });
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderSchemeRule(orderId) });
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(orderId) });
+        queryClient.invalidateQueries({ queryKey: ['requests', 'detail', String(orderId)] });
+      }
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+    },
+  });
+}
+
+export function useCompanyFinanceSchemes(companyId, options = {}) {
+  return useQuery({
+    queryKey: financeQueryKeys.companySchemes(companyId),
+    queryFn: () => listCompanyFinanceSchemes(companyId),
+    enabled: !!companyId,
+    staleTime: 30 * 1000,
+    ...options,
+  });
+}
+
+export function useUpsertCompanyFinanceSchemeMutation(companyId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: upsertCompanyFinanceScheme,
+    onSuccess: () => {
+      if (companyId) {
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.companySchemes(companyId) });
+      }
+      queryClient.invalidateQueries({ queryKey: ['finance', 'order-snapshot'] });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+    },
+  });
+}
+
+export function useArchiveCompanyFinanceSchemeMutation(companyId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: archiveCompanyFinanceScheme,
+    onSuccess: () => {
+      if (companyId) {
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.companySchemes(companyId) });
+      }
+      queryClient.invalidateQueries({ queryKey: ['finance', 'order-snapshot'] });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+    },
+  });
+}
+
+export function useSetCompanyFinanceSchemeEnabledMutation(companyId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: setCompanyFinanceSchemeEnabled,
+    onSuccess: () => {
+      if (companyId) {
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.companySchemes(companyId) });
+      }
+      queryClient.invalidateQueries({ queryKey: ['finance', 'order-snapshot'] });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
     },
   });
 }

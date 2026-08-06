@@ -16,6 +16,17 @@ function ModalMessage({ message, theme }) {
   );
 }
 
+function useVisibleContentSnapshot(visible, content) {
+  const snapshotRef = React.useRef(content);
+
+  // BaseModal remains mounted while its closing animation is running. Keep the
+  // last visible content during that interval so clearing the caller's state
+  // cannot replace the title, message or actions for the final animation frame.
+  if (visible) snapshotRef.current = content;
+
+  return visible ? content : snapshotRef.current;
+}
+
 export function ConfirmModal({
   visible,
   title,
@@ -28,6 +39,14 @@ export function ConfirmModal({
   onClose,
 }) {
   const { theme } = useTheme();
+  const content = useVisibleContentSnapshot(visible, {
+    title,
+    message,
+    confirmLabel,
+    cancelLabel,
+    confirmVariant,
+    loading,
+  });
   const handleConfirm = () => {
     try {
       onClose?.();
@@ -44,16 +63,16 @@ export function ConfirmModal({
       actions={[
         {
           key: 'cancel',
-          title: cancelLabel,
+          title: content.cancelLabel,
           variant: 'secondary',
           onPress: onClose,
         },
         {
           key: 'confirm',
-          title: confirmLabel,
-          variant: confirmVariant,
+          title: content.confirmLabel,
+          variant: content.confirmVariant,
           dismissKeyboardOnPress: true,
-          loading,
+          loading: content.loading,
           onPress: handleConfirm,
         },
       ]}
@@ -63,13 +82,13 @@ export function ConfirmModal({
     <BaseModal
       visible={visible}
       onClose={onClose}
-      title={title}
+      title={content.title}
       maxHeightRatio={0.5}
       presentation="dialog"
       footer={footer}
     >
       <View style={{ marginBottom: theme.spacing.md }}>
-        <ModalMessage message={message} theme={theme} />
+        <ModalMessage message={content.message} theme={theme} />
       </View>
     </BaseModal>
   );
@@ -77,12 +96,13 @@ export function ConfirmModal({
 
 export function AlertModal({ visible, title, message, buttonLabel = T('btn_ok'), onClose }) {
   const { theme } = useTheme();
+  const content = useVisibleContentSnapshot(visible, { title, message, buttonLabel });
   const footer = (
     <ModalActionsRow
       actions={[
         {
           key: 'close',
-          title: buttonLabel,
+          title: content.buttonLabel,
           variant: 'primary',
           onPress: onClose,
         },
@@ -93,13 +113,13 @@ export function AlertModal({ visible, title, message, buttonLabel = T('btn_ok'),
     <BaseModal
       visible={visible}
       onClose={onClose}
-      title={title}
+      title={content.title}
       maxHeightRatio={0.45}
       presentation="dialog"
       footer={footer}
     >
       <View style={{ marginBottom: theme.spacing.md }}>
-        <ModalMessage message={message} theme={theme} />
+        <ModalMessage message={content.message} theme={theme} />
       </View>
     </BaseModal>
   );

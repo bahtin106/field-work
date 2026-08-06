@@ -9,7 +9,10 @@ import {
   Text,
   View,
 } from 'react-native';
-import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../lib/keyboardControllerCompat';
 
 import Screen from '../../components/layout/Screen';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
@@ -20,6 +23,7 @@ import { BaseModal } from '../../components/ui/modals';
 import { useToast } from '../../components/ui/ToastProvider';
 import { useAuthLogin } from '../../hooks/useAuthLogin';
 import { consumeAuthBlockNotice } from '../../lib/authBlockNotice';
+import { getAppVersion } from '../../lib/appVersion';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
@@ -105,6 +109,12 @@ const createStyles = (theme) => {
     registerLink: {
       color: theme.colors.primary,
       fontWeight: theme.typography.weight.semibold,
+    },
+    versionText: {
+      textAlign: 'center',
+      marginTop: theme.spacing.md,
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.xs,
     },
     modalText: {
       color: theme.colors.textSecondary,
@@ -368,6 +378,7 @@ function LoginScreenContent() {
   const recoverSendTitle = canSendRecover
     ? (recoverSentOnce ? t('login_recover_send_again') : t('btn_send'))
     : t('login_recover_send_in').replace('{n}', String(recoverCooldownLeft));
+  const appVersion = getAppVersion();
 
   return (
     <Screen background="background">
@@ -471,6 +482,11 @@ function LoginScreenContent() {
                   {t('register_link')}
                 </Text>
               </Text>
+              {appVersion ? (
+                <Text style={styles.versionText}>
+                  {t('app_version').replace('{version}', appVersion)}
+                </Text>
+              ) : null}
             </View>
           </View>
         ) : (
@@ -570,6 +586,11 @@ function LoginScreenContent() {
                     {t('register_link')}
                   </Text>
                 </Text>
+                {appVersion ? (
+                  <Text style={styles.versionText}>
+                    {t('app_version').replace('{version}', appVersion)}
+                  </Text>
+                ) : null}
               </View>
             </View>
           </DismissKeyboardArea>
@@ -609,7 +630,7 @@ function LoginScreenContent() {
           style={styles.modalScroll}
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
+          keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.modalText}>{t('login_recover_modal_text')}</Text>
@@ -667,7 +688,7 @@ function LoginScreenContent() {
           style={styles.modalScroll}
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
+          keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
           showsVerticalScrollIndicator={false}
         >
           <TextField

@@ -1,4 +1,7 @@
 import groovy.json.JsonSlurper
+import com.android.build.api.instrumentation.FramesComputationMode
+import com.android.build.api.instrumentation.InstrumentationScope
+import com.monitorapp.build.LegacySystemBarColorApiVisitorFactory
 
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
@@ -96,8 +99,8 @@ android {
         applicationId = 'com.monitorapp.monitor'
         minSdk = rootProject.ext.minSdkVersion
         targetSdk = rootProject.ext.targetSdkVersion
-        versionCode = 8
-        versionName = "1.0.3"
+        versionCode = 11
+        versionName = "1.1.0"
         externalNativeBuild {
             cmake {
                 // Keep object paths under Windows MAX_PATH without over-constraining CMake.
@@ -225,3 +228,15 @@ dependencies {
 }
 
 apply plugin: "com.google.gms.google-services"
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.instrumentation.transformClassesWith(
+            LegacySystemBarColorApiVisitorFactory,
+            InstrumentationScope.ALL
+        ) { }
+        variant.instrumentation.setAsmFramesComputationMode(
+            FramesComputationMode.COMPUTE_FRAMES_FOR_INSTRUMENTED_METHODS
+        )
+    }
+}

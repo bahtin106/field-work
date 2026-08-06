@@ -325,8 +325,9 @@ function EditOrderContent() {
     user?.email,
   ]);
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
-  const canViewOrderAmount = hasPermission('canViewFinanceAll');
-  const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditFinanceEntries');
+  const canViewOrderAmount = hasPermission('canViewOrderAmount');
+  const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditOrderAmount');
+  const canAssignExecutors = isSoloAdmin || hasPermission('canAssignExecutors');
   const formStyles = useEditFormStyles();
   const { settings: companySettings } = useCompanySettings();
   const {
@@ -582,10 +583,10 @@ function EditOrderContent() {
       if (stickyPlanningFieldMap?.[fieldKey]) visible.add(fieldKey);
     });
     return priority.filter((fieldKey) => {
-      if (isSoloAdmin && fieldKey === 'assigned_to') return false;
+      if ((isSoloAdmin || !canAssignExecutors) && fieldKey === 'assigned_to') return false;
       return visible.has(fieldKey);
     });
-  }, [dynamicPlanningFieldKeys, isSoloAdmin, stickyPlanningFieldMap]);
+  }, [canAssignExecutors, dynamicPlanningFieldKeys, isSoloAdmin, stickyPlanningFieldMap]);
   const generalPlanningFieldKeys = useMemo(
     () => orderedPlanningFieldKeys.filter((fieldKey) => ['urgent', 'time_window_start', 'departure_time', 'assigned_to'].includes(fieldKey)),
     [orderedPlanningFieldKeys],
@@ -1442,7 +1443,7 @@ function EditOrderContent() {
         nextAddressMode = ORDER_ADDRESS_MODE.CUSTOM;
       }
       const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
-      const nextEntranceInfo = row.entrance_info ?? row.object?.comment ?? '';
+      const nextEntranceInfo = row.entrance_info ?? '';
       const nextParkingNotes = '';
       const nextGeoLat = row.geo_lat ?? '';
       const nextGeoLng = row.geo_lng ?? '';
@@ -2068,15 +2069,11 @@ function EditOrderContent() {
     () => !!addressModalMapLat && !!addressModalMapLng,
     [addressModalMapLat, addressModalMapLng],
   );
-  const activeAddressDraft = useMemo(
-    () =>
-      addressMode === ORDER_ADDRESS_MODE.OBJECT
-        ? selectedObject
-          ? extractOrderAddressFromObject(selectedObject)
-          : customAddressDraft
-        : customAddressDraft,
-    [addressMode, customAddressDraft, selectedObject],
-  );
+  // The form is hydrated from the address snapshot stored on the order and is
+  // explicitly updated when the user selects another object or edits the
+  // address. Reading the live object here would silently copy later object
+  // changes into the order during an otherwise unrelated save.
+  const activeAddressDraft = customAddressDraft;
   const customAddressFields = useMemo(
     () => [
       { key: 'country', label: T('order_field_country'), ref: countryRef },
@@ -2293,7 +2290,7 @@ function EditOrderContent() {
       const nextComment = String(description ?? '');
       const isCommentChanged = nextComment !== existingComment;
 
-      const { comment: _addressComment, ...addressPatch } = toOrderAddressPatch(activeAddressDraft);
+      const addressPatch = toOrderAddressPatch(activeAddressDraft);
 
       const payload = {
         title: resolveTitleForSave(title, normalizedDepartureDate),

@@ -3,7 +3,10 @@ import React from 'react';
 import { Dimensions } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../../../lib/keyboardControllerCompat';
 import Button from '../../../components/ui/Button';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
@@ -257,7 +260,7 @@ export default function SupportRequestModal({ visible, onClose, onSubmitted, pro
           style={styles(theme).scroll}
           contentContainerStyle={styles(theme).contentWrap}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
+          keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
           showsVerticalScrollIndicator={false}
         >
           <TextField

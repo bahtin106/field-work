@@ -1,5 +1,6 @@
 // app/orders/_layout.js
 import { Stack } from 'expo-router';
+import { renderNavigationScreen } from '../../components/navigation/NavigationCommitBoundary';
 import { useTheme } from '../../theme/ThemeProvider';
 
 export const unstable_settings = {
@@ -11,6 +12,7 @@ export default function OrdersLayout() {
 
   return (
     <Stack
+      screenLayout={renderNavigationScreen}
       screenOptions={{
         headerShown: false,
         presentation: 'card',

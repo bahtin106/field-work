@@ -6,10 +6,20 @@ import Feather from '@expo/vector-icons/Feather';
 import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { scheduleUiIdleTask } from '../../../src/shared/perf/uiIdleTask';
 import { useTheme } from '../../../theme/ThemeProvider';
 import PhotoGrid from './PhotoGrid';
 
-const PhotoCaptureFlowModal = lazy(() => import('./PhotoCaptureFlowModal'));
+let photoCaptureFlowModalPromise = null;
+
+function loadPhotoCaptureFlowModal() {
+  if (!photoCaptureFlowModalPromise) {
+    photoCaptureFlowModalPromise = import('./PhotoCaptureFlowModal');
+  }
+  return photoCaptureFlowModalPromise;
+}
+
+const PhotoCaptureFlowModal = lazy(loadPhotoCaptureFlowModal);
 let imagePipelineModulePromise = null;
 
 function loadImagePipelineModule() {
@@ -75,6 +85,14 @@ export default function MediaUploadModal({
   useEffect(() => {
     if (!canAddFromCamera && cameraVisible) setCameraVisible(false);
   }, [cameraVisible, canAddFromCamera]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    return scheduleUiIdleTask(() => {
+      if (canAddFromGallery) loadImagePipelineModule().catch(() => {});
+      if (canAddFromCamera) loadPhotoCaptureFlowModal().catch(() => {});
+    }, { delayMs: 260 });
+  }, [canAddFromCamera, canAddFromGallery, visible]);
 
   useEffect(() => {
     if (!canRemovePhotos && selectionMode) {
@@ -373,9 +391,7 @@ export default function MediaUploadModal({
   const photoContent = (
     <>
       <Text style={s.subtitle}>
-        {selectionMode
-          ? t('order_photos_selected_hint').replace('{count}', String(selectedCount))
-          : t('order_photos_count').replace('{count}', String(count))}
+        {t('order_photos_count').replace('{count}', String(count))}
       </Text>
       {unavailableCount > 0 ? (
         <Text style={s.warningText}>
@@ -470,11 +486,9 @@ function buildStyles(theme) {
       gap: sp.sm,
     },
     footerLabel: {
-      fontSize: ty.sizes.xs,
+      fontSize: ty.sizes.sm,
       fontWeight: ty.weight?.semibold || '600',
-      color: cl.textSecondary,
-      textTransform: 'uppercase',
-      letterSpacing: 0.5,
+      color: cl.text,
     },
     footerRow: {
       flexDirection: 'row',

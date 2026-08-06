@@ -13,6 +13,7 @@ const inMemoryCooldownMap = (globalThis as any).__PWD_RESET_COOLDOWN_MAP__ || ne
 
 type ResetRequestBody = {
   email?: string;
+  mode?: string;
   code?: string;
   password?: string;
   new_password?: string;
@@ -26,6 +27,13 @@ function normalizeEmail(value: unknown): string {
 function isValidEmail(value: string): boolean {
   if (!value) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function generateTempPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
 }
 
 function json(body: Record<string, unknown>, status = 200): Response {
@@ -103,6 +111,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return {} as ResetRequestBody;
     })();
     const email = normalizeEmail(body?.email);
+    const resetMode = String(body?.mode || '').trim();
     const code = String(body?.code || '').trim();
     const nextPassword = String(body?.new_password || body?.newPassword || body?.password || '').trim();
 
@@ -248,14 +257,63 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       });
     }
 
+    if (resetMode === 'profile-change') {
+      const emailServiceUrl = getEmailServiceUrl();
+      const sendRes = await fetch(`${emailServiceUrl}/registration/send-code`, {
+        method: 'POST',
+        headers: emailServiceHeaders(),
+        body: JSON.stringify({ email, purpose: 'recovery' }),
+      });
+      const sendPayload = await sendRes.json().catch(() => ({}));
+      if (!sendRes.ok || sendPayload?.ok !== true) {
+        const retryAfter = Math.max(1, Number(sendPayload?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
+        if (sendPayload?.code === 'RATE_LIMITED') {
+          return json({
+            ok: false,
+            code: 'RATE_LIMIT',
+            message: 'Повторная отправка пока недоступна',
+            retry_after_seconds: retryAfter,
+          });
+        }
+        throw new Error(`EMAIL_SEND_FAILED: ${String(sendPayload?.message || sendRes.status)}`);
+      }
+
+      if (requestLogId != null) {
+        await admin
+          .from('password_reset_requests')
+          .update({ status: 'sent', user_id: String(profile.id), error_message: null })
+          .eq('id', requestLogId);
+      }
+
+      return json({
+        ok: true,
+        cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
+        expires_in_seconds: Number(sendPayload?.expires_in_seconds) || PASSWORD_RESET_CODE_TTL_SECONDS,
+        message: 'Код отправлен на email',
+      });
+    }
+
+    const tempPassword = generateTempPassword();
+    const { error: updateError } = await admin.auth.admin.updateUserById(String(profile.id), {
+      password: tempPassword,
+    });
+    if (updateError) throw new Error(`Auth update failed: ${updateError.message}`);
+
     const emailServiceUrl = getEmailServiceUrl();
-    const sendRes = await fetch(`${emailServiceUrl}/registration/send-code`, {
+    const sendRes = await fetch(`${emailServiceUrl}/send-email`, {
       method: 'POST',
       headers: emailServiceHeaders(),
-      body: JSON.stringify({ email, purpose: 'recovery' }),
+      body: JSON.stringify({
+        type: 'password-reset',
+        source: 'self-service',
+        email,
+        firstName: String(profile.first_name || '').trim(),
+        lastName: String(profile.last_name || '').trim(),
+        tempPassword,
+      }),
     });
     const sendPayload = await sendRes.json().catch(() => ({}));
-    if (!sendRes.ok || sendPayload?.ok !== true) {
+    if (!sendRes.ok || sendPayload?.success !== true) {
       const retryAfter = Math.max(1, Number(sendPayload?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
       if (sendPayload?.code === 'RATE_LIMITED') {
         return json({
@@ -268,6 +326,17 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       throw new Error(`EMAIL_SEND_FAILED: ${String(sendPayload?.message || sendRes.status)}`);
     }
 
+    try {
+      await admin.rpc('upsert_password_change_log', {
+        p_user_id: String(profile.id),
+        p_changed_by: String(profile.id),
+        p_ip_address: ipAddress,
+        p_user_agent: userAgent,
+        p_source: 'edge:request-password-reset:temporary-password',
+        p_window_seconds: 180,
+      });
+    } catch {}
+
     if (requestLogId != null) {
       await admin
         .from('password_reset_requests')
@@ -278,8 +347,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
     return json({
       ok: true,
       cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
-      expires_in_seconds: Number(sendPayload?.expires_in_seconds) || PASSWORD_RESET_CODE_TTL_SECONDS,
-      message: 'Код отправлен на email',
+      message: 'Письмо с новым паролем отправлено',
     });
   } catch (error) {
     const message = String((error as Error)?.message || 'Unknown error');

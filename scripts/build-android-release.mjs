@@ -23,6 +23,29 @@ const androidDir = join(rootDir, 'android');
 const EXPECTED_PLAY_SHA1 = '4E:69:4F:24:AA:19:F3:3B:B5:C3:74:10:7D:27:ED:5B:D2:6D:71:17';
 const credentialsPath = join(rootDir, 'credentials.json');
 const bundlePath = join(androidDir, 'app', 'build', 'outputs', 'bundle', 'release', 'app-release.aab');
+const packagedManifestPath = join(
+  androidDir,
+  'app',
+  'build',
+  'intermediates',
+  'packaged_manifests',
+  'release',
+  'processReleaseManifestForPackage',
+  'AndroidManifest.xml',
+);
+const releaseBuildConfigPath = join(
+  androidDir,
+  'app',
+  'build',
+  'generated',
+  'source',
+  'buildConfig',
+  'release',
+  'com',
+  'monitorapp',
+  'monitor',
+  'BuildConfig.java',
+);
 const gradleCommand = process.platform === 'win32' ? 'cmd.exe' : './gradlew';
 const gradleArgs = process.platform === 'win32' ? ['/d', '/s', '/c', 'gradlew.bat', task] : [task];
 
@@ -95,6 +118,29 @@ function verifyBundle() {
   console.log(`Size: ${statSync(releasePath).size} bytes`);
 }
 
+function verifyAndroidCompatibility() {
+  if (!existsSync(packagedManifestPath)) {
+    throw new Error('Gradle completed without producing the packaged release manifest.');
+  }
+  const packagedManifest = readFileSync(packagedManifestPath, 'utf8');
+  const unsupportedLargeScreenAttribute = packagedManifest.match(
+    /android:(?:screenOrientation|resizeableActivity|minAspectRatio|maxAspectRatio)=/,
+  )?.[0];
+  if (unsupportedLargeScreenAttribute) {
+    throw new Error(
+      `Refusing to publish: packaged manifest still contains ${unsupportedLargeScreenAttribute}`,
+    );
+  }
+
+  if (!existsSync(releaseBuildConfigPath)) {
+    throw new Error('Gradle completed without producing the release BuildConfig.');
+  }
+  const releaseBuildConfig = readFileSync(releaseBuildConfigPath, 'utf8');
+  if (!releaseBuildConfig.includes('IS_EDGE_TO_EDGE_ENABLED = true')) {
+    throw new Error('Refusing to publish: edge-to-edge is disabled in the compiled release.');
+  }
+}
+
 if (target === 'aab') {
   try {
     console.log(`Using verified Google Play upload certificate: ${loadPlayCredentials()}`);
@@ -120,6 +166,12 @@ child.on('exit', (code, signal) => {
   }
 
   if ((code ?? 1) !== 0) process.exit(code ?? 1);
+  try {
+    verifyAndroidCompatibility();
+  } catch (error) {
+    console.error(error?.message || error);
+    process.exit(1);
+  }
   if (target === 'aab') {
     try {
       verifyBundle();

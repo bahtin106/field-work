@@ -321,23 +321,14 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
     }
 
     if (context.is_company_admin && successor) {
-      const { error: companyOwnerError } = await admin
-        .from('companies')
-        .update({
-          owner_id: successor.id,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', context.user.company_id)
-        .eq('owner_id', target.id);
-      if (companyOwnerError) throw companyOwnerError;
-
-      if (String(successor.role || '').toLowerCase() !== 'admin') {
-        const { error: promoteError } = await admin
-          .from('profiles')
-          .update({ role: 'admin', updated_at: new Date().toISOString() })
-          .eq('id', successor.id);
-        if (promoteError) throw promoteError;
-      }
+      const { error: transferError } = await admin.rpc(
+        'service_transfer_company_admin_for_deletion',
+        {
+          p_profile_id: target.id,
+          p_successor_profile_id: successor.id,
+        },
+      );
+      if (transferError) throw transferError;
     }
 
     if (successor) {

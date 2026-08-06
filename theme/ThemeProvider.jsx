@@ -4,17 +4,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import {
   AppState,
   Appearance,
-  findNodeHandle,
   FlatList,
-  Keyboard,
   Platform,
   ScrollView,
   SectionList,
   Text,
-  TextInput,
   useColorScheme,
 } from 'react-native';
-import { KeyboardAwareScrollView } from '../lib/keyboardControllerCompat';
+import {
+  KeyboardAwareScrollView,
+  SMOOTH_KEYBOARD_DISMISS_MODE,
+} from '../lib/keyboardControllerCompat';
 import { tokens } from './tokens';
 
 const STORAGE_KEY = 'THEME_MODE_V2';
@@ -151,6 +151,11 @@ function buildTheme(mode, systemScheme = null) {
       xl: base.typography?.sizes?.xl ?? 20,
       xxl: base.typography?.sizes?.xxl ?? 24,
       display: base.typography?.sizes?.display ?? 34,
+    },
+    lineHeights: {
+      tight: base.typography?.lineHeights?.tight ?? 1.1,
+      normal: base.typography?.lineHeights?.normal ?? 1.35,
+      relaxed: base.typography?.lineHeights?.relaxed ?? 1.5,
     },
     fontFamily: base.typography?.fontFamily,
     weight: {
@@ -403,6 +408,40 @@ function buildTheme(mode, systemScheme = null) {
       extraKeyboardSpace:
         base.components?.keyboardAware?.extraKeyboardSpace ?? 0,
     },
+    datetimeModal: {
+      maxHeightRatio: base.components?.datetimeModal?.maxHeightRatio ?? 0.65,
+      innerGap: base.components?.datetimeModal?.innerGap ?? 8,
+      wheelMinWidth: base.components?.datetimeModal?.wheelMinWidth ?? 64,
+      segmentedBorderWidth:
+        base.components?.datetimeModal?.segmentedBorderWidth ?? 1,
+      segmentedRadius: base.components?.datetimeModal?.segmentedRadius ?? 12,
+      segmentedPaddingY:
+        base.components?.datetimeModal?.segmentedPaddingY ?? 8,
+      segmentedActiveAlpha:
+        base.components?.datetimeModal?.segmentedActiveAlpha ?? 0.12,
+      segmentedPressedOpacity:
+        base.components?.datetimeModal?.segmentedPressedOpacity ?? 0.85,
+      wheelSectionGap:
+        base.components?.datetimeModal?.wheelSectionGap ?? 10,
+      selectionBackgroundAlpha:
+        base.components?.datetimeModal?.selectionBackgroundAlpha ?? 0.06,
+      selectionBorderWidth:
+        base.components?.datetimeModal?.selectionBorderWidth ?? 1,
+      selectionBorderAlpha:
+        base.components?.datetimeModal?.selectionBorderAlpha ?? 0.22,
+      selectionRadius:
+        base.components?.datetimeModal?.selectionRadius ?? 12,
+      omitYearPaddingX:
+        base.components?.datetimeModal?.omitYearPaddingX ?? 4,
+      omitYearPaddingLeft:
+        base.components?.datetimeModal?.omitYearPaddingLeft ?? 12,
+      omitYearPaddingY:
+        base.components?.datetimeModal?.omitYearPaddingY ?? 6,
+      omitYearTextSize:
+        base.components?.datetimeModal?.omitYearTextSize ?? 15,
+      omitYearSpacerWidth:
+        base.components?.datetimeModal?.omitYearSpacerWidth ?? 12,
+    },
     filtersPanel: {
       openSpring: {
         damping: base.components?.filtersPanel?.openSpring?.damping ?? 28,
@@ -598,36 +637,9 @@ export const ThemeProvider = ({ children }) => {
         Comp.defaultProps = { ...(Comp.defaultProps || {}), ...props };
       };
 
-      const dismissFocusedOnOutsideTap = (e) => {
-        try {
-          const focusedInput =
-            TextInput.State && typeof TextInput.State.currentlyFocusedInput === 'function'
-              ? TextInput.State.currentlyFocusedInput()
-              : null;
-          const focusedField =
-            TextInput.State && typeof TextInput.State.currentlyFocusedField === 'function'
-              ? TextInput.State.currentlyFocusedField()
-              : null;
-          const focusedHandle = focusedInput ? findNodeHandle(focusedInput) : focusedField;
-          if (!focusedHandle) return false;
-
-          const target = e?.nativeEvent?.target;
-          if (target && target === focusedHandle) return false;
-
-          if (focusedInput && TextInput.State?.blurTextInput) {
-            TextInput.State.blurTextInput(focusedInput);
-          } else if (focusedField && TextInput.State?.blurTextInput) {
-            TextInput.State.blurTextInput(focusedField);
-          }
-          Keyboard.dismiss();
-        } catch {}
-        return false;
-      };
-
       const common = {
         keyboardShouldPersistTaps: 'never',
-        keyboardDismissMode: 'on-drag',
-        onStartShouldSetResponderCapture: dismissFocusedOnOutsideTap,
+        keyboardDismissMode: SMOOTH_KEYBOARD_DISMISS_MODE,
         ...(Platform.OS === 'android' ? { nestedScrollEnabled: true } : null),
       };
       setDefaults(ScrollView, common);
@@ -635,7 +647,7 @@ export const ThemeProvider = ({ children }) => {
       setDefaults(SectionList, common);
       setDefaults(KeyboardAwareScrollView, {
         keyboardShouldPersistTaps: 'handled',
-        keyboardDismissMode: 'none',
+        keyboardDismissMode: SMOOTH_KEYBOARD_DISMISS_MODE,
         contentInsetAdjustmentBehavior: Platform.OS === 'ios' ? 'always' : 'automatic',
         bottomOffset: theme.components?.keyboardAware?.bottomOffset ?? 20,
         extraKeyboardSpace: theme.components?.keyboardAware?.extraKeyboardSpace ?? 0,

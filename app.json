@@ -2,11 +2,12 @@
   "expo": {
     "name": "Монитор",
     "slug": "work-orders-app",
-    "version": "1.0.3",
+    "version": "1.1.0",
+    "orientation": "default",
     "scheme": "workorders",
     "icon": "./assets/icon.png",
     "splash": {
-      "image": "./assets/splash/splashscreen_logo.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#F2F2F7"
     },
@@ -18,7 +19,8 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.monitorapp.monitor",
-      "versionCode": 8,
+      "versionCode": 11,
+      "edgeToEdgeEnabled": true,
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "android.permission.CAMERA",
@@ -32,23 +34,22 @@
         "android.permission.WRITE_CONTACTS"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#F2F2F7"
+        "foregroundImage": "./assets/branding/app-icon-android-foreground.png",
+        "monochromeImage": "./assets/branding/app-mark-monochrome.png",
+        "backgroundColor": "#68C2EE"
       },
-      "runtimeVersion": "1.0.3"
+      "runtimeVersion": "1.1.0"
     },
     "jsEngine": "hermes",
     "assetBundlePatterns": [
       "**/*"
     ],
     "androidStatusBar": {
-      "barStyle": "dark-content",
-      "backgroundColor": "#F2F2F7",
-      "translucent": false
+      "barStyle": "dark-content"
     },
     "androidNavigationBar": {
       "barStyle": "dark-content",
-      "backgroundColor": "#FFFFFF"
+      "enforceContrast": false
     },
     "extra": {
       "eas": {
@@ -63,12 +64,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash/splashscreen_logo.png",
+          "image": "./assets/icon.png",
           "imageWidth": 180,
           "resizeMode": "contain",
           "backgroundColor": "#F2F2F7",
           "dark": {
-            "image": "./assets/splash/splashscreen_logo.png",
+            "image": "./assets/icon.png",
             "backgroundColor": "#F2F2F7"
           }
         }
@@ -97,9 +98,13 @@
     "updates": {
       "url": "https://u.expo.dev/3c645715-1637-4502-979c-d4690c6cf1e2"
     },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
     "ios": {
+      "icon": "./assets/branding/app-icon-ios.png",
       "bundleIdentifier": "com.monitorapp.monitor",
-      "runtimeVersion": "1.0.3",
+      "runtimeVersion": "1.1.0",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "yandexmaps",

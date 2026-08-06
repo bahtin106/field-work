@@ -1,5 +1,5 @@
 // components/ui/modals/Wheel.jsx
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, Platform } from 'react-native';
 import { useTheme } from '../../../theme';
 
@@ -21,7 +21,7 @@ export default function Wheel({
   const isSyncingRef = useRef(false);
   const [selIndex, setSelIndex] = useState(index ?? 0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const next = Math.max(0, Math.min(data.length - 1, index ?? 0));
     if (next !== selIndex) {
       setSelIndex(next);
@@ -33,7 +33,7 @@ export default function Wheel({
     }
   }, [index, data.length, selIndex]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (selIndex > data.length - 1) {
       const next = data.length - 1;
       setSelIndex(next);
@@ -112,7 +112,12 @@ export default function Wheel({
       onScrollEndDrag={onDragEnd}
       initialNumToRender={VISIBLE_COUNT_DP + 2}
       scrollEventThrottle={16}
-      style={{ width, height: ITEM_HEIGHT_DP * VISIBLE_COUNT_DP }}
+      style={[
+        { height: ITEM_HEIGHT_DP * VISIBLE_COUNT_DP },
+        width == null
+          ? { flexGrow: 1, flexBasis: 0, minWidth: 0 }
+          : { width },
+      ]}
       contentContainerStyle={{ paddingVertical: (ITEM_HEIGHT_DP * (VISIBLE_COUNT_DP - 1)) / 2 }}
       removeClippedSubviews={Platform.OS === 'android'}
       scrollEnabled={enabled}

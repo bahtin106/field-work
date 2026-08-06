@@ -210,6 +210,7 @@ export default function FiltersPanel({
     deletedDateFrom: values.deletedDateFrom || null,
     deletedDateTo: values.deletedDateTo || null,
     clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
+    objectIds: Array.isArray(values.objectIds) ? values.objectIds.map(String) : [],
     clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
     objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
     workTypes: Array.isArray(values.workTypes) ? values.workTypes.map(String) : [],
@@ -245,6 +246,7 @@ export default function FiltersPanel({
     deletedDateFrom: values.deletedDateFrom || null,
     deletedDateTo: values.deletedDateTo || null,
     clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
+    objectIds: Array.isArray(values.objectIds) ? values.objectIds.map(String) : [],
     clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
     objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
     workTypes: Array.isArray(values.workTypes) ? values.workTypes.map(String) : [],
@@ -296,6 +298,7 @@ export default function FiltersPanel({
         deletedDateFrom: values.deletedDateFrom || null,
         deletedDateTo: values.deletedDateTo || null,
         clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
+        objectIds: Array.isArray(values.objectIds) ? values.objectIds.map(String) : [],
         clientTags: Array.isArray(values.clientTags) ? values.clientTags.map(String) : [],
         objectTags: Array.isArray(values.objectTags) ? values.objectTags.map(String) : [],
         workTypes: Array.isArray(values.workTypes) ? values.workTypes.map(String) : [],
@@ -324,6 +327,7 @@ export default function FiltersPanel({
   }, [
     visible,
     values.clientIds,
+    values.objectIds,
     values.clientTags,
     values.cities,
     values.entityTypes,
@@ -593,6 +597,7 @@ export default function FiltersPanel({
       const ordersStatusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
       const ordersWorkTypes = Array.isArray(ordersFilters?.workTypes) ? ordersFilters.workTypes : [];
       const ordersClients = Array.isArray(ordersFilters?.clients) ? ordersFilters.clients : [];
+      const ordersObjects = Array.isArray(ordersFilters?.objects) ? ordersFilters.objects : [];
       const ordersExecutors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
       const showDate = ordersFilters?.showDate !== false;
       const showTime = ordersFilters?.showTime !== false;
@@ -603,6 +608,7 @@ export default function FiltersPanel({
       if (ordersStatusOptions.length) cats.push({ key: 'orders_statuses', label: t('orders_filter_status') });
       if (ordersWorkTypes.length) cats.push({ key: 'orders_workTypes', label: t('order_field_work_type') });
       if (ordersClients.length) cats.push({ key: 'orders_clients', label: t('common_client') });
+      if (ordersObjects.length) cats.push({ key: 'orders_objects', label: t('routes_objects_object') });
       if (ordersExecutors.length) cats.push({ key: 'orders_executors', label: t('orders_filter_executor') });
       cats.push({ key: 'orders_clientTags', label: t('tags_clients_label') });
       cats.push({ key: 'orders_objectTags', label: t('tags_objects_label') });
@@ -777,6 +783,7 @@ export default function FiltersPanel({
       if (!eqArrays(draft.workTypes || [], baseline.workTypes || [])) return true;
       if (!eqArrays(draft.statuses || [], baseline.statuses || [])) return true;
       if (!eqArrays(draft.clientIds || [], baseline.clientIds || [])) return true;
+      if (!eqArrays(draft.objectIds || [], baseline.objectIds || [])) return true;
       if (!eqArrays(draft.clientTags || [], baseline.clientTags || [])) return true;
       if (!eqArrays(draft.objectTags || [], baseline.objectTags || [])) return true;
       if ((draft.executorId ?? null) !== (baseline.executorId ?? null)) return true;
@@ -841,6 +848,7 @@ export default function FiltersPanel({
       const defaultWorkTypes = Array.isArray(defaults.workTypes) ? defaults.workTypes.map(String) : [];
       const defaultStatuses = Array.isArray(defaults.statuses) ? defaults.statuses.map(String) : [];
       const defaultClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
+      const defaultObjectIds = Array.isArray(defaults.objectIds) ? defaults.objectIds.map(String) : [];
       const defaultClientTags = Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [];
       const defaultObjectTags = Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [];
       const defaultExecutorId =
@@ -864,6 +872,7 @@ export default function FiltersPanel({
       if (!eqArrays(draft.workTypes || [], defaultWorkTypes)) return true;
       if (!eqArrays(draft.statuses || [], defaultStatuses)) return true;
       if (!eqArrays(draft.clientIds || [], defaultClientIds)) return true;
+      if (!eqArrays(draft.objectIds || [], defaultObjectIds)) return true;
       if (!eqArrays(draft.clientTags || [], defaultClientTags)) return true;
       if (!eqArrays(draft.objectTags || [], defaultObjectTags)) return true;
       if ((draft.executorId ?? null) !== defaultExecutorId) return true;
@@ -1148,6 +1157,8 @@ export default function FiltersPanel({
       statuses: src?.statuses && typeof src.statuses === 'object' ? src.statuses : {},
       workTypes: src?.workTypes && typeof src.workTypes === 'object' ? src.workTypes : {},
       clients: src?.clients && typeof src.clients === 'object' ? src.clients : {},
+      objects: src?.objects && typeof src.objects === 'object' ? src.objects : {},
+      executors: src?.executors && typeof src.executors === 'object' ? src.executors : {},
       clientTags: src?.clientTags && typeof src.clientTags === 'object' ? src.clientTags : {},
       objectTags: src?.objectTags && typeof src.objectTags === 'object' ? src.objectTags : {},
     };
@@ -1164,6 +1175,9 @@ export default function FiltersPanel({
     const src = objectFilters?.facetCounts;
     return {
       total: Number(src?.total) || 0,
+      cities: src?.cities && typeof src.cities === 'object' ? src.cities : {},
+      streets: src?.streets && typeof src.streets === 'object' ? src.streets : {},
+      clients: src?.clients && typeof src.clients === 'object' ? src.clients : {},
       objectTags: src?.objectTags && typeof src.objectTags === 'object' ? src.objectTags : {},
     };
   }, [objectFilters?.facetCounts]);
@@ -1631,6 +1645,7 @@ export default function FiltersPanel({
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
               </Text>
+              <Text style={optionCount}>{formatFacetCount(objectFacetCounts.total)}</Text>
             </Pressable>
             {cities.length === 0 ? (
               <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
@@ -1641,6 +1656,8 @@ export default function FiltersPanel({
                 const id = String(city?.value ?? city?.id ?? city?.label ?? '').trim();
                 const label = String(city?.label ?? city?.name ?? id).trim();
                 const selected = Array.isArray(draft.cities) ? draft.cities.includes(id) : false;
+                const cityCount = Number(objectFacetCounts.cities?.[id] ?? 0);
+                const isEmpty = cityCount === 0;
                 return (
                   <Pressable
                     key={`objects_city_${id}`}
@@ -1653,8 +1670,17 @@ export default function FiltersPanel({
                     <View style={[checkboxBase, selected && checkboxSelected]}>
                       {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
                     </View>
-                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                    <Text
+                      style={[
+                        optionLabel,
+                        isEmpty && !selected && { color: zeroFacetColor },
+                        selected && { fontWeight: ty.weight.semibold },
+                      ]}
+                    >
                       {label}
+                    </Text>
+                    <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>
+                      {formatFacetCount(cityCount)}
                     </Text>
                   </Pressable>
                 );
@@ -1690,6 +1716,7 @@ export default function FiltersPanel({
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
               </Text>
+              <Text style={optionCount}>{formatFacetCount(objectFacetCounts.total)}</Text>
             </Pressable>
             {streets.length === 0 ? (
               <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
@@ -1700,6 +1727,8 @@ export default function FiltersPanel({
                 const id = String(street?.value ?? street?.id ?? street?.label ?? '').trim();
                 const label = String(street?.label ?? street?.name ?? id).trim();
                 const selected = Array.isArray(draft.streets) ? draft.streets.includes(id) : false;
+                const streetCount = Number(objectFacetCounts.streets?.[id] ?? 0);
+                const isEmpty = streetCount === 0;
                 return (
                   <Pressable
                     key={`objects_street_${id}`}
@@ -1712,8 +1741,17 @@ export default function FiltersPanel({
                     <View style={[checkboxBase, selected && checkboxSelected]}>
                       {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
                     </View>
-                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                    <Text
+                      style={[
+                        optionLabel,
+                        isEmpty && !selected && { color: zeroFacetColor },
+                        selected && { fontWeight: ty.weight.semibold },
+                      ]}
+                    >
                       {label}
+                    </Text>
+                    <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>
+                      {formatFacetCount(streetCount)}
                     </Text>
                   </Pressable>
                 );
@@ -1749,6 +1787,7 @@ export default function FiltersPanel({
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
               </Text>
+              <Text style={optionCount}>{formatFacetCount(objectFacetCounts.total)}</Text>
             </Pressable>
             {clients.length === 0 ? (
               <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
@@ -1759,6 +1798,8 @@ export default function FiltersPanel({
                 const id = String(client?.value ?? client?.id ?? client?.label ?? '').trim();
                 const label = String(client?.label ?? client?.name ?? id).trim();
                 const selected = Array.isArray(draft.clientIds) ? draft.clientIds.includes(id) : false;
+                const clientCount = Number(objectFacetCounts.clients?.[id] ?? 0);
+                const isEmpty = clientCount === 0;
                 return (
                   <Pressable
                     key={`objects_client_${id}`}
@@ -1771,8 +1812,17 @@ export default function FiltersPanel({
                     <View style={[checkboxBase, selected && checkboxSelected]}>
                       {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
                     </View>
-                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                    <Text
+                      style={[
+                        optionLabel,
+                        isEmpty && !selected && { color: zeroFacetColor },
+                        selected && { fontWeight: ty.weight.semibold },
+                      ]}
+                    >
                       {label}
+                    </Text>
+                    <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>
+                      {formatFacetCount(clientCount)}
                     </Text>
                   </Pressable>
                 );
@@ -1995,6 +2045,80 @@ export default function FiltersPanel({
           </>
         );
       }
+      case 'orders_objects': {
+        const objectsRaw = Array.isArray(ordersFilters?.objects) ? ordersFilters.objects : [];
+        const objects = normalizedInlineSearch
+          ? objectsRaw.filter((objectItem) =>
+              String(objectItem?.label ?? objectItem?.name ?? objectItem?.value ?? objectItem?.id ?? '')
+                .toLowerCase()
+                .includes(normalizedInlineSearch),
+            )
+          : objectsRaw;
+        const allSelected = !Array.isArray(draft.objectIds) || draft.objectIds.length === 0;
+        return (
+          <>
+            {renderInlineOptionsSearch()}
+            <Pressable
+              key="all_orders_objects"
+              onPress={() => setDraft((d) => ({ ...d, objectIds: [] }))}
+              style={({ pressed }) => [
+                optionRow,
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+              ]}
+            >
+              <View style={[checkboxBase, allSelected && checkboxSelected]}>
+                {allSelected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+              </View>
+              <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
+                {t('users_showAll')}
+              </Text>
+              {formatFacetCount(orderFacetCounts.total) ? (
+                <Text style={optionCount}>{formatFacetCount(orderFacetCounts.total)}</Text>
+              ) : null}
+            </Pressable>
+            {objects.length === 0 ? (
+              <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+                <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>{t('common_noData')}</Text>
+              </View>
+            ) : (
+              objects.map((objectItem) => {
+                const id = String(objectItem?.value ?? objectItem?.id ?? objectItem?.label ?? '').trim();
+                const label = String(objectItem?.label ?? objectItem?.name ?? id).trim();
+                const selected = Array.isArray(draft.objectIds) ? draft.objectIds.includes(id) : false;
+                const objectCountValue = Number(orderFacetCounts.objects?.[id] ?? 0);
+                const objectCount = formatFacetCount(objectCountValue);
+                const isEmpty = objectCountValue === 0;
+                return (
+                  <Pressable
+                    key={`orders_object_${id}`}
+                    onPress={() => toggleOrdersMulti('objectIds', id)}
+                    style={({ pressed }) => [
+                      optionRow,
+                      pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+                    ]}
+                  >
+                    <View style={[checkboxBase, selected && checkboxSelected]}>
+                      {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+                    </View>
+                    <Text
+                      style={[
+                        optionLabel,
+                        isEmpty && !selected && { color: zeroFacetColor },
+                        selected && { fontWeight: ty.weight.semibold },
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                    {objectCount ? (
+                      <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>{objectCount}</Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })
+            )}
+          </>
+        );
+      }
       case 'orders_executors': {
         const executors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
         const selectedExecutorIds = new Set(
@@ -2017,6 +2141,7 @@ export default function FiltersPanel({
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
               </Text>
+              <Text style={optionCount}>{formatFacetCount(orderFacetCounts.total)}</Text>
             </Pressable>
             {executors.map((executor, index) => {
               const id = String(executor?.id ?? executor?.value ?? index);
@@ -2024,6 +2149,9 @@ export default function FiltersPanel({
               const selected = isOrdersExecutorMulti
                 ? selectedExecutorIds.has(id)
                 : String(draft.executorId || '') === id;
+              const executorCountValue = Number(orderFacetCounts.executors?.[id] ?? 0);
+              const executorCount = formatFacetCount(executorCountValue);
+              const isEmpty = executorCountValue === 0;
               return (
                 <Pressable
                   key={`orders_executor_${id}`}
@@ -2055,7 +2183,13 @@ export default function FiltersPanel({
                     {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                    <Text
+                      style={[
+                        optionLabel,
+                        isEmpty && !selected && { color: zeroFacetColor },
+                        selected && { fontWeight: ty.weight.semibold },
+                      ]}
+                    >
                       {label}
                     </Text>
                     {executor?.meta ? (
@@ -2064,6 +2198,11 @@ export default function FiltersPanel({
                       </Text>
                     ) : null}
                   </View>
+                  {executorCount ? (
+                    <Text style={[optionCount, isEmpty && { color: zeroFacetColor }]}>
+                      {executorCount}
+                    </Text>
+                  ) : null}
                 </Pressable>
               );
             })}
@@ -2397,6 +2536,7 @@ export default function FiltersPanel({
                     workTypes: Array.isArray(defaults.workTypes) ? defaults.workTypes.map(String) : [],
                     statuses: Array.isArray(defaults.statuses) ? defaults.statuses.map(String) : [],
                     clientIds: Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [],
+                    objectIds: Array.isArray(defaults.objectIds) ? defaults.objectIds.map(String) : [],
                     clientTags: Array.isArray(defaults.clientTags) ? defaults.clientTags.map(String) : [],
                     objectTags: Array.isArray(defaults.objectTags) ? defaults.objectTags.map(String) : [],
                     executorId:
@@ -2425,6 +2565,7 @@ export default function FiltersPanel({
                     setValue('workTypes', snapshot.workTypes);
                     setValue('statuses', snapshot.statuses);
                     setValue('clientIds', snapshot.clientIds);
+                    setValue('objectIds', snapshot.objectIds);
                     setValue('clientTags', snapshot.clientTags);
                     setValue('objectTags', snapshot.objectTags);
                     setValue('executorId', snapshot.executorId);
@@ -2593,6 +2734,7 @@ export default function FiltersPanel({
                     workTypes: Array.isArray(draft.workTypes) ? draft.workTypes : [],
                     statuses: Array.isArray(draft.statuses) ? draft.statuses : [],
                     clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
+                    objectIds: Array.isArray(draft.objectIds) ? draft.objectIds : [],
                     clientTags: Array.isArray(draft.clientTags) ? draft.clientTags : [],
                     objectTags: Array.isArray(draft.objectTags) ? draft.objectTags : [],
                     executorId: draft.executorId ?? null,
@@ -2612,6 +2754,7 @@ export default function FiltersPanel({
                     setValue('workTypes', ordersSnapshot.workTypes);
                     setValue('statuses', ordersSnapshot.statuses);
                     setValue('clientIds', ordersSnapshot.clientIds);
+                    setValue('objectIds', ordersSnapshot.objectIds);
                     setValue('clientTags', ordersSnapshot.clientTags);
                     setValue('objectTags', ordersSnapshot.objectTags);
                     setValue('executorId', ordersSnapshot.executorId);

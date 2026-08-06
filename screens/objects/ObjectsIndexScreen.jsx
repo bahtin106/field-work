@@ -84,6 +84,32 @@ function applyObjectFilters(items, values) {
     return true;
   });
 }
+
+function buildObjectAttributeFacetCounts(items) {
+  const list = Array.isArray(items) ? items : [];
+  const counts = {
+    cities: {},
+    streets: {},
+    clients: {},
+  };
+
+  const increment = (target, rawValue) => {
+    const value = String(rawValue || '').trim();
+    if (!value) return;
+    target[value] = (target[value] || 0) + 1;
+  };
+
+  list.forEach((item) => {
+    if (getClientObjectLocationMode(item) === 'address') {
+      increment(counts.cities, item?.city);
+      increment(counts.streets, item?.street);
+    }
+    increment(counts.clients, item?.client_id);
+  });
+
+  return counts;
+}
+
 export default function ObjectsIndex() {
   const { theme } = useTheme();
   useTranslation();
@@ -98,20 +124,54 @@ export default function ObjectsIndex() {
   const [sortKey, setSortKey] = useState(OBJECT_SORT.NAME_ASC);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const selectedTag = useMemo(() => {
-    const raw = Array.isArray(params?.tag) ? params.tag[0] : params?.tag;
-    return String(raw || '').trim();
-  }, [params?.tag]);
-  const activeTagFilter = useMemo(
-    () => (selectedTag && String(q || '').trim() === selectedTag ? selectedTag : ''),
-    [q, selectedTag],
-  );
 
   const filters = useFilters({
     screenKey: 'objects',
     defaults: OBJECT_FILTER_DEFAULTS,
   });
+  const setFilterValue = filters.setValue;
+  const applyFilters = filters.apply;
   const revalidateFilters = filters.revalidate;
+  const routeObjectTag = useMemo(() => {
+    const raw = Array.isArray(params?.filter_object_tag)
+      ? params.filter_object_tag[0]
+      : params?.filter_object_tag;
+    return String(raw || '').trim();
+  }, [params?.filter_object_tag]);
+  const routeTagSeedRef = useRef('');
+
+  useEffect(() => {
+    if (!routeObjectTag) {
+      routeTagSeedRef.current = '';
+      return undefined;
+    }
+    if (routeTagSeedRef.current === routeObjectTag) return undefined;
+    routeTagSeedRef.current = routeObjectTag;
+
+    let cancelled = false;
+    const seedTagFilter = async () => {
+      await revalidateFilters();
+      if (cancelled) return;
+
+      const nextValues = {
+        ...OBJECT_FILTER_DEFAULTS,
+        objectTags: [routeObjectTag],
+      };
+      setQ('');
+      setDebouncedQ('');
+      Object.entries(nextValues).forEach(([key, value]) => setFilterValue(key, value));
+      await applyFilters(nextValues);
+
+      if (!cancelled) {
+        router.setParams({ filter_object_tag: undefined });
+      }
+    };
+
+    void seedTagFilter();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyFilters, revalidateFilters, routeObjectTag, router, setFilterValue]);
 
   useFocusEffect(
     useCallback(() => {
@@ -163,11 +223,6 @@ export default function ObjectsIndex() {
     const timer = setTimeout(() => setDebouncedQ(String(q || '').trim()), ms);
     return () => clearTimeout(timer);
   }, [q, theme?.timings?.backDelayMs]);
-
-  useEffect(() => {
-    if (!selectedTag) return;
-    setQ(selectedTag);
-  }, [selectedTag]);
 
   const clientById = useMemo(() => {
     const map = new Map();
@@ -239,6 +294,10 @@ export default function ObjectsIndex() {
     () => buildTagFacetCounts(enrichedObjects, (item) => item?.tags),
     [enrichedObjects],
   );
+  const objectAttributeFacetCounts = useMemo(
+    () => buildObjectAttributeFacetCounts(enrichedObjects),
+    [enrichedObjects],
+  );
 
   const filteredByPanel = useMemo(() => {
     return applyObjectFilters(enrichedObjects, filters.values);
@@ -247,11 +306,6 @@ export default function ObjectsIndex() {
 
   const filtered = useMemo(() => {
     return filteredByPanel.filter((item) => {
-      const tagMatch =
-        !activeTagFilter ||
-        (Array.isArray(item?.tags) &&
-          item.tags.some((tag) => String(tag?.value || '').trim().toLowerCase() === activeTagFilter.toLowerCase()));
-      if (!tagMatch) return false;
       if (!debouncedQ) return true;
       const client = item?.client || null;
       const usesManualAddress = getClientObjectLocationMode(item) === 'address';
@@ -272,7 +326,7 @@ export default function ObjectsIndex() {
         debouncedQ,
       );
     });
-  }, [activeTagFilter, canViewClientPhones, debouncedQ, filteredByPanel]);
+  }, [canViewClientPhones, debouncedQ, filteredByPanel]);
 
   const sortOptions = useMemo(() => objectSortOptions(t), []);
 
@@ -519,6 +573,9 @@ export default function ObjectsIndex() {
           tags: objectTagOptions,
           facetCounts: {
             total: enrichedObjects.length,
+            cities: objectAttributeFacetCounts.cities,
+            streets: objectAttributeFacetCounts.streets,
+            clients: objectAttributeFacetCounts.clients,
             objectTags: objectTagFacetCounts,
           },
         }}

@@ -30,6 +30,27 @@ function assertProductionValue(name, value) {
   }
 }
 
+function readJwtClaims(value) {
+  const parts = trim(value).split('.');
+  if (parts.length !== 3) return null;
+
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function assertPublicSupabaseKey(value) {
+  const claims = readJwtClaims(value);
+
+  if (claims?.role === 'service_role') {
+    throw new Error(
+      'Refusing to expose a Supabase service-role key in the public Expo app configuration.',
+    );
+  }
+}
+
 module.exports = ({ config } = {}) => {
   const baseExpoConfig = config || base.expo || {};
   const supabaseUrl = withoutTrailingSlash(readRequired('EXPO_PUBLIC_SUPABASE_URL', 'SUPABASE_URL'));
@@ -43,6 +64,7 @@ module.exports = ({ config } = {}) => {
   assertProductionValue('EXPO_PUBLIC_SUPABASE_URL or SUPABASE_URL', supabaseUrl);
   assertProductionValue('EXPO_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY', supabaseAnonKey);
   assertProductionValue('EXPO_PUBLIC_EMAIL_SERVICE_URL, EMAIL_SERVICE_URL, or API_EXTERNAL_URL', emailServiceUrl);
+  assertPublicSupabaseKey(supabaseAnonKey);
 
   return {
     ...baseExpoConfig,

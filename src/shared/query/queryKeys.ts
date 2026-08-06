@@ -2,8 +2,24 @@ export const queryKeys = {
   requests: {
     all: (params = {}) => ['requests', 'all', params],
     my: (params = {}) => ['requests', 'my', params],
+    relatedCount: ({ scope = 'my', clientId = '', objectIds = [] } = {}) => [
+      'requests',
+      scope === 'all' ? 'all' : 'my',
+      'related-count',
+      String(clientId || '').trim(),
+      Array.from(
+        new Set(
+          (Array.isArray(objectIds) ? objectIds : [])
+            .map((value) => String(value || '').trim())
+            .filter(Boolean),
+        ),
+      )
+        .sort()
+        .join(','),
+    ],
     calendar: (params = {}) => ['requests', 'calendar', params],
     detail: (id) => ['requests', 'detail', String(id || '')],
+    activity: (id) => ['requests', 'activity', String(id || '')],
     assigneeName: (userId) => ['requests', 'assignee-name', String(userId || '')],
     filterOptions: () => ['requests', 'filter-options'],
     executors: (companyId = null) => ['requests', 'executors', String(companyId || '')],
@@ -40,5 +56,8 @@ export const queryKeys = {
     me: () => ['profile', 'me'],
     role: () => ['profile', 'role'],
     companyId: () => ['profile', 'company-id'],
+  },
+  statistics: {
+    dashboard: (params = {}) => ['statistics', 'dashboard', params],
   },
 };

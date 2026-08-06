@@ -15,6 +15,13 @@ import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
+let unreadCounterChannelSequence = 0;
+
+function createUnreadCounterChannelName() {
+  unreadCounterChannelSequence += 1;
+  return `admin-feedbacks-unread-counter:${Date.now().toString(36)}:${unreadCounterChannelSequence.toString(36)}`;
+}
+
 export default function AdminHomeScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -34,13 +41,15 @@ export default function AdminHomeScreen() {
   React.useEffect(() => {
     if (!isAllowed) return undefined;
     const channel = supabase
-      .channel('admin-feedbacks-unread-counter')
+      .channel(createUnreadCounterChannelName())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feedbacks' }, () => {
         queryClient.invalidateQueries({ queryKey: SUPPORT_UNREAD_QUERY_KEY });
       })
       .subscribe();
     return () => {
-      supabase.removeChannel(channel);
+      try {
+        void supabase.removeChannel(channel).catch(() => {});
+      } catch {}
     };
   }, [isAllowed, queryClient]);
 

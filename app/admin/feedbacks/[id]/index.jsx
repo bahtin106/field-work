@@ -163,6 +163,14 @@ export default function AdminFeedbackDetailsScreen() {
     }
   }, [id, isDeleting, queryClient, router, t, toast]);
 
+  const handleRetryPhoto = React.useCallback(async (photoIndex) => {
+    if (!id) return null;
+    const refreshed = await getSupportRequestById(id, { forcePhotoRefresh: true });
+    if (!refreshed) return null;
+    queryClient.setQueryData(['adminSupportRequest', id], refreshed);
+    return Array.isArray(refreshed.photoUrls) ? refreshed.photoUrls[photoIndex] || null : null;
+  }, [id, queryClient]);
+
   if (guardLoading || !isAllowed) {
     return <Screen background="background" />;
   }
@@ -331,6 +339,7 @@ export default function AdminFeedbackDetailsScreen() {
         images={Array.isArray(data?.photoUrls) ? data.photoUrls : []}
         initialIndex={viewerIndex}
         onClose={() => setViewerVisible(false)}
+        onRetryImage={handleRetryPhoto}
         categoryLabel={t('admin_feedback_photo')}
       />
     </Screen>

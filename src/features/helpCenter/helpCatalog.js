@@ -135,6 +135,30 @@ export const HELP_TOPICS = Object.freeze({
     actionKey: 'help_topic_finance_rules_action',
     noteKey: 'help_topic_finance_rules_note',
   },
+  payment_methods: {
+    id: 'payment_methods',
+    icon: 'credit-card',
+    titleKey: 'help_topic_payment_methods_title',
+    bodyKey: 'help_topic_payment_methods_body',
+    actionKey: 'help_topic_payment_methods_action',
+    noteKey: 'help_topic_payment_methods_note',
+  },
+  partial_payments: {
+    id: 'partial_payments',
+    icon: 'repeat',
+    titleKey: 'help_topic_partial_payments_title',
+    bodyKey: 'help_topic_partial_payments_body',
+    actionKey: 'help_topic_partial_payments_action',
+    noteKey: 'help_topic_partial_payments_note',
+  },
+  order_history: {
+    id: 'order_history',
+    icon: 'archive',
+    titleKey: 'help_topic_order_history_title',
+    bodyKey: 'help_topic_order_history_body',
+    actionKey: 'help_topic_order_history_action',
+    noteKey: 'help_topic_order_history_note',
+  },
   phone_visibility: {
     id: 'phone_visibility',
     icon: 'phone',
@@ -221,18 +245,6 @@ export const SMART_TIPS = Object.freeze([
     priority: 10,
     isEligible: ({ isAdmin, companyId, companySettings }) =>
       isAdmin && !!companyId && companySettings?.use_work_types === false,
-  },
-  {
-    id: 'order_statuses',
-    icon: 'layers',
-    categoryKey: 'help_tip_category_workflow',
-    titleKey: 'help_tip_order_statuses_title',
-    bodyKey: 'help_tip_order_statuses_body',
-    valueKey: 'help_tip_order_statuses_value',
-    route: '/company_settings/sections/order-statuses',
-    priority: 20,
-    isEligible: ({ isAdmin, companyId, companySettings }) =>
-      isAdmin && !!companyId && companySettings?.use_order_statuses === false,
   },
   {
     id: 'feed_status',

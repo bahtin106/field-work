@@ -16,10 +16,12 @@ import Screen from '../../components/layout/Screen';
 import UIButton from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import Checkbox from '../../components/ui/Checkbox';
+import LabelValueRow from '../../components/ui/LabelValueRow';
 import SectionHeader from '../../components/ui/SectionHeader';
-import { BaseModal, SelectModal } from '../../components/ui/modals';
+import ThemedSwitch from '../../components/ui/ThemedSwitch';
+import { BaseModal, ConfirmModal, SelectModal } from '../../components/ui/modals';
 import ModalActionsRow from '../../components/ui/modals/ModalActionsRow';
-import TextField, { SelectField } from '../../components/ui/TextField';
+import TextField, { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings';
 import { EXCHANGE_RATE_ENDPOINTS } from '../../config/externalUrls';
@@ -29,9 +31,14 @@ import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 
 import Feather from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
+import {
+  broadcastCompanySettingsChanged,
+  COMPANY_SETTINGS_QUERY_KEY,
+  fetchCompanySettingsByCompanyId,
+} from '../../lib/companySettingsQuery';
 import { normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
 import { FUNCTIONS } from '../../lib/constants';
+import { getAppVersion } from '../../lib/appVersion';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
 import { saveUserLocale } from '../../lib/userLocale';
@@ -256,6 +263,7 @@ export default function CompanySettings() {
   const pathname = usePathname();
   const { user, profile, isInitializing, mergeAuthUserMetadata } = useAuthContext();
   const { t } = useTranslation();
+  const appVersion = getAppVersion();
   const queryClient = useQueryClient();
   const companyId = profile?.company_id || null;
   const companyQueryKey = React.useMemo(
@@ -266,7 +274,6 @@ export default function CompanySettings() {
   const canAccessCompanySettings = normalizedProfileRole === 'admin';
   const isAdmin = normalizedProfileRole === 'admin';
   const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
-  const isSoloAdmin = isAdmin && authAccountType === 'solo';
   const lastNavigationAtRef = React.useRef(0);
   const accessRedirectInFlightRef = React.useRef(false);
   const modalTransitionTimerRef = React.useRef(null);
@@ -391,6 +398,19 @@ export default function CompanySettings() {
   );
   const [financeOpen, setFinanceOpen] = React.useState(false);
   const [currency, setCurrency] = React.useState(null);
+  const [paymentMethodsModalVisible, setPaymentMethodsModalVisible] = React.useState(false);
+  const [paymentMethodsConfirmVisible, setPaymentMethodsConfirmVisible] = React.useState(false);
+  const [paymentMethodSettingsDraft, setPaymentMethodSettingsDraft] = React.useState({
+    cash: true,
+    cashless: true,
+  });
+  const [paymentMethodSettingsSaving, setPaymentMethodSettingsSaving] = React.useState(false);
+  const [partialPaymentsModalVisible, setPartialPaymentsModalVisible] = React.useState(false);
+  const [partialPaymentsDisableConfirmVisible, setPartialPaymentsDisableConfirmVisible] =
+    React.useState(false);
+  const [partialPaymentsDraftEnabled, setPartialPaymentsDraftEnabled] = React.useState(false);
+  const [partialPaymentsSaving, setPartialPaymentsSaving] = React.useState(false);
+  const [orderHistorySaving, setOrderHistorySaving] = React.useState(false);
   const [currencyRate, setCurrencyRate] = React.useState('');
   const [fetchRateError, setFetchRateError] = React.useState(null);
   const [_currencyModalKey, _setCurrencyModalKey] = React.useState(0);
@@ -483,6 +503,252 @@ export default function CompanySettings() {
     },
     [companyId, t, refreshCompany, queryClient],
   );
+
+  const paymentMethodSettings = React.useMemo(
+    () => ({
+      cash: companyData?.payment_method_cash_enabled !== false,
+      cashless: companyData?.payment_method_cashless_enabled !== false,
+    }),
+    [companyData?.payment_method_cash_enabled, companyData?.payment_method_cashless_enabled],
+  );
+  const paymentMethodOptions = React.useMemo(
+    () => [
+      { id: 'cash', label: t('order_payment_method_cash') },
+      { id: 'cashless', label: t('order_payment_method_cashless') },
+    ],
+    [t],
+  );
+  const selectedPaymentMethodIds = React.useMemo(
+    () =>
+      paymentMethodOptions
+        .filter((item) => paymentMethodSettings[item.id] === true)
+        .map((item) => item.id),
+    [paymentMethodOptions, paymentMethodSettings],
+  );
+  const paymentMethodsLabel = React.useMemo(
+    () =>
+      paymentMethodOptions
+        .filter((item) => selectedPaymentMethodIds.includes(item.id))
+        .map((item) => item.label)
+        .join(', '),
+    [paymentMethodOptions, selectedPaymentMethodIds],
+  );
+  const draftPaymentMethodCount =
+    Number(paymentMethodSettingsDraft.cash === true) +
+    Number(paymentMethodSettingsDraft.cashless === true);
+  const partialPaymentsEnabled = companyData?.use_partial_payments === true;
+  const orderHistoryEnabled = companyData?.order_history_enabled === true;
+
+  const toggleOrderHistory = React.useCallback(async (nextValue) => {
+    if (orderHistorySaving || !companyId) return;
+    const enabled = nextValue === true;
+    setOrderHistorySaving(true);
+    try {
+      const { error } = await supabase.rpc('set_company_order_history_enabled_v1', {
+        p_enabled: enabled,
+      });
+      if (error) throw error;
+
+      queryClient.setQueryData(companyQueryKey, (previous) => ({
+        ...(previous && typeof previous === 'object' ? previous : {}),
+        order_history_enabled: enabled,
+      }));
+      await Promise.all([
+        refreshCompany(),
+        queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ['requests', 'activity'] }),
+      ]);
+      void broadcastCompanySettingsChanged(companyId, ['order_history_enabled']);
+      toast.success(t(enabled
+        ? 'settings_order_history_enabled_toast'
+        : 'settings_order_history_disabled_toast'));
+    } catch (error) {
+      const message = String(error?.message || '').trim();
+      toast.error(
+        /admin permission required|permission denied|forbidden/i.test(message)
+          ? t('settings_order_history_permission_error')
+          : t('settings_order_history_save_error'),
+      );
+    } finally {
+      setOrderHistorySaving(false);
+    }
+  }, [companyId, companyQueryKey, orderHistorySaving, queryClient, refreshCompany, t, toast]);
+
+  const openPaymentMethodsModal = React.useCallback(() => {
+    if (paymentMethodSettingsSaving) return;
+    setPaymentMethodSettingsDraft(paymentMethodSettings);
+    setPaymentMethodsModalVisible(true);
+  }, [paymentMethodSettings, paymentMethodSettingsSaving]);
+
+  const closePaymentMethodsModal = React.useCallback(() => {
+    if (paymentMethodSettingsSaving) return;
+    setPaymentMethodsConfirmVisible(false);
+    setPaymentMethodsModalVisible(false);
+  }, [paymentMethodSettingsSaving]);
+
+  const setPaymentMethodEnabled = React.useCallback(
+    (methodId, enabled) => {
+      if (paymentMethodSettingsSaving) return;
+      if (!enabled && draftPaymentMethodCount === 1 && paymentMethodSettingsDraft[methodId] === true) {
+        return;
+      }
+      setPaymentMethodSettingsDraft((previous) => ({ ...previous, [methodId]: enabled === true }));
+    },
+    [draftPaymentMethodCount, paymentMethodSettingsDraft, paymentMethodSettingsSaving],
+  );
+
+  const savePaymentMethodSettings = React.useCallback(
+    async () => {
+      if (paymentMethodSettingsSaving || draftPaymentMethodCount < 1) return;
+      const nextSettings = {
+        cash: paymentMethodSettingsDraft.cash === true,
+        cashless: paymentMethodSettingsDraft.cashless === true,
+      };
+      if (
+        nextSettings.cash === paymentMethodSettings.cash &&
+        nextSettings.cashless === paymentMethodSettings.cashless
+      ) {
+        setPaymentMethodsConfirmVisible(false);
+        setPaymentMethodsModalVisible(false);
+        return;
+      }
+      setPaymentMethodSettingsSaving(true);
+      try {
+        if (!supabase) throw new Error(t('errors_noDb'));
+        if (!companyId) throw new Error(t('errors_companyNotFound'));
+        const { error } = await supabase
+          .from('companies')
+          .update({
+            payment_method_cash_enabled: nextSettings.cash,
+            payment_method_cashless_enabled: nextSettings.cashless,
+          })
+          .eq('id', companyId);
+        if (error) throw error;
+        await refreshCompany();
+        await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
+        setPaymentMethodsConfirmVisible(false);
+        setPaymentMethodsModalVisible(false);
+        toast.success(t('settings_payment_methods_saved'));
+      } catch (error) {
+        toast.error(error?.message || t('toast_error'));
+      } finally {
+        setPaymentMethodSettingsSaving(false);
+      }
+    },
+    [
+      companyId,
+      draftPaymentMethodCount,
+      paymentMethodSettings,
+      paymentMethodSettingsDraft,
+      paymentMethodSettingsSaving,
+      queryClient,
+      refreshCompany,
+      t,
+      toast,
+    ],
+  );
+
+  const requestSavePaymentMethodSettings = React.useCallback(() => {
+    if (paymentMethodSettingsSaving || draftPaymentMethodCount < 1) return;
+    const changesAvailability =
+      paymentMethodSettingsDraft.cash !== paymentMethodSettings.cash ||
+      paymentMethodSettingsDraft.cashless !== paymentMethodSettings.cashless;
+    if (changesAvailability && draftPaymentMethodCount === 1) {
+      setPaymentMethodsConfirmVisible(true);
+      return;
+    }
+    void savePaymentMethodSettings();
+  }, [
+    draftPaymentMethodCount,
+    paymentMethodSettings,
+    paymentMethodSettingsDraft,
+    paymentMethodSettingsSaving,
+    savePaymentMethodSettings,
+  ]);
+
+  const openPartialPaymentsModal = React.useCallback(() => {
+    if (partialPaymentsSaving) return;
+    setPartialPaymentsDraftEnabled(partialPaymentsEnabled);
+    setPartialPaymentsModalVisible(true);
+  }, [partialPaymentsEnabled, partialPaymentsSaving]);
+
+  const closePartialPaymentsModal = React.useCallback(() => {
+    if (partialPaymentsSaving) return;
+    setPartialPaymentsDisableConfirmVisible(false);
+    setPartialPaymentsModalVisible(false);
+  }, [partialPaymentsSaving]);
+
+  const savePartialPaymentsSetting = React.useCallback(async () => {
+    if (partialPaymentsSaving) return;
+    if (partialPaymentsDraftEnabled === partialPaymentsEnabled) {
+      setPartialPaymentsDisableConfirmVisible(false);
+      setPartialPaymentsModalVisible(false);
+      return;
+    }
+
+    setPartialPaymentsSaving(true);
+    try {
+      if (!supabase) throw new Error(t('errors_noDb'));
+      if (!companyId) throw new Error(t('errors_companyNotFound'));
+      const { error } = await supabase.rpc('set_company_partial_payments_enabled_v1', {
+        p_enabled: partialPaymentsDraftEnabled,
+      });
+      if (error) throw error;
+
+      await refreshCompany();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ['requests'] }),
+        queryClient.invalidateQueries({ queryKey: ['payments'] }),
+        queryClient.invalidateQueries({ queryKey: ['finance'] }),
+      ]);
+      setPartialPaymentsDisableConfirmVisible(false);
+      setPartialPaymentsModalVisible(false);
+      toast.success(
+        partialPaymentsDraftEnabled
+          ? t('settings_partial_payments_enabled_toast')
+          : t('settings_partial_payments_disabled_toast'),
+      );
+    } catch (error) {
+      const message = String(error?.message || '').trim();
+      toast.error(
+        /admin permission required|permission denied|forbidden/i.test(message)
+          ? t('settings_partial_payments_permission_error')
+          : t('settings_partial_payments_save_error'),
+      );
+    } finally {
+      setPartialPaymentsSaving(false);
+    }
+  }, [
+    companyId,
+    partialPaymentsDraftEnabled,
+    partialPaymentsEnabled,
+    partialPaymentsSaving,
+    queryClient,
+    refreshCompany,
+    t,
+    toast,
+  ]);
+
+  const requestSavePartialPaymentsSetting = React.useCallback(() => {
+    if (
+      partialPaymentsSaving ||
+      partialPaymentsDraftEnabled === partialPaymentsEnabled
+    ) {
+      void savePartialPaymentsSetting();
+      return;
+    }
+    if (partialPaymentsEnabled && !partialPaymentsDraftEnabled) {
+      setPartialPaymentsDisableConfirmVisible(true);
+      return;
+    }
+    void savePartialPaymentsSetting();
+  }, [
+    partialPaymentsDraftEnabled,
+    partialPaymentsEnabled,
+    partialPaymentsSaving,
+    savePartialPaymentsSetting,
+  ]);
 
   const _onSubmitCompanyName = React.useCallback(() => {
     const name = String(companyName || '').trim();
@@ -855,16 +1121,24 @@ export default function CompanySettings() {
     () => t(`settings_theme_${mode || 'system'}`),
     [mode, t],
   );
+  const persistedWorkMode = React.useMemo(() => {
+    const value = String(companyData?.work_mode || '').toLowerCase();
+    return value === 'solo' || value === 'company' ? value : null;
+  }, [companyData?.work_mode]);
+  const metadataWorkMode = authAccountType === 'solo' ? 'solo' : 'company';
   const currentWorkMode = React.useMemo(
-    () => localWorkModeOverride || (authAccountType === 'solo' ? 'solo' : 'company'),
-    [authAccountType, localWorkModeOverride],
+    () => localWorkModeOverride || persistedWorkMode || metadataWorkMode,
+    [localWorkModeOverride, metadataWorkMode, persistedWorkMode],
   );
+  const isSoloWorkMode = currentWorkMode === 'solo';
   React.useEffect(() => {
-    const metadataMode = authAccountType === 'solo' ? 'solo' : 'company';
-    if (localWorkModeOverride && localWorkModeOverride === metadataMode) {
+    // Do not drop the local value just because the auth token refreshed first:
+    // the company record is what drives finance on the server.
+    const confirmedMode = persistedWorkMode || (!companyId ? metadataWorkMode : null);
+    if (localWorkModeOverride && localWorkModeOverride === confirmedMode) {
       setLocalWorkModeOverride(null);
     }
-  }, [authAccountType, localWorkModeOverride]);
+  }, [companyId, localWorkModeOverride, metadataWorkMode, persistedWorkMode]);
   const workModeItems = React.useMemo(
     () => [
       {
@@ -1035,6 +1309,7 @@ export default function CompanySettings() {
           queryClient.invalidateQueries({ queryKey: ['profile'] }),
           queryClient.invalidateQueries({ queryKey: ['employees'] }),
           queryClient.invalidateQueries({ queryKey: ['requests'] }),
+          queryClient.invalidateQueries({ queryKey: ['finance'] }),
         ]);
       } catch {}
     } catch (e) {
@@ -1125,8 +1400,6 @@ export default function CompanySettings() {
       APPEARANCE: t('settings_sections_appearance_title'),
       INTEGRATIONS: t('settings_sections_integrations_title'),
       MANAGEMENT: t('settings_sections_management_title'),
-      DEPARTURE: t('settings_sections_departure_title'),
-      PHONE: t('settings_sections_phone_title'),
     }),
     [t],
   );
@@ -1143,7 +1416,7 @@ export default function CompanySettings() {
       <Screen
         background="background"
         headerOptions={{
-          title: isSoloAdmin
+          title: isSoloWorkMode
             ? t('settings_title')
             : t('company_settings_title', t('settings')),
           helpTopic: 'company_settings',
@@ -1162,7 +1435,7 @@ export default function CompanySettings() {
     <Screen
       background="background"
       headerOptions={{
-        title: isSoloAdmin
+        title: isSoloWorkMode
           ? t('settings_title')
           : t('company_settings_title', t('settings')),
         helpTopic: 'company_settings',
@@ -1177,7 +1450,7 @@ export default function CompanySettings() {
         <View style={s.sectionWrap}>
           <SectionHeader>{sectionTitles.GENERAL}</SectionHeader>
           <Card paddedXOnly separated>
-            {!isSoloAdmin ? (
+            {!isSoloWorkMode ? (
               <>
                 <SelectField
                   label={t('fields_company_name')}
@@ -1208,7 +1481,7 @@ export default function CompanySettings() {
               <>
                 <SelectField
                   label={
-                    isSoloAdmin
+                    isSoloWorkMode
                       ? t('settings_company_billing_solo')
                       : t('settings_company_billing')
                   }
@@ -1232,7 +1505,7 @@ export default function CompanySettings() {
         </View>
 
 
-        {isSoloAdmin ? (
+        {isSoloWorkMode ? (
           <View style={s.sectionWrap}>
             <SectionHeader>{sectionTitles.APPEARANCE}</SectionHeader>
             <Card paddedXOnly separated>
@@ -1250,11 +1523,36 @@ export default function CompanySettings() {
           </View>
         ) : null}
 
+        {isSoloWorkMode ? (
+          <View style={s.sectionWrap}>
+            <SectionHeader>{t('settings_sections_data_title')}</SectionHeader>
+            <Card paddedXOnly separated>
+              <SelectField
+                label={t('settings_sections_data_items_trash')}
+                showValue={false}
+                onPress={go('/app_settings/trash')}
+              />
+            </Card>
+          </View>
+        ) : null}
+
+        {isSoloWorkMode ? (
+          <View style={s.sectionWrap}>
+            <SectionHeader>{t('settings_sections_about_title')}</SectionHeader>
+            <Card paddedXOnly separated>
+              <LabelValueRow
+                label={t('settings_sections_about_items_version')}
+                value={appVersion || t('common_dash')}
+              />
+            </Card>
+          </View>
+        ) : null}
+
         <View style={s.sectionWrap}>
           <SectionHeader>{t('settings_sections_reference_title')}</SectionHeader>
           <Card paddedXOnly separated>
             {SETTINGS_SECTIONS.REFERENCE.items
-              .filter((it) => !(isSoloAdmin && ['employees', 'departments'].includes(String(it?.key || ''))))
+              .filter((it) => !(isSoloWorkMode && ['employees', 'departments'].includes(String(it?.key || ''))))
               .map((it) => (
               <React.Fragment key={it.key}>
                 <SelectField
@@ -1293,10 +1591,19 @@ export default function CompanySettings() {
         <View style={s.sectionWrap}>
           <SectionHeader>{sectionTitles.MANAGEMENT}</SectionHeader>
           <Card paddedXOnly separated>
+            {isSoloWorkMode ? (
+              <SwitchField
+                label={t('settings_order_history_title')}
+                labelAccessory={<HelpInfoButton topicId="order_history" size={22} />}
+                value={orderHistoryEnabled}
+                disabled={orderHistorySaving || _isLoadingCompany}
+                onValueChange={(value) => void toggleOrderHistory(value)}
+              />
+            ) : null}
             {SETTINGS_SECTIONS.MANAGEMENT.items
               .filter((it) =>
                 !['work_types', 'departments'].includes(it.key) &&
-                !(isSoloAdmin && it?.companyOnly === true),
+                !(isSoloWorkMode && it?.companyOnly === true),
               )
               .map((it) => (
                 <React.Fragment key={it.key}>
@@ -1313,25 +1620,46 @@ export default function CompanySettings() {
           </Card>
         </View>
 
-        {/* DEPARTURE */}
-        {!isSoloAdmin ? (
-          <View style={s.sectionWrap}>
-            <SectionHeader>{sectionTitles.DEPARTURE}</SectionHeader>
-            <Card paddedXOnly separated>
-              <SelectField
-                label={t('settings_phone_mode')}
-                labelAccessory={<HelpInfoButton topicId="phone_visibility" size={22} />}
-                showValue={false}
-                onPress={go('/company_settings/sections/phone')}
-              />
-            </Card>
-          </View>
-        ) : null}
-
         {/* FINANCES */}
         <View style={s.sectionWrap}>
           <SectionHeader>{t('company_settings_sections_finances_title')}</SectionHeader>
           <Card paddedXOnly separated>
+            {SETTINGS_SECTIONS.FINANCES.items
+              .filter((it) => !(isSoloWorkMode && it?.companyOnly === true))
+              .map((it) => (
+                <React.Fragment key={it.key}>
+                  <SelectField
+                    label={t(it.labelKey)}
+                    labelAccessory={it.helpTopic ? <HelpInfoButton topicId={it.helpTopic} size={22} /> : null}
+                    showValue={false}
+                    onPress={go(it.route)}
+                    disabled={disabledManagementKeys.has(it.key)}
+                    onDisabledPress={onSoonPress}
+                  />
+                </React.Fragment>
+              ))}
+            <SelectField
+              label={t('settings_payment_methods_title')}
+              labelAccessory={
+                <HelpInfoButton topicId="payment_methods" size={22} />
+              }
+              value={paymentMethodsLabel}
+              disabled={paymentMethodSettingsSaving}
+              onPress={openPaymentMethodsModal}
+            />
+            <SelectField
+              label={t('settings_partial_payments_title')}
+              labelAccessory={
+                <HelpInfoButton topicId="partial_payments" size={22} />
+              }
+              value={
+                partialPaymentsEnabled
+                  ? t('settings_partial_payments_enabled')
+                  : t('settings_partial_payments_disabled')
+              }
+              disabled={partialPaymentsSaving}
+              onPress={openPartialPaymentsModal}
+            />
             <SelectField
               label={t('settings_company_currency_label')}
               value={fixedCurrencyLabel}
@@ -1714,6 +2042,128 @@ export default function CompanySettings() {
         onSelect={onPickCurrency}
         onClose={() => setFinanceOpen(false)}
         searchable={false}
+      />
+
+      <BaseModal
+        visible={paymentMethodsModalVisible}
+        onClose={closePaymentMethodsModal}
+        title={t('settings_payment_methods_modal_title')}
+        titleAccessory={
+          <HelpInfoButton topicId="payment_methods" size={22} />
+        }
+        footer={
+          <View style={{ flexDirection: 'row', gap: theme.components.button.groupGap }}>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                title={t('btn_cancel')}
+                variant="secondary"
+                disabled={paymentMethodSettingsSaving}
+                onPress={closePaymentMethodsModal}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                title={t('btn_save')}
+                loading={paymentMethodSettingsSaving}
+                disabled={paymentMethodSettingsSaving || draftPaymentMethodCount < 1}
+                onPress={requestSavePaymentMethodSettings}
+              />
+            </View>
+          </View>
+        }
+      >
+        <View style={s.paymentMethodsModalContent}>
+          {paymentMethodOptions.map((item) => {
+            const isEnabled = paymentMethodSettingsDraft[item.id] === true;
+            const isLastEnabled = isEnabled && draftPaymentMethodCount === 1;
+            return (
+              <View key={item.id} style={s.paymentMethodOptionRow}>
+                <View style={s.paymentMethodOptionTextWrap}>
+                  <Text style={s.paymentMethodOptionTitle}>{item.label}</Text>
+                  <Text style={s.paymentMethodOptionHint}>
+                    {t(`settings_payment_methods_${item.id}_hint`)}
+                  </Text>
+                </View>
+                <ThemedSwitch
+                  value={isEnabled}
+                  disabled={paymentMethodSettingsSaving || isLastEnabled}
+                  onValueChange={(value) => setPaymentMethodEnabled(item.id, value)}
+                />
+              </View>
+            );
+          })}
+        </View>
+      </BaseModal>
+
+      <ConfirmModal
+        visible={paymentMethodsConfirmVisible}
+        title={t('settings_payment_methods_single_confirm_title')}
+        message={t('settings_payment_methods_single_confirm_message').replace(
+          '{method}',
+          paymentMethodOptions.find((item) => paymentMethodSettingsDraft[item.id] === true)?.label || '',
+        )}
+        confirmLabel={t('settings_payment_methods_single_confirm_action')}
+        loading={paymentMethodSettingsSaving}
+        onClose={() => setPaymentMethodsConfirmVisible(false)}
+        onConfirm={() => void savePaymentMethodSettings()}
+      />
+
+      <BaseModal
+        visible={partialPaymentsModalVisible}
+        onClose={closePartialPaymentsModal}
+        title={t('settings_partial_payments_modal_title')}
+        maxHeightRatio={0.72}
+        footer={
+          <View style={{ flexDirection: 'row', gap: theme.components.button.groupGap }}>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                title={t('btn_cancel')}
+                variant="secondary"
+                disabled={partialPaymentsSaving}
+                onPress={closePartialPaymentsModal}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <UIButton
+                title={t('btn_save')}
+                loading={partialPaymentsSaving}
+                disabled={partialPaymentsSaving}
+                onPress={requestSavePartialPaymentsSetting}
+              />
+            </View>
+          </View>
+        }
+      >
+        <View style={s.partialPaymentsModalContent}>
+          <View style={s.paymentMethodOptionRow}>
+            <View style={s.paymentMethodOptionTextWrap}>
+              <View style={s.partialPaymentsOptionTitleRow}>
+                <Text style={[s.paymentMethodOptionTitle, s.partialPaymentsOptionTitle]}>
+                  {t('settings_partial_payments_switch')}
+                </Text>
+                <HelpInfoButton topicId="partial_payments" size={22} />
+              </View>
+              <Text style={s.paymentMethodOptionHint}>
+                {t('settings_partial_payments_intro')}
+              </Text>
+            </View>
+            <ThemedSwitch
+              value={partialPaymentsDraftEnabled}
+              disabled={partialPaymentsSaving}
+              onValueChange={setPartialPaymentsDraftEnabled}
+            />
+          </View>
+        </View>
+      </BaseModal>
+
+      <ConfirmModal
+        visible={partialPaymentsDisableConfirmVisible}
+        title={t('settings_partial_payments_disable_confirm_title')}
+        message={t('settings_partial_payments_disable_confirm_message')}
+        confirmLabel={t('settings_partial_payments_disable_confirm_action')}
+        loading={partialPaymentsSaving}
+        onClose={() => setPartialPaymentsDisableConfirmVisible(false)}
+        onConfirm={() => void savePartialPaymentsSetting()}
       />
 
       {/* Confirm currency change modal with editable rate and recalc option */}
@@ -2192,6 +2642,41 @@ const styles = (t) =>
       paddingVertical: t.components.row.py ? t.spacing[t.components.row.py] : 0,
     },
     rowLabel: { color: t.colors.textStrong ?? t.colors.text },
+    paymentMethodsModalContent: {
+      gap: t.spacing.md,
+    },
+    partialPaymentsModalContent: {
+      paddingTop: t.spacing.sm,
+    },
+    paymentMethodOptionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.spacing.md,
+      minHeight: t.components?.listItem?.height ?? t.components?.input?.height ?? 48,
+    },
+    paymentMethodOptionTextWrap: {
+      flex: 1,
+      minWidth: 0,
+    },
+    paymentMethodOptionTitle: {
+      color: t.colors.textStrong ?? t.colors.text,
+      fontSize: t.typography.sizes.md,
+      fontWeight: t.typography.weight.medium,
+    },
+    partialPaymentsOptionTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.spacing.xs,
+    },
+    partialPaymentsOptionTitle: {
+      flexShrink: 1,
+    },
+    paymentMethodOptionHint: {
+      color: t.colors.textSecondary,
+      fontSize: t.typography.sizes.xs,
+      lineHeight: Math.round((t.typography.sizes.xs ?? 12) * (t.typography.lineHeights?.normal ?? 1.35)),
+      marginTop: t.spacing.xxs ?? 2,
+    },
     itemLabel: {
       color: t.colors.textStrong ?? t.colors.text,
       fontWeight: t.typography.weight.regular,

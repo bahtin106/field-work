@@ -105,6 +105,34 @@ function normalizeEmployee(row: any) {
   return normalized;
 }
 
+function normalizeCompanyRoleContext(data: any) {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== 'object') return null;
+  const candidates = Array.isArray(row.candidates) ? row.candidates : [];
+  const admins = Array.isArray(row.admins) ? row.admins : [];
+  return {
+    ...row,
+    profileId: row.profile_id ?? row.profileId ?? null,
+    companyId: row.company_id ?? row.companyId ?? null,
+    canonicalAdminId:
+      row.canonical_admin_id ?? row.canonicalAdminId ?? row.owner_id ?? row.ownerId ?? null,
+    currentRole: String(row.current_role ?? row.currentRole ?? '').toLowerCase(),
+    accountType: String(row.account_type ?? row.accountType ?? '').toLowerCase(),
+    isSolo: !!(row.is_solo ?? row.isSolo),
+    isCompanyOwner: !!(row.is_company_owner ?? row.isCompanyOwner),
+    adminCount: Number(row.admin_count ?? row.adminCount ?? 0),
+    requiresTransferOnDemotion: !!(
+      row.requires_transfer_on_demotion ?? row.requiresTransferOnDemotion
+    ),
+    requiresTransferOnPromotion: !!(
+      row.requires_transfer_on_promotion ?? row.requiresTransferOnPromotion
+    ),
+    roleEditable: row.role_editable ?? row.roleEditable ?? true,
+    candidates,
+    admins,
+  };
+}
+
 export async function listEmployees(filters: any = {}) {
   return measureNetwork('employees.list', async () => {
     const explicitCompanyId = String(filters?.companyId || '').trim() || null;
@@ -174,6 +202,8 @@ export async function getEmployeeById(userId: any) {
     let iAmSuperAdmin = false;
     let myCompanyId = null;
     let myProfileId = null;
+    let superAdminRoleContext = null;
+    let superAdminRoleContextLoaded = false;
 
     if (uid) {
       const { data: me } = await selectProfileByLookup(uid, 'id, user_id, role, company_id');
@@ -192,6 +222,20 @@ export async function getEmployeeById(userId: any) {
         try {
           const { data: targetProfile } = await selectProfileByLookup(userId, 'id');
           const targetProfileId = targetProfile?.id || userId;
+          try {
+            const { data: roleContextRaw, error: roleContextError } = await supabase.rpc(
+              'admin_get_company_role_context_super',
+              { p_profile_id: targetProfileId },
+            );
+            if (!roleContextError) {
+              superAdminRoleContext = normalizeCompanyRoleContext(roleContextRaw);
+              superAdminRoleContextLoaded = superAdminRoleContext !== null;
+            }
+          } catch {
+            superAdminRoleContext = null;
+            superAdminRoleContextLoaded = false;
+          }
+
           const { data: fullRows, error: fullErr } = await supabase.rpc('admin_get_user_profile_full', {
             p_profile_id: targetProfileId,
           });
@@ -239,6 +283,9 @@ export async function getEmployeeById(userId: any) {
                 departmentName: full.department_name || null,
                 companyName: full.company_name || null,
                 companyId: profileFlags?.company_id || full.company_id || null,
+                accountType: superAdminRoleContext?.accountType || null,
+                roleContext: superAdminRoleContext,
+                roleContextLoaded: superAdminRoleContextLoaded,
                 isSuspended,
                 isBlocked,
               };
@@ -339,6 +386,9 @@ export async function getEmployeeById(userId: any) {
       departmentName,
       companyName,
       companyId: safeProf?.company_id || null,
+      accountType: superAdminRoleContext?.accountType || null,
+      roleContext: superAdminRoleContext,
+      roleContextLoaded: superAdminRoleContextLoaded,
       isSuspended: !!safeProf?.is_admin_blocked,
       isBlocked:
         !!safeProf?.is_admin_blocked ||

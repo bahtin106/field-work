@@ -29,3 +29,20 @@ Support contact: support@monitorapp.ru
 - Test photo deletion and finance create/update/delete under interrupted connectivity.
 - Test account-deletion and privacy links from Application Settings while authenticated as both company and solo accounts.
 - Start with an internal/closed track, then a staged production rollout while watching authenticated error logs.
+
+## Version 1.0.4 release handoff
+
+The durable implementation summary, ready-to-paste Russian Google Play notes,
+backend rollout list, and validation evidence are recorded in
+[`google-play-release-notes-1.0.4.md`](google-play-release-notes-1.0.4.md).
+In a new session, read that file first and resolve its release commit with:
+
+```bash
+git log -1 -- docs/google-play-release-notes-1.0.4.md
+```
+
+## Version 1.1.0 release handoff
+
+Состав релиза, готовый текст Google Play, backend-миграции и контрольные
+суммы AAB зафиксированы в
+[`google-play-release-notes-1.1.0.md`](google-play-release-notes-1.1.0.md).

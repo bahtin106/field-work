@@ -61,22 +61,33 @@ export function buildMediaAssetDisplayMap(assets = []) {
   for (const asset of Array.isArray(assets) ? assets : []) {
     const sourceUrl = String(asset?.sourceUrl || '').trim();
     if (!sourceUrl) continue;
-    if (String(asset?.provider || '') === 'beget_s3' && asset?.storagePath) continue;
+    const provider = String(asset?.provider || '').trim();
+    if (provider === 'beget_s3' && asset?.storagePath) continue;
     const displayUrl = String(asset?.displayUrl || '').trim();
-    if (isYandexPublicPageUrl(displayUrl)) continue;
+    // Yandex public/download hrefs are not durable display addresses. Resolve a
+    // fresh href through inspect_urls instead of restoring one from catalog.
+    if (isNonDurableYandexUrl(displayUrl)) continue;
     if (displayUrl) next[sourceUrl] = displayUrl;
   }
   return next;
 }
 
-function isYandexPublicPageUrl(value) {
+function isNonDurableYandexUrl(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return false;
   try {
     const host = new URL(raw).hostname.toLowerCase();
-    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host.startsWith('disk.yandex.');
+    return (
+      host === 'yadi.sk' ||
+      host.endsWith('.yadi.sk') ||
+      host.startsWith('disk.yandex.') ||
+      host.includes('.disk.yandex.')
+    );
   } catch {
-    return /^(https?:\/\/)?yadi\.sk\//i.test(raw) || /^(https?:\/\/)?disk\.yandex\.[^/]+\//i.test(raw);
+    return (
+      /^(https?:\/\/)?yadi\.sk\//i.test(raw) ||
+      /^(https?:\/\/)?(?:[^/]+\.)?disk\.yandex\.[^/]+\//i.test(raw)
+    );
   }
 }
 

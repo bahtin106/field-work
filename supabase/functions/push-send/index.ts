@@ -10,6 +10,11 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const PUSH_WORKER_KEY = Deno.env.get('PUSH_WORKER_KEY') || '';
 const PUSH_ANDROID_CHANNEL_ID = Deno.env.get('PUSH_ANDROID_CHANNEL_ID') || 'app-notify';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+const EXPO_PUSH_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
+const SUPPORT_PUSH_TTL_SECONDS = 7 * 24 * 60 * 60;
+const SUPPORT_RECEIPT_INITIAL_DELAY_MS = 15 * 60 * 1000;
+const SUPPORT_RECEIPT_RECHECK_DELAY_MS = 5 * 60 * 1000;
+const SUPPORT_RECEIPT_MAX_AGE_MS = 23 * 60 * 60 * 1000;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
@@ -87,6 +92,16 @@ type NotificationPrefs = {
 type PushTokenRow = {
   user_id: string;
   token: string;
+};
+
+type SupportPushReceiptRow = {
+  id: number;
+  notification_event_id: number;
+  recipient_user_id: string;
+  push_token: string;
+  ticket_id: string;
+  check_count: number;
+  created_at: string;
 };
 
 type OrderNotificationContext = {
@@ -468,6 +483,143 @@ async function sendChunk(messages: unknown[]) {
   return Array.isArray(data.data) ? data.data : [];
 }
 
+async function saveSupportPushTickets(
+  eventId: number,
+  tickets: Array<{ recipientUserId: string; token: string; ticketId: string }>,
+) {
+  if (!tickets.length) return;
+  const availableAt = new Date(Date.now() + SUPPORT_RECEIPT_INITIAL_DELAY_MS).toISOString();
+  const { error } = await sb.from('support_push_receipts').upsert(
+    tickets.map((ticket) => ({
+      notification_event_id: eventId,
+      recipient_user_id: ticket.recipientUserId,
+      push_token: ticket.token,
+      ticket_id: ticket.ticketId,
+      status: 'pending',
+      available_at: availableAt,
+    })),
+    { onConflict: 'ticket_id', ignoreDuplicates: true },
+  );
+  if (error) {
+    // Sending has already succeeded at this point. Do not create a duplicate
+    // notification only because receipt persistence is temporarily unavailable.
+    console.warn('support push receipt persistence failed:', error.message);
+  }
+}
+
+async function fetchExpoPushReceipts(ticketIds: string[]) {
+  const res = await fetch(EXPO_PUSH_RECEIPTS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Accept-Encoding': 'gzip, deflate',
+    },
+    body: JSON.stringify({ ids: ticketIds }),
+  });
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    const suffix = details ? `: ${details.slice(0, 700)}` : '';
+    throw new Error(`Expo push receipts responded ${res.status}${suffix}`);
+  }
+  const data = (await res.json()) as { data?: Record<string, unknown> };
+  return data?.data && typeof data.data === 'object' ? data.data : {};
+}
+
+async function updateSupportReceipt(
+  row: SupportPushReceiptRow,
+  values: Record<string, unknown>,
+) {
+  const { error } = await sb
+    .from('support_push_receipts')
+    .update({
+      ...values,
+      check_count: Math.max(0, Number(row.check_count || 0)) + 1,
+      checked_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', row.id)
+    .eq('status', 'pending');
+  if (error) throw new Error(`support push receipt update failed: ${error.message}`);
+}
+
+async function processSupportPushReceipts(limit = 500) {
+  const now = new Date();
+  const { data, error } = await sb
+    .from('support_push_receipts')
+    .select(
+      'id, notification_event_id, recipient_user_id, push_token, ticket_id, check_count, created_at',
+    )
+    .eq('status', 'pending')
+    .lte('available_at', now.toISOString())
+    .order('id', { ascending: true })
+    .limit(Math.max(1, Math.min(1000, limit)));
+
+  if (error) {
+    // Keep the sender backwards-compatible while a deployment is rolling and
+    // the receipt table has not reached this instance yet.
+    if (String(error.message || '').toLowerCase().includes('support_push_receipts')) {
+      console.warn('support push receipt table is unavailable:', error.message);
+      return;
+    }
+    throw new Error(`support push receipts fetch failed: ${error.message}`);
+  }
+
+  const rows = (Array.isArray(data) ? data : []) as SupportPushReceiptRow[];
+  if (!rows.length) return;
+
+  const invalidTokens: string[] = [];
+  const chunkSize = 1000;
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const chunk = rows.slice(index, index + chunkSize);
+    const receipts = await fetchExpoPushReceipts(chunk.map((row) => row.ticket_id));
+
+    for (const row of chunk) {
+      const receipt: any = receipts[row.ticket_id];
+      if (!receipt) {
+        const createdAtMs = new Date(row.created_at).getTime();
+        const expired =
+          Number.isFinite(createdAtMs) && Date.now() - createdAtMs >= SUPPORT_RECEIPT_MAX_AGE_MS;
+        await updateSupportReceipt(
+          row,
+          expired
+            ? {
+                status: 'error',
+                provider_error: 'ReceiptNotAvailable',
+                provider_message: 'Expo receipt was not available before expiry',
+              }
+            : {
+                available_at: new Date(Date.now() + SUPPORT_RECEIPT_RECHECK_DELAY_MS).toISOString(),
+              },
+        );
+        continue;
+      }
+
+      if (receipt.status === 'ok') {
+        await updateSupportReceipt(row, {
+          status: 'delivered',
+          provider_error: null,
+          provider_message: null,
+        });
+        continue;
+      }
+
+      const providerError = String(receipt?.details?.error || 'UnknownPushReceiptError').trim();
+      const providerMessage = String(receipt?.message || providerError).trim();
+      await updateSupportReceipt(row, {
+        status: 'error',
+        provider_error: providerError,
+        provider_message: providerMessage.slice(0, 2000),
+      });
+      if (providerError === 'DeviceNotRegistered') invalidTokens.push(row.push_token);
+    }
+  }
+
+  if (invalidTokens.length) {
+    await invalidateTokens(Array.from(new Set(invalidTokens)), 'DeviceNotRegistered');
+  }
+}
+
 async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]) {
   const invalidTokens: string[] = [];
   const valid = tokenRows.filter((t) => {
@@ -487,35 +639,42 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
     body: text.body,
     data: isSupportFeedback
       ? {
+          ...(event.payload || {}),
           feedback_id: feedbackId,
           event_type: event.event_type,
+          url: `/admin/feedbacks/${feedbackId}`,
           route: `/admin/feedbacks/${feedbackId}`,
           params: { id: feedbackId },
           entity_type: 'support_feedback',
           entity_id: feedbackId,
-          ...(event.payload || {}),
           recipient_user_id: row.user_id,
         }
       : {
+          ...(event.payload || {}),
           order_id: event.order_id,
           order_title: text.orderLabel,
           event_type: event.event_type,
+          url: `/orders/${event.order_id}`,
           route: `/orders/${event.order_id}`,
           params: { id: event.order_id, returnTo: '/orders/my-orders' },
           entity_type: 'order',
           entity_id: event.order_id,
-          ...(event.payload || {}),
           recipient_user_id: row.user_id,
         },
     sound: 'default' as const,
     channelId: PUSH_ANDROID_CHANNEL_ID,
     priority: 'high' as const,
-    ttl: 60,
-    expiration: Math.floor(Date.now() / 1000) + 60,
+    ...(isSupportFeedback
+      ? { ttl: SUPPORT_PUSH_TTL_SECONDS }
+      : {
+          ttl: 60,
+          expiration: Math.floor(Date.now() / 1000) + 60,
+        }),
   }));
 
   const sentUserIds = new Set<string>();
   const errors: string[] = [];
+  const supportTickets: Array<{ recipientUserId: string; token: string; ticketId: string }> = [];
   const chunkSize = 99;
 
   for (let i = 0; i < messages.length; i += chunkSize) {
@@ -528,6 +687,14 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
 
       if (ticket?.status === 'ok') {
         sentUserIds.add(source.user_id);
+        const ticketId = String(ticket?.id || '').trim();
+        if (isSupportFeedback && ticketId) {
+          supportTickets.push({
+            recipientUserId: source.user_id,
+            token: source.token,
+            ticketId,
+          });
+        }
       } else {
         const ticketError = String(ticket?.details?.error || ticket?.message || 'unknown').trim();
         errors.push(ticketError);
@@ -540,10 +707,19 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
   }
 
   if (invalidTokens.length) await invalidateTokens(invalidTokens, 'DeviceNotRegistered');
+  if (isSupportFeedback && supportTickets.length) {
+    await saveSupportPushTickets(event.id, supportTickets);
+  }
   return { sentUsers: sentUserIds.size, firstError: errors[0] ?? null };
 }
 
 async function processEvents(limit: number) {
+  try {
+    await processSupportPushReceipts();
+  } catch (error) {
+    // Receipt diagnostics must never block sending new notifications.
+    console.warn('support push receipt processing failed:', (error as Error)?.message || error);
+  }
   await enqueueReminders();
   const events = await claimEvents(limit);
   const stats = { claimed: events.length, sent: 0, skipped: 0, failed: 0 };

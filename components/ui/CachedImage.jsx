@@ -53,7 +53,6 @@ export default function CachedImage({
   const retryTimerRef = useRef(null);
   const loadTimeoutRef = useRef(null);
   const loadedUriRef = useRef('');
-  const fallbackUriRef = useRef(String(fallbackUri || '').trim());
 
   // Reset only when the visible URI changes. Fallback churn should not reload
   // an already rendered image during background media refreshes.
@@ -98,27 +97,6 @@ export default function CachedImage({
     setRetryAttempt(0);
     loadedUriRef.current = '';
   }, [activeUri, fallbackUri, hasError]);
-
-  useEffect(() => {
-    const fallback = String(fallbackUri || '').trim();
-    const previousFallback = fallbackUriRef.current;
-    fallbackUriRef.current = fallback;
-    if (!fallback || fallback === activeUri || loadedUriRef.current) return;
-    if (previousFallback === fallback) return;
-    if (retryTimerRef.current) {
-      clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    }
-    if (loadTimeoutRef.current) {
-      clearTimeout(loadTimeoutRef.current);
-      loadTimeoutRef.current = null;
-    }
-    setActiveUri(fallback);
-    setHasError(false);
-    setIsLoading(true);
-    setRetryAttempt(0);
-    loadedUriRef.current = '';
-  }, [activeUri, fallbackUri]);
 
   const handleError = useCallback(
     (e) => {
@@ -222,6 +200,7 @@ export default function CachedImage({
     };
   }, [restartLoadTimeout, retryAttempt]);
 
+  const imageSource = useMemo(() => ({ uri: sourceUri }), [sourceUri]);
   const sizeStyle = useMemo(
     () => ({
       ...(width != null ? { width } : {}),
@@ -249,7 +228,7 @@ export default function CachedImage({
     <View style={[sizeStyle, style, styles.imageFrame]}>
       <Image
         key={`${sourceUri}:${retryAttempt}`}
-        source={{ uri: sourceUri }}
+        source={imageSource}
         style={StyleSheet.absoluteFill}
         contentFit={contentFit}
         cachePolicy={retryAttempt > 0 ? 'none' : cachePolicy}

@@ -1,1094 +1,1311 @@
-﻿// app/stats.jsx
-// Heavy implementation lives outside the route wrapper so navigation can
-// paint the destination before this module is evaluated.
-import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import Feather from '@expo/vector-icons/Feather';
+import React from 'react';
 import {
   ActivityIndicator,
-  FlatList,
-  TextInput as RNTextInput,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Calendar, LocaleConfig } from 'react-native-calendars';
 
-import { Calendar } from 'react-native-calendars';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-
-import AppHeader from '../components/navigation/AppHeader';
+import FilterBarButton from '../components/filters/FilterBarButton';
+import Screen from '../components/layout/Screen';
+import StatisticsDetailModal from '../components/statistics/StatisticsDetailModal';
+import StatisticsFiltersPanel from '../components/statistics/StatisticsFiltersPanel';
+import StatisticsTeamScorecard from '../components/statistics/StatisticsTeamScorecard';
+import StatisticsTrendChart from '../components/statistics/StatisticsTrendChart';
 import Button from '../components/ui/Button';
+import Card from '../components/ui/Card';
 import {
   ThemedRefreshControl,
   useManagedRefresh,
   usePullToRefreshFeedback,
 } from '../components/ui/PullToRefreshFeedback';
-import AnimatedFullscreenModal from '../components/ui/modals/AnimatedFullscreenModal';
 import SectionHeader from '../components/ui/SectionHeader';
+import BaseModal from '../components/ui/modals/BaseModal';
+import ModalActionsRow from '../components/ui/modals/ModalActionsRow';
 import { useCompanySettings } from '../hooks/useCompanySettings';
-import { useCompanyOrderStatuses } from '../lib/orderStatuses';
-import { usePermissions } from '../lib/permissions';
 import { formatCurrencyWithOptions } from '../lib/currency';
-import { getStatusDbAliases } from '../lib/orderFilters';
-import { formatPersonName } from '../lib/personName';
-import { supabase } from '../lib/supabase';
+import { getOrderStatusLabel, useCompanyOrderStatuses } from '../lib/orderStatuses';
+import { usePermissions } from '../lib/permissions';
+import { useAuthContext } from '../providers/SimpleAuthProvider';
+import HelpInfoButton from '../src/features/helpCenter/HelpInfoButton';
+import {
+  calculateChange,
+  fromLocalISODate,
+  getStatisticsPeriodRange,
+  STATISTICS_PERIODS,
+  toLocalISODate,
+} from '../src/features/statistics/model';
+import { useStatisticsDashboard } from '../src/features/statistics/queries';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useScreenRefreshRegistration } from '../src/shared/query/screenRefreshRegistry';
-import { useTheme } from '../theme/ThemeProvider';
-import { getCardSurfaceStyle } from '../theme/surfaceStyles';
 import DeferredScreen from '../src/shared/perf/DeferredScreen';
+import { useTheme } from '../theme/ThemeProvider';
+import { withAlpha } from '../theme/colors';
 
-// ------- Periods -------
-const PERIODS = [
-  { key: '7d', labelKey: 'stats_period_7d', days: 7 },
-  { key: '30d', labelKey: 'stats_period_30d', days: 30 },
-  { key: '90d', labelKey: 'stats_period_90d', days: 90 },
-  { key: 'ytd', labelKey: 'stats_period_year', days: null },
-  { key: 'custom', labelKey: 'stats_period_custom', days: null },
-  { key: 'all', labelKey: 'stats_period_all', days: null },
-];
+const CONTENT_MAX_WIDTH = 1120;
+const TABLET_BREAKPOINT = 600;
+const DESKTOP_BREAKPOINT = 900;
+const KPI_COLUMNS_PHONE = 2;
+const KPI_COLUMNS_TABLET = 3;
+const KPI_COLUMNS_DESKTOP = 4;
+const EMPTY_STATS_OBJECT = Object.freeze({});
 
-// ------- Date helpers -------
-const startOfYear = (d = new Date()) => new Date(d.getFullYear(), 0, 1);
-const addDays = (base, days) => {
-  const d = new Date(base);
-  d.setDate(d.getDate() + days);
-  return d;
+// react-native-calendars uses a global XDate locale instead of the app i18n
+// locale. Register both supported interface languages explicitly so the date
+// picker never falls back to its English default.
+LocaleConfig.locales.ru = {
+  monthNames: [
+    'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+    'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
+  ],
+  monthNamesShort: [
+    'Янв.', 'Фев.', 'Мар.', 'Апр.', 'Мая', 'Июн.',
+    'Июл.', 'Авг.', 'Сент.', 'Окт.', 'Нояб.', 'Дек.',
+  ],
+  dayNames: [
+    'Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота',
+  ],
+  dayNamesShort: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'],
+  today: 'Сегодня',
 };
-const startOfDay = (d) => {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-};
-const endOfDay = (d) => {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-};
-const iso = (d) => d.toISOString();
-const fmt = (d, locale) =>
-  d ? d.toLocaleDateString(locale || undefined, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
-const toISODate = (d) => {
-  const y = d.getFullYear();
-  const m = `0${d.getMonth() + 1}`.slice(-2);
-  const day = `0${d.getDate()}`.slice(-2);
-  return `${y}-${m}-${day}`;
-};
-const fromISODate = (s) => {
-  const [y, m, d] = s.split('-').map(Number);
-  return new Date(y, m - 1, d);
+LocaleConfig.locales.en = {
+  monthNames: [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ],
+  monthNamesShort: [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ],
+  dayNames: [
+    'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+  ],
+  dayNamesShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+  today: 'Today',
 };
 
-// currency-aware formatter will be created inside component (needs hooks)
+function syncCalendarLocale(locale) {
+  const calendarLocale = String(locale || '').toLowerCase().startsWith('en') ? 'en' : 'ru';
+  LocaleConfig.defaultLocale = calendarLocale;
+  return calendarLocale;
+}
 
-const formatNumber = (n, locale) => new Intl.NumberFormat(locale || undefined).format(n);
+function asNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function hasStatisticsActivity(item) {
+  return ['registered', 'completed', 'revenue', 'profit', 'earnings'].some(
+    (key) => asNumber(item?.[key]) !== 0,
+  );
+}
+
+function formatCount(value, locale) {
+  return new Intl.NumberFormat(locale || undefined, { maximumFractionDigits: 0 }).format(
+    asNumber(value),
+  );
+}
+
+function formatPercent(value, locale) {
+  return new Intl.NumberFormat(locale || undefined, {
+    style: 'percent',
+    maximumFractionDigits: 0,
+  }).format(asNumber(value));
+}
+
+function formatDate(value, locale, options = {}) {
+  const date = fromLocalISODate(value);
+  if (!Number.isFinite(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(locale || undefined, {
+    day: '2-digit',
+    month: 'short',
+    year: options.year === false ? undefined : 'numeric',
+  }).format(date);
+}
+
+function formatCurrentMonthLabel(locale) {
+  const value = new Intl.DateTimeFormat(locale || undefined, { month: 'short' }).format(new Date());
+  return value ? `${value.charAt(0).toLocaleUpperCase(locale || undefined)}${value.slice(1)}` : '';
+}
+
+function formatCurrentYearLabel() {
+  return String(new Date().getFullYear());
+}
+
+function formatMessage(t, key, variables = {}) {
+  return Object.entries(variables).reduce(
+    (message, [name, value]) => message.split(`{${name}}`).join(String(value ?? '')),
+    t(key),
+  );
+}
+
+function resolveRoleLabel(role, t) {
+  return t(
+    {
+      admin: 'role_admin',
+      dispatcher: 'role_dispatcher',
+      worker: 'role_worker',
+    }[String(role || '').toLowerCase()] || 'role_worker',
+  );
+}
+
+function resolveSourceLabel(source, t) {
+  return t(
+    {
+      app: 'stats_source_app',
+      telegram: 'stats_source_telegram',
+      max: 'stats_source_max',
+      unknown: 'stats_source_unknown',
+    }[String(source || '').toLowerCase()] || 'stats_source_other',
+  );
+}
+
+function resolvePaymentMethodLabel(method, t) {
+  const normalized = String(method || '').trim().toLowerCase();
+  const key = {
+    cash: 'order_payment_method_cash',
+    cashless: 'order_payment_method_cashless',
+    card: 'order_payment_method_cashless',
+    bank_card: 'order_payment_method_cashless',
+    transfer: 'order_payment_method_cashless',
+    bank_transfer: 'order_payment_method_cashless',
+    unknown: 'stats_payment_unknown',
+  }[normalized];
+  return key ? t(key) : t('stats_payment_other');
+}
+
+function MetricCard({ label, value, valueColor, change, showComparison = true, icon, color, width, onPress, t }) {
+  const { theme } = useTheme();
+  const s = React.useMemo(() => styles(theme), [theme]);
+  const normalizedChange = Number.isFinite(change) ? change : null;
+  const trendColor = normalizedChange == null
+    ? theme.colors.textSecondary
+    : normalizedChange > 0
+      ? theme.colors.success
+      : normalizedChange < 0
+        ? theme.colors.danger
+        : theme.colors.textSecondary;
+  const trendText = normalizedChange == null
+    ? null
+    : normalizedChange === 0
+      ? t('stats_comparison_unchanged')
+      : `${normalizedChange > 0 ? '+' : ''}${Math.round(normalizedChange)}%`;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [s.metricPressable, { width }, pressed && s.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}`}
+    >
+      <Card style={s.metricCard}>
+        <View style={s.metricHeader}>
+          <View style={[s.metricIcon, { backgroundColor: withAlpha(color, 0.12) }]}>
+            <Feather name={icon} size={theme.icons.sm} color={color} />
+          </View>
+          <Feather name="chevron-right" size={theme.icons.sm} color={theme.colors.textSecondary} />
+        </View>
+        <Text style={[s.metricValue, valueColor ? { color: valueColor } : null]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72}>
+          {value}
+        </Text>
+        <Text style={s.metricLabel} numberOfLines={2}>{label}</Text>
+        {showComparison && trendText ? <Text style={[s.metricTrend, { color: trendColor }]}>{trendText}</Text> : null}
+      </Card>
+    </Pressable>
+  );
+}
+
+function DisclosureHeader({ title, helpTopic, onHelp, onPress, t }) {
+  const { theme } = useTheme();
+  const s = React.useMemo(() => styles(theme), [theme]);
+  return (
+    <View style={s.disclosureHeader}>
+      <SectionHeader
+        containerStyle={s.sectionHeaderContainer}
+        accessory={<HelpInfoButton topicId={helpTopic} onPress={onHelp} size={24} />}
+      >
+        {title}
+      </SectionHeader>
+      {onPress ? (
+        <Pressable
+          onPress={onPress}
+          style={({ pressed }) => [s.detailsButton, pressed && s.pressed]}
+          accessibilityRole="button"
+          accessibilityLabel={t('stats_open_details')}
+        >
+          <Text style={s.detailsButtonText}>{t('stats_details')}</Text>
+          <Feather name="chevron-right" size={theme.icons.sm} color={theme.colors.primary} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 
 function StatsScreenContent() {
-  const { theme, mode } = useTheme();
+  const { theme } = useTheme();
   const { t, locale } = useTranslation();
-  const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
-
-  // company settings hook must be used inside component body
+  syncCalendarLocale(locale);
+  const { width: windowWidth } = useWindowDimensions();
+  const { profile } = useAuthContext();
   const { settings: companySettings } = useCompanySettings();
-  const statusSystem = useCompanyOrderStatuses();
-
-  // currency-aware formatter (uses company currency when available)
-  const fRUB = (n) => {
-    const cur = companySettings?.currency || 'RUB';
-    return formatCurrencyWithOptions(Math.round(Number(n || 0)), cur, locale || undefined, {
-      maximumFractionDigits: 0,
-    });
-  };
-
-  const TOK = React.useMemo(
-    () => ({
-      isDark: mode === 'dark' || theme.mode === 'dark',
-      PRIMARY: theme.colors.primary,
-      PRIMARY_LIGHT: theme.colors.primary + '20',
-      BG: theme.colors.background,
-      SURFACE: theme.colors.surface,
-      CARD_BORDER: theme.colors.border,
-      TEXT: theme.colors.text,
-      SUBTEXT: theme.colors.textSecondary,
-      OUTLINE: theme.colors.border,
-      SUCCESS: theme.colors.success,
-      WARNING: theme.colors.warning,
-      ERROR: theme.colors.danger,
-      INFO: theme.colors.info || theme.colors.primary,
-      ON_PRIMARY: theme.colors.onPrimary || theme.colors.primaryTextOn,
-    }),
-    [theme, mode],
-  );
-  const ui = React.useMemo(() => {
-    const screenPadding = theme.components.screenLayout.contentPaddingX;
-    const cardGap = theme.spacing.md;
-    const gridWidth = Math.max(0, screenWidth - screenPadding * 2 - cardGap);
-    return {
-      screenPadding,
-      sectionGap: theme.spacing.lg,
-      cardGap,
-      cardWidth: Math.floor(gridWidth / 2),
-      cardRadius: theme.components.card.radius,
-      controlRadius: theme.radii.lg,
-      controlRadiusSm: theme.radii.sm,
-      controlPaddingX: theme.spacing.md,
-      controlPaddingY: theme.spacing.sm,
-      cardPadding: theme.spacing.lg,
-      smallGap: theme.spacing.xs,
-      mediumGap: theme.spacing.md,
-      bottomInset: theme.components.screenLayout.contentPaddingBottom,
-      headerTitleSize: theme.typography.sizes.xxl,
-      modalTitleSize: theme.typography.sizes.lg,
-      statValueSize: theme.typography.sizes.xl,
-      metricValueSize: theme.typography.sizes.lg,
-      bodySize: theme.typography.sizes.md,
-      smallTextSize: theme.typography.sizes.sm,
-      tinyTextSize: theme.typography.sizes.xs,
-    };
-  }, [screenWidth, theme]);
-
-  const [loading, setLoading] = useState(true);
-
-  const [me, setMe] = useState(null);
-  const [role, setRole] = useState(null);
-
-  const [userPickerOpen, setUserPickerOpen] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [usersSearch, setUsersSearch] = useState('');
-
-  const [selectedUserId, setSelectedUserId] = useState(null);
-  const [selectedUser, setSelectedUser] = useState(null);
   const { has } = usePermissions();
+  const statusSystem = useCompanyOrderStatuses();
+  const s = React.useMemo(() => styles(theme), [theme]);
 
-  const [period, setPeriod] = useState('30d');
-  const [customModalOpen, setCustomModalOpen] = useState(false);
-  const [rangeStart, setRangeStart] = useState(null);
-  const [rangeEnd, setRangeEnd] = useState(null);
-
+  const role = String(profile?.role || '').toLowerCase();
+  const profileId = String(profile?.id || '').trim();
+  const companyId = String(profile?.company_id || profile?.companyId || '').trim();
   const isAdmin = role === 'admin';
-  const isDispatcher = role === 'dispatcher';
-  const isManager = isAdmin || isDispatcher;
-  const canViewFinanceStatsAll = has('canViewFinanceStatsAll');
+  const isSolo = companySettings?.work_mode === 'solo';
+  const canViewCompany = isAdmin || has('canViewFinanceStatsAll');
+  const currency = companySettings?.currency || 'RUB';
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        container: { flex: 1, backgroundColor: TOK.BG },
-        scrollContent: { paddingBottom: ui.bottomInset },
+  const initializedProfileRef = React.useRef('');
+  const [scope, setScope] = React.useState('me');
+  const [period, setPeriod] = React.useState('month');
+  const [customRange, setCustomRange] = React.useState({ from: null, to: null });
+  const [dateModalVisible, setDateModalVisible] = React.useState(false);
+  const [draftRange, setDraftRange] = React.useState({ from: null, to: null });
+  const [filtersVisible, setFiltersVisible] = React.useState(false);
+  const [employeeIds, setEmployeeIds] = React.useState([]);
+  const [departmentIds, setDepartmentIds] = React.useState([]);
+  const [includeNoDepartment, setIncludeNoDepartment] = React.useState(false);
+  const [workTypeIds, setWorkTypeIds] = React.useState([]);
+  const [includeNoWorkType, setIncludeNoWorkType] = React.useState(false);
+  const [detailType, setDetailType] = React.useState(null);
+  const [infoType, setInfoType] = React.useState(null);
+  const [chartMode, setChartMode] = React.useState('money');
+  const [teamMetric, setTeamMetric] = React.useState('profit');
+  const [selectedEmployeeId, setSelectedEmployeeId] = React.useState(null);
+  const [selectedDepartmentId, setSelectedDepartmentId] = React.useState(null);
 
-        // Header
-        header: {
-          paddingHorizontal: ui.screenPadding,
-          paddingTop: theme.spacing.md,
-          paddingBottom: ui.sectionGap,
-        },
-        headerTitle: {
-          fontSize: ui.headerTitleSize,
-          fontWeight: '700',
-          color: TOK.TEXT,
-          marginBottom: ui.smallGap,
-        },
-        headerSubtitle: {
-          fontSize: ui.bodySize,
-          color: TOK.SUBTEXT,
-        },
+  React.useEffect(() => {
+    if (!profileId || initializedProfileRef.current === profileId) return;
+    initializedProfileRef.current = profileId;
+    setScope(isAdmin || isSolo ? 'company' : 'me');
+    setEmployeeIds([]);
+    setDepartmentIds([]);
+    setIncludeNoDepartment(false);
+    setWorkTypeIds([]);
+    setIncludeNoWorkType(false);
+  }, [isAdmin, isSolo, profileId]);
 
-        // Quick Stats
-        quickStats: {
-          paddingHorizontal: ui.screenPadding,
-          marginBottom: ui.sectionGap,
-        },
-        statsGrid: {
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          gap: ui.cardGap,
-        },
-        statCard: {
-          ...getCardSurfaceStyle(theme),
-          width: ui.cardWidth,
-          padding: ui.cardPadding,
-        },
-        statValue: {
-          fontSize: ui.statValueSize,
-          fontWeight: '700',
-          color: TOK.TEXT,
-          marginBottom: ui.smallGap,
-        },
-        statLabel: {
-          fontSize: ui.smallTextSize,
-          color: TOK.SUBTEXT,
-        },
-        statTrend: {
-          fontSize: ui.tinyTextSize,
-          marginTop: ui.smallGap,
-        },
+  React.useEffect(() => {
+    if (!isSolo && !canViewCompany && scope === 'company') setScope('me');
+  }, [canViewCompany, isSolo, scope]);
 
-        // Filters
-        filters: {
-          paddingHorizontal: ui.screenPadding,
-          marginBottom: ui.sectionGap,
-        },
-        filterRow: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: ui.mediumGap,
-        },
-        periodSelector: {
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          gap: ui.smallGap,
-          backgroundColor: TOK.SURFACE,
-          borderRadius: ui.controlRadius,
-          padding: ui.smallGap,
-          borderWidth: 1,
-          borderColor: TOK.OUTLINE,
-          flexShrink: 1,
-          maxWidth: '100%',
-        },
-        periodButton: {
-          paddingHorizontal: ui.controlPaddingX,
-          paddingVertical: ui.controlPaddingY,
-          borderRadius: ui.controlRadiusSm,
-        },
-        periodButtonActive: {
-          backgroundColor: TOK.PRIMARY,
-        },
-        periodText: {
-          fontSize: ui.smallTextSize,
-          fontWeight: '600',
-          color: TOK.SUBTEXT,
-        },
-        periodTextActive: {
-          color: TOK.ON_PRIMARY,
-        },
-        userSelector: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: TOK.SURFACE,
-          padding: ui.mediumGap,
-          borderRadius: ui.controlRadius,
-          borderWidth: 1,
-          borderColor: TOK.OUTLINE,
-        },
-        userText: {
-          flex: 1,
-          fontSize: ui.bodySize,
-          color: TOK.TEXT,
-          marginLeft: theme.spacing.sm,
-        },
-
-        // Charts & Details
-        section: {
-          marginBottom: ui.sectionGap,
-          paddingHorizontal: ui.screenPadding,
-        },
-        sectionTitle: { marginLeft: 0 },
-        chartCard: {
-          ...getCardSurfaceStyle(theme),
-          padding: ui.cardPadding,
-        },
-
-        // Status Breakdown
-        statusItem: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          paddingVertical: ui.mediumGap,
-          borderBottomWidth: 1,
-          borderBottomColor: TOK.OUTLINE + '30',
-        },
-        statusLeft: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          flex: 1,
-        },
-        statusDot: {
-          width: 8,
-          height: 8,
-          borderRadius: theme.radii.xs,
-          marginRight: ui.mediumGap,
-        },
-        statusName: {
-          fontSize: ui.bodySize,
-          color: TOK.TEXT,
-          flex: 1,
-        },
-        statusStats: {
-          alignItems: 'flex-end',
-        },
-        statusCount: {
-          fontSize: ui.bodySize,
-          fontWeight: '600',
-          color: TOK.TEXT,
-        },
-        statusAmount: {
-          fontSize: ui.smallTextSize,
-          color: TOK.SUBTEXT,
-          marginTop: Math.max(1, Math.floor(ui.smallGap / 2)),
-        },
-
-        // Performance Metrics
-        metricGrid: {
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          gap: ui.cardGap,
-        },
-        metricCard: {
-          ...getCardSurfaceStyle(theme),
-          width: ui.cardWidth,
-          padding: ui.cardPadding,
-        },
-        metricValue: {
-          fontSize: ui.metricValueSize,
-          fontWeight: '700',
-          color: TOK.TEXT,
-          marginBottom: ui.smallGap,
-        },
-        metricLabel: {
-          fontSize: ui.smallTextSize,
-          color: TOK.SUBTEXT,
-        },
-
-        // Modals
-        modal: {
-          flex: 1,
-          backgroundColor: TOK.BG,
-          paddingTop: insets.top,
-        },
-        modalHeader: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingHorizontal: ui.screenPadding,
-          paddingVertical: ui.sectionGap,
-          borderBottomWidth: 1,
-          borderBottomColor: TOK.OUTLINE,
-        },
-        modalTitle: {
-          fontSize: ui.modalTitleSize,
-          fontWeight: theme.typography.weight.bold,
-          color: TOK.TEXT,
-        },
-        closeButton: {
-          padding: theme.spacing.sm,
-        },
-        searchInput: {
-          margin: ui.screenPadding,
-          borderRadius: ui.controlRadius,
-          paddingHorizontal: ui.cardPadding,
-          paddingVertical: ui.mediumGap,
-          borderWidth: 1,
-          backgroundColor: TOK.SURFACE,
-          borderColor: TOK.OUTLINE,
-          color: TOK.TEXT,
-          fontSize: ui.bodySize,
-        },
-        userItem: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: ui.screenPadding,
-          paddingVertical: ui.sectionGap,
-          borderBottomWidth: 1,
-          borderBottomColor: TOK.OUTLINE + '30',
-        },
-        userInfo: {
-          flex: 1,
-          marginLeft: ui.mediumGap,
-        },
-        userName: {
-          fontSize: ui.bodySize,
-          color: TOK.TEXT,
-          marginBottom: Math.max(1, Math.floor(ui.smallGap / 2)),
-        },
-        userRole: {
-          fontSize: ui.smallTextSize,
-          color: TOK.SUBTEXT,
-        },
-        selectedIndicator: {
-          width: 24,
-          height: 24,
-          borderRadius: theme.radii.pill,
-          borderWidth: 2,
-          borderColor: TOK.PRIMARY,
-          justifyContent: 'center',
-          alignItems: 'center',
-        },
-        selectedDot: {
-          width: 12,
-          height: 12,
-          borderRadius: theme.radii.pill,
-          backgroundColor: TOK.PRIMARY,
-        },
-
-        // Calendar
-        calendarContainer: {
-          margin: ui.screenPadding,
-          borderRadius: ui.cardRadius,
-          overflow: 'hidden',
-          borderWidth: 1,
-          borderColor: TOK.OUTLINE,
-        },
-        rangeDisplay: {
-          padding: ui.cardPadding,
-          backgroundColor: TOK.SURFACE,
-          borderBottomWidth: 1,
-          borderBottomColor: TOK.OUTLINE,
-        },
-        rangeText: {
-          fontSize: ui.bodySize,
-          color: TOK.TEXT,
-          textAlign: 'center',
-        },
-        modalActions: {
-          flexDirection: 'row',
-          padding: ui.screenPadding,
-          gap: theme.components.button.groupGap,
-        },
-        // Empty State
-        emptyState: {
-          alignItems: 'center',
-          padding: theme.spacing.xxxl || theme.spacing.xxl,
-        },
-        emptyText: {
-          fontSize: ui.bodySize,
-          color: TOK.SUBTEXT,
-          textAlign: 'center',
-          marginTop: ui.mediumGap,
-        },
-      }),
-    [TOK, insets.top, theme, ui],
+  const periodRange = React.useMemo(
+    () => getStatisticsPeriodRange(period, customRange),
+    [customRange, period],
   );
-
-  // Load profile
-  const loadMe = useCallback(async () => {
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth?.user?.id) {
-      setMe(null);
-      setRole(null);
-      return;
-    }
-    const uid = auth.user.id;
-    const { data: prof, error } = await supabase
-      .from('profiles')
-      .select('id, role, first_name, middle_name, last_name, full_name, company_id')
-      .eq('id', uid)
-      .single();
-    if (error) throw error;
-    const normalizedMe = prof ? { ...prof, full_name: formatPersonName(prof) || prof.full_name } : prof;
-    setMe(normalizedMe);
-    setRole(prof.role);
-    setSelectedUserId(normalizedMe.id);
-    setSelectedUser(normalizedMe);
-  }, []);
-
-  // Load users (for managers)
-  const loadUsers = useCallback(async () => {
-    if (!isManager || !canViewFinanceStatsAll || !me?.company_id) {
-      setUsers([]);
-      return;
-    }
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, first_name, middle_name, last_name, full_name, role')
-      .eq('company_id', me.company_id)
-      .order('full_name', { ascending: true });
-    if (error) throw error;
-    const rows = (data || []).map((row) => ({
-      ...row,
-      full_name: formatPersonName(row) || row.full_name,
-    }));
-    setUsers([{ id: 'ALL', full_name: t('stats_all_employees'), role: 'all' }, ...rows]);
-  }, [canViewFinanceStatsAll, isManager, me?.company_id, t]);
-
-  // Period range calculation
-  const periodRange = useMemo(() => {
-    const now = new Date();
-    const periodConfig = PERIODS.find((p) => p.key === period);
-
-    if (period === 'custom' && rangeStart && rangeEnd) {
-      return {
-        from: startOfDay(fromISODate(rangeStart)),
-        to: endOfDay(fromISODate(rangeEnd)),
-      };
-    }
-
-    if (periodConfig?.days) {
-      return { from: addDays(now, -periodConfig.days), to: endOfDay(now) };
-    }
-
-    if (period === 'ytd') {
-      return { from: startOfYear(now), to: endOfDay(now) };
-    }
-
-    return { from: null, to: endOfDay(now) };
-  }, [period, rangeStart, rangeEnd]);
-
-  // Load statistics data
-  const [stats, setStats] = useState({
-    totalOrders: 0,
-    completedOrders: 0,
-    inProgressOrders: 0,
-    newOrders: 0,
-    totalRevenue: 0,
-    totalCosts: 0,
-    netProfit: 0,
-    statusBreakdown: [],
-    performance: {
-      avgOrdersPerDay: 0,
-      completionRate: 0,
-      efficiency: 0,
-      avgRevenuePerOrder: 0,
-    },
-    expenseByRecipient: [],
+  const requestedScope = isSolo
+    ? 'company'
+    : scope === 'company' && canViewCompany
+      ? 'company'
+      : 'me';
+  const dashboardParams = React.useMemo(
+    () => ({
+      from: periodRange.from,
+      to: periodRange.to,
+      scope: requestedScope,
+      employeeIds: requestedScope === 'company' && !isSolo ? employeeIds : [],
+      departmentIds: requestedScope === 'company' && !isSolo ? departmentIds : [],
+      includeNoDepartment:
+        requestedScope === 'company' && !isSolo ? includeNoDepartment : false,
+      workTypeIds,
+      includeNoWorkType,
+    }),
+    [
+      departmentIds,
+      employeeIds,
+      includeNoDepartment,
+      includeNoWorkType,
+      isSolo,
+      periodRange.from,
+      periodRange.to,
+      requestedScope,
+      workTypeIds,
+    ],
+  );
+  const dashboardQuery = useStatisticsDashboard(dashboardParams, {
+    enabled: Boolean(profileId && companyId),
   });
-
-  const loadStats = useCallback(async () => {
-    if (!selectedUserId) return;
-
-    try {
-      // Load orders data
-      let query = supabase
-        .from('orders_accessible')
-        .select(
-          'id, status, time_window_start, assigned_to, start_price, finance_income_total, finance_expense_total, finance_discount_total, finance_gross_total, finance_net_total',
-        )
-        .order('time_window_start', { ascending: false });
-
-      if (selectedUserId !== 'ALL') {
-        query = query.eq('assigned_to', selectedUserId);
-      }
-
-      if (periodRange.from) {
-        query = query.gte('time_window_start', iso(periodRange.from));
-      }
-      if (periodRange.to) {
-        query = query.lte('time_window_start', iso(periodRange.to));
-      }
-
-      const { data: orders, error } = await query;
-      if (error) throw error;
-
-      // Calculate statistics
-      const totalOrders = orders?.length || 0;
-      const completedStatusAliases = getStatusDbAliases('done');
-      const inProgressStatusAliases = getStatusDbAliases('in_progress');
-      const newStatusAliases = getStatusDbAliases('new');
-      const completedOrders = orders?.filter((o) => completedStatusAliases.includes(String(o.status || '').trim())).length || 0;
-      const inProgressOrders = orders?.filter((o) => inProgressStatusAliases.includes(String(o.status || '').trim())).length || 0;
-      const newOrders = orders?.filter((o) => newStatusAliases.includes(String(o.status || '').trim())).length || 0;
-
-      const getGross = (o) => Number(o.finance_gross_total ?? o.start_price ?? 0) || 0;
-      const getExtraIncome = (o) => Number(o.finance_income_total ?? 0) || 0;
-      const getExpense = (o) => Number(o.finance_expense_total ?? 0) || 0;
-      const getNet = (o) =>
-        Number(o.finance_net_total ?? getGross(o) + getExtraIncome(o) - getExpense(o)) || 0;
-
-      const totalRevenue = orders?.reduce((sum, o) => sum + getGross(o) + getExtraIncome(o), 0) || 0;
-      const totalCosts = orders?.reduce((sum, o) => sum + getExpense(o), 0) || 0;
-      const netProfit = orders?.reduce((sum, o) => sum + getNet(o), 0) || 0;
-
-      // Status breakdown
-      const statusRows = statusSystem.isEnabled
-        ? statusSystem.regularStatuses.map((status) => ({
-            key: status.status_key,
-            aliases: getStatusDbAliases(status.status_key),
-            label: status.name,
-            color: status.color || TOK.PRIMARY,
-          }))
-        : [];
-      const statusBreakdown = statusRows
-        .map((item) => {
-          const filtered = (orders || []).filter((o) => item.aliases.includes(String(o.status || '').trim()));
-          return {
-            status: item.key,
-            label: item.label,
-            count: filtered.length,
-            color: item.color,
-            amount: filtered.reduce((sum, o) => sum + getNet(o), 0),
-          };
-        })
-        .filter((item) => item.count > 0);
-
-      let expenseByRecipient = [];
-      const orderIds = (orders || []).map((o) => o.id).filter(Boolean);
-      if (orderIds.length > 0) {
-        const { data: entries } = await supabase
-          .from('order_finance_entries')
-          .select(
-            'kind, calculated_amount, recipient_user_id, recipient:profiles!order_finance_entries_recipient_user_id_fkey(first_name, middle_name, last_name, full_name)',
-          )
-          .in('order_id', orderIds);
-        const grouped = new Map();
-        for (const entry of entries || []) {
-          if (String(entry?.kind || '') !== 'expense') continue;
-          const key = String(entry?.recipient_user_id || 'no_recipient');
-          const prev = grouped.get(key) || {
-            key,
-            name: formatPersonName(entry?.recipient, t('stats_no_recipient')),
-            amount: 0,
-          };
-          prev.amount += Number(entry?.calculated_amount || 0) || 0;
-          grouped.set(key, prev);
-        }
-        expenseByRecipient = Array.from(grouped.values())
-          .filter((row) => row.amount > 0)
-          .sort((a, b) => b.amount - a.amount)
-          .slice(0, 6);
-      }
-
-      // Performance metrics
-      const days =
-        period === 'custom' && periodRange.from && periodRange.to
-          ? Math.max(1, Math.ceil((periodRange.to - periodRange.from) / (24 * 60 * 60 * 1000)))
-          : PERIODS.find((p) => p.key === period)?.days || 365;
-
-      const avgOrdersPerDay = totalOrders / days;
-      const completionRate = totalOrders > 0 ? completedOrders / totalOrders : 0;
-      const avgRevenuePerOrder = completedOrders > 0 ? totalRevenue / completedOrders : 0;
-
-      setStats({
-        totalOrders,
-        completedOrders,
-        inProgressOrders,
-        newOrders,
-        totalRevenue,
-        totalCosts,
-        netProfit,
-        statusBreakdown,
-        performance: {
-          avgOrdersPerDay,
-          completionRate,
-          efficiency: completionRate * 100,
-          avgRevenuePerOrder,
-        },
-        expenseByRecipient,
-      });
-    } catch (error) {
-      console.error('Error loading stats:', error);
-    }
-  }, [selectedUserId, periodRange, period, TOK, statusSystem.isEnabled, statusSystem.regularStatuses, t]);
-
-  // Initial load
-  useEffect(() => {
-    const initialize = async () => {
-      setLoading(true);
-      try {
-        await loadMe();
-      } finally {
-        setLoading(false);
-      }
-    };
-    initialize();
-  }, [loadMe]);
-
-  useEffect(() => {
-    if (!me) return;
-    if (isManager && canViewFinanceStatsAll) {
-      loadUsers().catch(() => {});
-    }
-    loadStats().catch(() => {});
-  }, [canViewFinanceStatsAll, isManager, loadStats, loadUsers, me]);
-
-  useScreenRefreshRegistration(
-    'stats.screen',
-    async () => {
-      if (!me) return;
-      await Promise.allSettled([
-        loadStats(),
-        isManager && canViewFinanceStatsAll ? loadUsers() : Promise.resolve(),
-      ]);
-    },
-    true,
+  const dashboard = dashboardQuery.data;
+  const summary = dashboard?.summary || EMPTY_STATS_OBJECT;
+  const comparison = dashboard?.comparison || EMPTY_STATS_OBJECT;
+  const isWorkerView = !isSolo && requestedScope !== 'company';
+  const formatMoney = React.useCallback(
+    (value) =>
+      formatCurrencyWithOptions(asNumber(value), dashboard?.meta?.currency || currency, locale, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      }),
+    [currency, dashboard?.meta?.currency, locale],
+  );
+  const formatDashboardCount = React.useCallback(
+    (value) => formatCount(value, locale),
+    [locale],
   );
 
-  const refreshAll = useCallback(async () => {
-    await loadStats();
-    if (isManager && canViewFinanceStatsAll) await loadUsers();
-  }, [canViewFinanceStatsAll, loadStats, isManager, loadUsers]);
-  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
+  const periodLabel = React.useMemo(
+    () => `${formatDate(periodRange.from, locale)} — ${formatDate(periodRange.to, locale)}`,
+    [locale, periodRange.from, periodRange.to],
+  );
+  const scopeLabel = isSolo
+    ? t('stats_scope_solo')
+    : requestedScope === 'company'
+      ? t('stats_scope_company')
+      : t('stats_scope_me');
+  const detailSubtitle = `${scopeLabel} · ${periodLabel}`;
+
+  const refresh = React.useCallback(async () => {
+    await dashboardQuery.refetch();
+  }, [dashboardQuery]);
+  useScreenRefreshRegistration('stats.screen', refresh, true);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refresh);
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
-  // User selection
-  const openUserPicker = () => setUserPickerOpen(true);
-  const closeUserPicker = () => setUserPickerOpen(false);
-  const selectUser = (user) => {
-    setSelectedUserId(user.id);
-    setSelectedUser(user.id === 'ALL' ? { full_name: t('stats_all_employees'), role: 'all' } : user);
-    closeUserPicker();
-  };
+  const contentWidth = Math.min(windowWidth, CONTENT_MAX_WIDTH);
+  const columns = contentWidth >= DESKTOP_BREAKPOINT
+    ? KPI_COLUMNS_DESKTOP
+    : contentWidth >= TABLET_BREAKPOINT
+      ? KPI_COLUMNS_TABLET
+      : KPI_COLUMNS_PHONE;
+  const horizontalPadding = theme.components.screenLayout.contentPaddingX;
+  const cardGap = theme.spacing.md;
+  const metricWidth = Math.max(
+    0,
+    (contentWidth - horizontalPadding * 2 - cardGap * (columns - 1)) / columns,
+  );
 
-  // Custom period handling
-  const openCustomPeriod = () => {
-    setCustomModalOpen(true);
-  };
+  const topMetrics = React.useMemo(() => {
+    const completed = asNumber(summary.completed);
+    const profit = asNumber(summary.profit);
+    const revenue = asNumber(summary.revenue);
+    const earnings = asNumber(summary.personal_earnings);
+    const margin = revenue !== 0 ? profit / revenue : 0;
 
-  const closeCustomPeriod = () => {
-    setCustomModalOpen(false);
-    setRangeStart(null);
-    setRangeEnd(null);
-  };
-
-  const applyCustomPeriod = () => {
-    if (rangeStart && rangeEnd) {
-      setPeriod('custom');
-      setCustomModalOpen(false);
+    if (isWorkerView) {
+      const averageEarnings = completed > 0 ? earnings / completed : 0;
+      return [
+        {
+          id: 'earnings',
+          label: t('stats_earnings_accrued'),
+          value: formatMoney(earnings),
+          change: calculateChange(earnings, comparison.personal_earnings),
+          icon: 'dollar-sign',
+          color: theme.colors.success,
+          detail: 'personal',
+        },
+        {
+          id: 'completed',
+          label: t('stats_completed_in_period'),
+          value: formatCount(completed, locale),
+          change: calculateChange(completed, comparison.completed),
+          icon: 'check-circle',
+          color: theme.colors.primary,
+          detail: 'requests',
+        },
+        {
+          id: 'average_earnings',
+          label: t('stats_average_earnings_per_request'),
+          value: formatMoney(averageEarnings),
+          showComparison: false,
+          icon: 'bar-chart-2',
+          color: theme.colors.info,
+          detail: 'personal',
+        },
+        {
+          id: 'cycle',
+          label: t('stats_average_cycle'),
+          value: formatMessage(t, 'stats_hours_value', { count: asNumber(summary.average_cycle_hours) }),
+          showComparison: false,
+          icon: 'clock',
+          color: theme.colors.warning,
+          detail: 'requests',
+        },
+      ];
     }
-  };
 
-  const onDayPress = (day) => {
-    const todayIso = toISODate(new Date());
-    const picked = day.dateString > todayIso ? todayIso : day.dateString;
-
-    if (!rangeStart) {
-      setRangeStart(picked);
-      setRangeEnd(null);
-    } else if (rangeStart && !rangeEnd) {
-      if (picked < rangeStart) {
-        setRangeEnd(rangeStart);
-        setRangeStart(picked);
-      } else {
-        setRangeEnd(picked);
-      }
-    } else {
-      setRangeStart(picked);
-      setRangeEnd(null);
+    if (isSolo) {
+      return [
+        {
+          id: 'profit',
+          label: t('stats_solo_result'),
+          value: formatMoney(profit),
+          valueColor: profit > 0 ? theme.colors.success : theme.colors.danger,
+          change: calculateChange(profit, comparison.profit),
+          icon: 'trending-up',
+          color: profit > 0 ? theme.colors.success : theme.colors.danger,
+          detail: 'finance',
+        },
+        {
+          id: 'revenue',
+          label: t('stats_completed_revenue'),
+          value: formatMoney(revenue),
+          change: calculateChange(revenue, comparison.revenue),
+          icon: 'credit-card',
+          color: theme.colors.warning,
+          detail: 'finance',
+        },
+        {
+          id: 'expenses',
+          label: t('stats_total_expenses'),
+          value: formatMoney(summary.total_expenses),
+          showComparison: false,
+          icon: 'arrow-down-circle',
+          color: theme.colors.danger,
+          detail: 'finance',
+        },
+        {
+          id: 'completed',
+          label: t('stats_completed_in_period'),
+          value: formatCount(completed, locale),
+          change: calculateChange(completed, comparison.completed),
+          icon: 'check-circle',
+          color: theme.colors.primary,
+          detail: 'requests',
+        },
+      ];
     }
-  };
 
-  const markedDates = useMemo(() => {
-    if (!rangeStart) return {};
-    const start = fromISODate(rangeStart);
-    const end = rangeEnd ? fromISODate(rangeEnd) : start;
-    const marks = {};
-    const dayMS = 24 * 60 * 60 * 1000;
+    return [
+      {
+        id: 'profit',
+        label: t('stats_job_profit'),
+        value: formatMoney(profit),
+        valueColor: profit > 0 ? theme.colors.success : theme.colors.danger,
+        change: calculateChange(profit, comparison.profit),
+        icon: 'trending-up',
+        color: profit > 0 ? theme.colors.success : theme.colors.danger,
+        detail: 'finance',
+      },
+      {
+        id: 'revenue',
+        label: t('stats_completed_revenue'),
+        value: formatMoney(revenue),
+        change: calculateChange(revenue, comparison.revenue),
+        icon: 'credit-card',
+        color: theme.colors.warning,
+        detail: 'finance',
+      },
+      {
+        id: 'completed',
+        label: t('stats_completed_in_period'),
+        value: formatCount(completed, locale),
+        change: calculateChange(completed, comparison.completed),
+        icon: 'check-circle',
+        color: theme.colors.primary,
+        detail: 'requests',
+      },
+      {
+        id: 'margin',
+        label: t('stats_job_margin'),
+        value: formatPercent(margin, locale),
+        showComparison: false,
+        icon: 'percent',
+        color: margin > 0 ? theme.colors.success : theme.colors.danger,
+        valueColor: margin > 0 ? theme.colors.text : theme.colors.danger,
+        detail: 'finance',
+      },
+    ];
+  }, [
+    comparison.completed,
+    comparison.personal_earnings,
+    comparison.profit,
+    comparison.revenue,
+    formatMoney,
+    isSolo,
+    isWorkerView,
+    locale,
+    summary.average_cycle_hours,
+    summary.completed,
+    summary.personal_earnings,
+    summary.profit,
+    summary.revenue,
+    summary.total_expenses,
+    t,
+    theme.colors.danger,
+    theme.colors.info,
+    theme.colors.primary,
+    theme.colors.success,
+    theme.colors.text,
+    theme.colors.warning,
+  ]);
 
-    for (let t = start.getTime(); t <= end.getTime(); t += dayMS) {
-      const d = new Date(t);
-      const key = toISODate(d);
-      const isStart = key === rangeStart;
-      const isEnd = key === rangeEnd;
-      marks[key] = {
-        startingDay: isStart,
-        endingDay: isEnd,
-        color: TOK.PRIMARY,
-        textColor: TOK.ON_PRIMARY,
+  const statusPreviewRows = React.useMemo(
+    () =>
+      (dashboard?.statuses || []).map((item) => ({
+        key: String(item.key || item.name),
+        label: getOrderStatusLabel(item.key, statusSystem.statuses, t) || item.name,
+        value: asNumber(item.count),
+        color: item.color || theme.colors.primary,
+      })),
+    [dashboard?.statuses, statusSystem.statuses, t, theme.colors.primary],
+  );
+  const employeeOptions = React.useMemo(
+    () =>
+      (dashboard?.filterOptions?.employees || []).map((employee) => ({
+        id: employee.id,
+        value: String(employee.id),
+        label: employee.name,
+        subtitle: [
+          employee.department_name,
+          resolveRoleLabel(employee.role, t),
+          employee.is_blocked ? t('stats_employee_blocked') : null,
+        ].filter(Boolean).join(' · '),
+      })),
+    [dashboard?.filterOptions?.employees, t],
+  );
+  const departmentOptions = React.useMemo(
+    () => (dashboard?.filterOptions?.departments || []).map((department) => ({
+        id: department.id,
+        value: String(department.id),
+        label: department.name,
+      })),
+    [dashboard?.filterOptions?.departments],
+  );
+  const workTypeOptions = React.useMemo(
+    () => (dashboard?.filterOptions?.workTypes || []).map((workType) => ({
+      id: workType.id,
+      value: String(workType.id),
+      label: workType.name,
+      subtitle: workType.is_enabled === false ? t('stats_work_type_disabled') : null,
+    })),
+    [dashboard?.filterOptions?.workTypes, t],
+  );
+  const activeFilterCount = employeeIds.length
+    + departmentIds.length
+    + (includeNoDepartment ? 1 : 0)
+    + workTypeIds.length
+    + (includeNoWorkType ? 1 : 0);
+  const statisticsFilterValue = React.useMemo(
+    () => ({
+      employeeIds,
+      departmentIds,
+      includeNoDepartment,
+      workTypeIds,
+      includeNoWorkType,
+    }),
+    [departmentIds, employeeIds, includeNoDepartment, includeNoWorkType, workTypeIds],
+  );
+  const canFilterByPeople = requestedScope === 'company'
+    && !isSolo
+    && canViewCompany
+    && (employeeOptions.length > 0 || dashboard?.meta?.use_departments === true);
+  const canFilterByWorkTypes = dashboard?.meta?.use_work_types === true;
+  const canOpenFilters = canFilterByPeople || canFilterByWorkTypes;
+
+  const openDatePicker = React.useCallback(() => {
+    setDraftRange({ from: periodRange.from, to: periodRange.to });
+    setDateModalVisible(true);
+  }, [periodRange.from, periodRange.to]);
+  const onCalendarDayPress = React.useCallback((day) => {
+    const picked = String(day?.dateString || '');
+    if (!picked) return;
+    setDraftRange((current) => {
+      if (!current.from || current.to) return { from: picked, to: null };
+      return picked < current.from
+        ? { from: picked, to: current.from }
+        : { from: current.from, to: picked };
+    });
+  }, []);
+  const markedDates = React.useMemo(() => {
+    if (!draftRange.from) return {};
+    const start = fromLocalISODate(draftRange.from);
+    const end = fromLocalISODate(draftRange.to || draftRange.from);
+    const result = {};
+    for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+      const key = toLocalISODate(cursor);
+      result[key] = {
+        startingDay: key === draftRange.from,
+        endingDay: key === (draftRange.to || draftRange.from),
+        color: theme.colors.primary,
+        textColor: theme.colors.onPrimary,
       };
     }
-    return marks;
-  }, [rangeStart, rangeEnd, TOK.ON_PRIMARY, TOK.PRIMARY]);
+    return result;
+  }, [draftRange.from, draftRange.to, theme.colors.onPrimary, theme.colors.primary]);
 
-  const filteredUsers = useMemo(() => {
-    const q = (usersSearch || '').trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(
-      (u) =>
-        (u.full_name || '').toLowerCase().includes(q) || (u.role || '').toLowerCase().includes(q),
-    );
-  }, [users, usersSearch]);
+  const applyStatisticsFilters = React.useCallback((next = {}) => {
+    setEmployeeIds(Array.isArray(next.employeeIds) ? next.employeeIds.map(String) : []);
+    setDepartmentIds(Array.isArray(next.departmentIds) ? next.departmentIds.map(String) : []);
+    setIncludeNoDepartment(next.includeNoDepartment === true);
+    setWorkTypeIds(Array.isArray(next.workTypeIds) ? next.workTypeIds.map(String) : []);
+    setIncludeNoWorkType(next.includeNoWorkType === true);
+  }, []);
 
-  const displayName = isManager
-    ? selectedUser?.full_name || t('stats_select_employee')
-    : me?.full_name || t('stats_my_stats');
+  const openEmployeeDetails = React.useCallback((employee) => {
+    const employeeId = String(employee?.id || '').trim();
+    if (!employeeId) return;
+    setSelectedEmployeeId(employeeId);
+    setSelectedDepartmentId(null);
+    setDetailType('employee');
+  }, []);
+  const openDepartmentDetails = React.useCallback((department) => {
+    const departmentId = String(department?.id || '').trim();
+    if (!departmentId) return;
+    setSelectedDepartmentId(departmentId);
+    setSelectedEmployeeId(null);
+    setDetailType('department');
+  }, []);
 
-  if (loading) {
+  const selectEmployeeDrilldown = React.useCallback((employeeId) => {
+    setScope('company');
+    setEmployeeIds([String(employeeId)]);
+    setDepartmentIds([]);
+    setIncludeNoDepartment(false);
+    setDetailType(null);
+    setSelectedEmployeeId(null);
+  }, []);
+  const selectDepartmentDrilldown = React.useCallback((departmentId) => {
+    setScope('company');
+    setEmployeeIds([]);
+    if (String(departmentId) === 'none') {
+      setDepartmentIds([]);
+      setIncludeNoDepartment(true);
+    } else {
+      setDepartmentIds([String(departmentId)]);
+      setIncludeNoDepartment(false);
+    }
+    setDetailType(null);
+    setSelectedDepartmentId(null);
+  }, []);
+  const selectedEmployee = React.useMemo(
+    () => (dashboard?.employees || []).find(
+      (employee) => String(employee?.id || '') === String(selectedEmployeeId || ''),
+    ) || null,
+    [dashboard?.employees, selectedEmployeeId],
+  );
+  const selectedDepartment = React.useMemo(
+    () => (dashboard?.departments || []).find(
+      (department) => String(department?.id || '') === String(selectedDepartmentId || ''),
+    ) || null,
+    [dashboard?.departments, selectedDepartmentId],
+  );
+  const detailModel = React.useMemo(() => {
+    const common = { visible: Boolean(detailType), subtitle: detailSubtitle };
+    if (detailType === 'requests') {
+      return {
+        ...common,
+        title: t('stats_requests_details_title'),
+        sections: [
+          {
+            id: 'summary',
+            title: t('stats_summary'),
+            rows: [
+              {
+                key: 'registered',
+                label: t('stats_registered'),
+                value: formatCount(summary.registered, locale),
+                info: t('stats_requests_hint_registered'),
+              },
+              {
+                key: 'completed',
+                label: t('stats_completed_in_period'),
+                value: formatCount(summary.completed, locale),
+                info: t('stats_requests_hint_completed'),
+              },
+              {
+                key: 'cohort_done',
+                label: t('stats_registered_completed'),
+                value: formatCount(summary.completed_from_registered, locale),
+                info: t('stats_requests_hint_registered_completed'),
+              },
+              {
+                key: 'cohort_open',
+                label: t('stats_registered_not_completed'),
+                value: formatCount(summary.not_completed_from_registered, locale),
+                info: t('stats_requests_hint_registered_not_completed'),
+              },
+              {
+                key: 'rate',
+                label: t('stats_completion_rate'),
+                value: formatPercent(summary.completion_rate, locale),
+                info: t('stats_requests_hint_completion_rate'),
+              },
+              {
+                key: 'cycle',
+                label: t('stats_average_cycle'),
+                value: formatMessage(t, 'stats_hours_value', { count: asNumber(summary.average_cycle_hours) }),
+                info: t('stats_requests_hint_average_cycle'),
+              },
+            ],
+          },
+          {
+            id: 'statuses',
+            title: t('stats_by_status'),
+            rows: statusPreviewRows.map((item) => ({
+              key: item.key,
+              label: item.label,
+              value: formatCount(item.value, locale),
+              color: item.color,
+              info: t('stats_requests_hint_status'),
+            })),
+          },
+          {
+            id: 'sources',
+            title: t('stats_registration_sources'),
+            rows: (dashboard?.sources || []).map((item) => ({
+              key: item.key,
+              label: resolveSourceLabel(item.key, t),
+              value: formatCount(item.count, locale),
+              info: t('stats_requests_hint_source'),
+            })),
+          },
+        ],
+      };
+    }
+    if (detailType === 'finance') {
+      return {
+        ...common,
+        title: t(isSolo ? 'stats_solo_finance_details_title' : 'stats_finance_details_title'),
+        sections: [
+          {
+            id: 'summary',
+            title: t('stats_summary'),
+            rows: [
+              { key: 'base', label: t('stats_base_revenue'), value: formatMoney(summary.base_revenue) },
+              { key: 'sales', label: t('stats_additional_sales'), value: formatMoney(summary.additional_sales) },
+              { key: 'discounts', label: t('stats_discounts'), value: formatMoney(summary.discounts) },
+              {
+                key: 'revenue',
+                label: t('stats_completed_revenue'),
+                value: formatMoney(summary.revenue),
+                info: t('stats_hint_completed_revenue'),
+              },
+              ...(!isSolo ? [{ key: 'compensation', label: t('stats_employee_compensation'), value: formatMoney(summary.employee_compensation) }] : []),
+              { key: 'company_expenses', label: t(isSolo ? 'stats_expenses' : 'stats_company_expenses'), value: formatMoney(summary.company_expenses) },
+              { key: 'total_expenses', label: t('stats_total_expenses'), value: formatMoney(summary.total_expenses) },
+              {
+                key: 'profit',
+                label: t(isSolo ? 'stats_solo_result' : 'stats_job_profit'),
+                value: formatMoney(summary.profit),
+                valueColor: asNumber(summary.profit) > 0 ? theme.colors.success : theme.colors.danger,
+                info: t(isSolo ? 'stats_hint_solo_result' : 'stats_hint_job_profit'),
+              },
+              { key: 'average', label: t('stats_avg_check'), value: formatMoney(summary.average_check) },
+            ],
+          },
+          {
+            id: 'expenses',
+            title: t('stats_expense_breakdown'),
+            rows: [
+              ...(!isSolo && asNumber(summary.employee_compensation) > 0
+                ? [{
+                  key: 'employee-compensation',
+                  label: t('stats_employee_compensation'),
+                  value: formatMoney(summary.employee_compensation),
+                }]
+                : []),
+              ...(dashboard?.expenses || []).map((item, index) => ({
+                key: `${item.effect}-${item.name}-${index}`,
+                label: item.name || t('stats_untitled_expense'),
+                value: formatMoney(item.amount),
+                secondary: formatMessage(t, 'stats_entries_count', { count: item.count }),
+              })),
+            ],
+          },
+          {
+            id: 'sales',
+            title: t('stats_additional_sales_breakdown'),
+            rows: (dashboard?.additionalSales || []).map((item, index) => ({
+              key: `${item.name}-${index}`,
+              label: item.name || t('stats_untitled_additional_sale'),
+              value: formatMoney(item.amount),
+              secondary: formatMessage(t, 'stats_entries_count', { count: item.count }),
+            })),
+          },
+          {
+            id: 'payments',
+            title: t('stats_payment_methods'),
+            rows: (dashboard?.paymentMethods || []).map((item) => ({
+              key: item.key,
+              label: resolvePaymentMethodLabel(item.key, t),
+              value: formatMoney(item.revenue),
+              secondary: formatMessage(t, 'stats_completed_count', { count: item.completed }),
+            })),
+          },
+        ],
+      };
+    }
+    if (detailType === 'personal') {
+      const averageEarnings = asNumber(summary.completed) > 0
+        ? asNumber(summary.personal_earnings) / asNumber(summary.completed)
+        : 0;
+      return {
+        ...common,
+        title: t('stats_personal_details_title'),
+        sections: [
+          {
+            id: 'personal',
+            rows: [
+              {
+                key: 'earnings',
+                label: t('stats_earnings_accrued'),
+                value: formatMoney(summary.personal_earnings),
+                valueColor: theme.colors.success,
+                info: t('stats_hint_earnings_accrued'),
+              },
+              { key: 'completed', label: t('stats_completed_in_period'), value: formatCount(summary.completed, locale) },
+              { key: 'average', label: t('stats_average_earnings_per_request'), value: formatMoney(averageEarnings) },
+              {
+                key: 'cycle',
+                label: t('stats_average_cycle'),
+                value: formatMessage(t, 'stats_hours_value', { count: asNumber(summary.average_cycle_hours) }),
+              },
+            ],
+          },
+        ],
+      };
+    }
+    if (detailType === 'team') {
+      return {
+        ...common,
+        title: t('stats_team_details_title'),
+        sections: [
+          {
+            id: 'employees',
+            title: t('stats_employees'),
+            rows: [...(dashboard?.employees || [])]
+              .filter(hasStatisticsActivity)
+              .sort((left, right) => asNumber(right.profit) - asNumber(left.profit))
+              .map((employee) => ({
+              key: employee.id,
+              label: employee.name,
+              value: formatMoney(employee.profit),
+              valueColor: asNumber(employee.profit) <= 0 ? theme.colors.danger : null,
+              secondary: formatMessage(t, 'stats_team_row_revenue_completed', {
+                revenue: formatMoney(employee.revenue),
+                count: formatCount(employee.completed, locale),
+              }),
+              chevron: true,
+              onPress: () => openEmployeeDetails(employee),
+              })),
+          },
+          {
+            id: 'departments',
+            title: t('stats_departments'),
+            rows: [...(dashboard?.departments || [])]
+              .filter(hasStatisticsActivity)
+              .sort((left, right) => asNumber(right.profit) - asNumber(left.profit))
+              .map((department) => ({
+              key: department.id,
+              label: department.id === 'none' ? t('stats_without_department') : department.name,
+              value: formatMoney(department.profit),
+              valueColor: asNumber(department.profit) <= 0 ? theme.colors.danger : null,
+              secondary: formatMessage(t, 'stats_team_row_revenue_completed', {
+                revenue: formatMoney(department.revenue),
+                count: formatCount(department.completed, locale),
+              }),
+              chevron: true,
+              onPress: () => openDepartmentDetails(department),
+              })),
+          },
+        ],
+      };
+    }
+    if (detailType === 'employee' && selectedEmployee) {
+      const completed = asNumber(selectedEmployee.completed);
+      const revenue = asNumber(selectedEmployee.revenue);
+      const profit = asNumber(selectedEmployee.profit);
+      const margin = revenue !== 0 ? profit / revenue : 0;
+      return {
+        ...common,
+        title: selectedEmployee.name,
+        sections: [
+          {
+            id: 'employee-result',
+            title: t('stats_employee_result'),
+            rows: [
+              {
+                key: 'profit',
+                label: t('stats_profit_contribution'),
+                value: formatMoney(profit),
+                valueColor: profit > 0 ? theme.colors.success : theme.colors.danger,
+                info: t('stats_hint_profit_contribution'),
+              },
+              { key: 'revenue', label: t('stats_completed_revenue'), value: formatMoney(revenue) },
+              { key: 'completed', label: t('stats_completed_in_period'), value: formatCount(completed, locale) },
+              {
+                key: 'average',
+                label: t('stats_avg_check'),
+                value: formatMoney(completed > 0 ? revenue / completed : 0),
+              },
+              { key: 'margin', label: t('stats_job_margin'), value: formatPercent(margin, locale) },
+              {
+                key: 'earnings',
+                label: t('stats_employee_accrued'),
+                value: formatMoney(selectedEmployee.earnings),
+              },
+            ],
+          },
+          {
+            id: 'employee-action',
+            rows: [
+              {
+                key: 'filter',
+                label: t('stats_show_employee_only'),
+                value: '',
+                chevron: true,
+                onPress: () => selectEmployeeDrilldown(selectedEmployee.id),
+              },
+            ],
+          },
+        ],
+      };
+    }
+    if (detailType === 'department' && selectedDepartment) {
+      const completed = asNumber(selectedDepartment.completed);
+      const revenue = asNumber(selectedDepartment.revenue);
+      const profit = asNumber(selectedDepartment.profit);
+      const margin = revenue !== 0 ? profit / revenue : 0;
+      return {
+        ...common,
+        title: selectedDepartment.id === 'none'
+          ? t('stats_without_department')
+          : selectedDepartment.name,
+        sections: [
+          {
+            id: 'department-result',
+            title: t('stats_department_result'),
+            rows: [
+              {
+                key: 'profit',
+                label: t('stats_job_profit'),
+                value: formatMoney(profit),
+                valueColor: profit > 0 ? theme.colors.success : theme.colors.danger,
+              },
+              { key: 'revenue', label: t('stats_completed_revenue'), value: formatMoney(revenue) },
+              { key: 'completed', label: t('stats_completed_in_period'), value: formatCount(completed, locale) },
+              { key: 'average', label: t('stats_avg_check'), value: formatMoney(completed > 0 ? revenue / completed : 0) },
+              { key: 'margin', label: t('stats_job_margin'), value: formatPercent(margin, locale) },
+            ],
+          },
+          {
+            id: 'department-action',
+            rows: [
+              {
+                key: 'filter',
+                label: t('stats_show_department_only'),
+                value: '',
+                chevron: true,
+                onPress: () => selectDepartmentDrilldown(selectedDepartment.id),
+              },
+            ],
+          },
+        ],
+      };
+    }
+    return { ...common, title: '', sections: [] };
+  }, [
+    dashboard?.additionalSales,
+    dashboard?.departments,
+    dashboard?.employees,
+    dashboard?.expenses,
+    dashboard?.paymentMethods,
+    dashboard?.sources,
+    detailSubtitle,
+    detailType,
+    formatMoney,
+    isSolo,
+    locale,
+    openDepartmentDetails,
+    openEmployeeDetails,
+    selectDepartmentDrilldown,
+    selectEmployeeDrilldown,
+    selectedDepartment,
+    selectedEmployee,
+    statusPreviewRows,
+    summary,
+    t,
+    theme.colors.danger,
+    theme.colors.success,
+  ]);
+
+  const infoModel = React.useMemo(() => {
+    const key = infoType || 'overview';
+    return {
+      title: t(`stats_info_${key}_title`),
+      body: t(`stats_info_${key}_body`),
+    };
+  }, [infoType, t]);
+
+  if (dashboardQuery.isPending && !dashboard) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={TOK.PRIMARY} />
-      </View>
+      <Screen headerOptions={{ title: t('stats_title'), helpTopic: 'statistics' }} scroll={false}>
+        <View style={s.centerState}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={s.loadingText}>{t('stats_loading')}</Text>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (dashboardQuery.isError && !dashboard) {
+    return (
+      <Screen headerOptions={{ title: t('stats_title'), helpTopic: 'statistics' }} scroll={false}>
+        <View style={s.centerState}>
+          <View style={s.errorIcon}>
+            <Feather name="bar-chart-2" size={theme.icons.lg} color={theme.colors.danger} />
+          </View>
+          <Text style={s.errorTitle}>{t('stats_load_error_title')}</Text>
+          <Text style={s.errorText}>{t('stats_load_error_body')}</Text>
+          <Button title={t('btn_retry')} onPress={() => dashboardQuery.refetch()} />
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <AppHeader options={{ title: t('stats_title'), helpTopic: 'statistics' }} back />
-
-      <View style={{ flex: 1 }}>
-        {refreshIndicator}
-        <ScrollView
-          refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-          <Text style={styles.headerTitle}>{t('stats_title')}</Text>
-          <Text style={styles.headerSubtitle}>{displayName}</Text>
+    <Screen
+      headerOptions={{ title: t('stats_title'), helpTopic: 'statistics' }}
+      refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      contentContainerStyle={s.screenContent}
+    >
+      {refreshIndicator}
+      <View style={s.content}>
+        <View style={s.contextHeader}>
+          <View style={s.contextText}>
+            <Text style={s.contextTitle}>{scopeLabel}</Text>
+            <Text style={s.contextSubtitle}>{periodLabel}</Text>
+          </View>
+          {dashboardQuery.isFetching && !refreshing ? (
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+          ) : null}
         </View>
 
-        {/* Quick Stats */}
-        <View style={styles.quickStats}>
-          <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{formatNumber(stats.totalOrders, locale)}</Text>
-              <Text style={styles.statLabel}>{t('stats_total_orders')}</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{formatNumber(stats.completedOrders, locale)}</Text>
-              <Text style={styles.statLabel}>{t('stats_completed')}</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statValue, { color: TOK.SUCCESS }]}>
-                {fRUB(stats.netProfit)}
-              </Text>
-              <Text style={styles.statLabel}>{t('stats_net_profit')}</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{stats.performance.avgOrdersPerDay.toFixed(1)}</Text>
-              <Text style={styles.statLabel}>{t('stats_per_day')}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Filters */}
-        <View style={styles.filters}>
-          <View style={styles.filterRow}>
-            <View style={styles.periodSelector}>
-              {PERIODS.map((p) => (
-                <TouchableOpacity
-                  key={p.key}
-                  style={[styles.periodButton, period === p.key && styles.periodButtonActive]}
-                  onPress={() => {
-                    if (p.key === 'custom') {
-                      openCustomPeriod();
-                      return;
-                    }
-                    setPeriod(p.key);
-                  }}
-                >
-                  <Text style={[styles.periodText, period === p.key && styles.periodTextActive]}>
-                    {t(p.labelKey)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {period === 'custom' && (
-              <TouchableOpacity onPress={openCustomPeriod}>
-                <Ionicons name="calendar" size={24} color={TOK.PRIMARY} />
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {isManager && canViewFinanceStatsAll && (
-            <TouchableOpacity style={styles.userSelector} onPress={openUserPicker}>
-              <Ionicons name="people" size={20} color={TOK.SUBTEXT} />
-              <Text style={styles.userText} numberOfLines={1}>
-                {selectedUser?.full_name || t('stats_select_employee')}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={TOK.SUBTEXT} />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Status Breakdown */}
-        {stats.statusBreakdown.length > 0 && (
-          <View style={styles.section}>
-            <SectionHeader style={styles.sectionTitle}>
-              {t('stats_by_status')}
-            </SectionHeader>
-            <View style={styles.chartCard}>
-              {stats.statusBreakdown.map((item) => (
-                <View key={item.status} style={styles.statusItem}>
-                  <View style={styles.statusLeft}>
-                    <View style={[styles.statusDot, { backgroundColor: item.color }]} />
-                    <Text style={styles.statusName}>{item.label}</Text>
-                  </View>
-                  <View style={styles.statusStats}>
-                    <Text style={styles.statusCount}>{formatNumber(item.count, locale)}</Text>
-                    {item.amount > 0 && (
-                      <Text style={styles.statusAmount}>{fRUB(item.amount)}</Text>
-                    )}
-                  </View>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* Performance Metrics */}
-        <View style={styles.section}>
-          <SectionHeader style={styles.sectionTitle}>
-            {t('stats_efficiency')}
-          </SectionHeader>
-          <View style={styles.metricGrid}>
-            <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>
-                {(stats.performance.completionRate * 100).toFixed(0)}%
-              </Text>
-              <Text style={styles.metricLabel}>{t('stats_completion_rate')}</Text>
-            </View>
-            <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>{fRUB(stats.performance.avgRevenuePerOrder)}</Text>
-              <Text style={styles.metricLabel}>{t('stats_avg_check')}</Text>
-            </View>
-            <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>{formatNumber(stats.inProgressOrders, locale)}</Text>
-              <Text style={styles.metricLabel}>{t('stats_in_progress')}</Text>
-            </View>
-            <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>{formatNumber(stats.newOrders, locale)}</Text>
-              <Text style={styles.metricLabel}>{t('stats_new')}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Financial Summary */}
-        <View style={styles.section}>
-          <SectionHeader style={styles.sectionTitle}>
-            {t('stats_finance')}
-          </SectionHeader>
-          <View style={styles.chartCard}>
-            <View style={styles.statusItem}>
-              <Text style={styles.statusName}>{t('stats_total_revenue')}</Text>
-              <Text style={styles.statusCount}>{fRUB(stats.totalRevenue)}</Text>
-            </View>
-            <View style={styles.statusItem}>
-              <Text style={styles.statusName}>{t('stats_expenses')}</Text>
-              <Text style={styles.statusCount}>{fRUB(stats.totalCosts)}</Text>
-            </View>
-            <View style={[styles.statusItem, { borderBottomWidth: 0 }]}>
-              <Text style={[styles.statusName, { fontWeight: '700' }]}>{t('stats_net_profit')}</Text>
-              <Text style={[styles.statusCount, { color: TOK.SUCCESS }]}>
-                {fRUB(stats.netProfit)}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {stats.expenseByRecipient.length > 0 && (
-          <View style={styles.section}>
-            <SectionHeader style={styles.sectionTitle}>
-              {t('stats_expenses_by_recipient')}
-            </SectionHeader>
-            <View style={styles.chartCard}>
-              {stats.expenseByRecipient.map((item, index) => (
-                <View
-                  key={item.key}
-                  style={[
-                    styles.statusItem,
-                    index === stats.expenseByRecipient.length - 1 ? { borderBottomWidth: 0 } : null,
+        {!isSolo && canViewCompany ? (
+          <View style={s.scopeControl} accessibilityRole="tablist">
+            {[
+              { id: 'me', label: t('stats_scope_me') },
+              { id: 'company', label: t('stats_scope_company') },
+            ].map((item) => {
+              const active = scope === item.id;
+              return (
+                <Pressable
+                  key={item.id}
+                  onPress={() => setScope(item.id)}
+                  style={({ pressed }) => [
+                    s.scopeButton,
+                    active && s.scopeButtonActive,
+                    pressed && s.pressed,
                   ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
                 >
-                  <Text style={styles.statusName}>{item.name}</Text>
-                  <Text style={styles.statusCount}>{fRUB(item.amount)}</Text>
-                </View>
-              ))}
-            </View>
+                  <Text style={[s.scopeButtonText, active && s.scopeButtonTextActive]}>
+                    {item.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
-        )}
-        </ScrollView>
+        ) : null}
+
+        <View style={s.periodControls}>
+          <ScrollView
+            horizontal
+            style={s.periodScroll}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.periodRow}
+          >
+            {STATISTICS_PERIODS.map((item) => {
+              const active = period === item.id;
+              return (
+                <Pressable
+                  key={item.id}
+                  onPress={() => {
+                    if (item.id === 'custom') {
+                      openDatePicker();
+                    } else {
+                      setPeriod(item.id);
+                    }
+                  }}
+                  style={({ pressed }) => [
+                    s.periodChip,
+                    active && s.periodChipActive,
+                    pressed && s.pressed,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  {item.id === 'custom' ? (
+                    <Feather
+                      name="calendar"
+                      size={theme.icons.sm}
+                      color={active ? theme.colors.onPrimary : theme.colors.textSecondary}
+                    />
+                  ) : null}
+                  <Text style={[s.periodChipText, active && s.periodChipTextActive]}>
+                  {item.id === 'month'
+                    ? formatCurrentMonthLabel(locale)
+                    : item.id === 'year'
+                      ? formatCurrentYearLabel()
+                      : t(item.labelKey)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          {canOpenFilters ? (
+            <FilterBarButton
+              type="filter"
+              active={activeFilterCount > 0}
+              onPress={() => setFiltersVisible(true)}
+              accessibilityLabel={t('stats_filters')}
+            />
+          ) : null}
+        </View>
+
+        <View style={s.metricGrid}>
+          {topMetrics.map((metric) => (
+            <MetricCard
+              key={metric.id}
+              {...metric}
+              width={metricWidth}
+              onPress={() => setDetailType(metric.detail)}
+              t={t}
+            />
+          ))}
+        </View>
+
+        {!isSolo && requestedScope === 'company' ? (
+          <>
+            <DisclosureHeader
+              title={t('stats_team_contribution')}
+              onHelp={() => setInfoType('team')}
+              onPress={() => setDetailType('team')}
+              t={t}
+            />
+            <Card>
+              <StatisticsTeamScorecard
+                employees={dashboard?.employees || []}
+                metric={teamMetric}
+                onMetricChange={setTeamMetric}
+                onEmployeePress={openEmployeeDetails}
+                formatMoney={formatMoney}
+                formatCount={formatDashboardCount}
+                maxRows={3}
+                t={t}
+              />
+            </Card>
+          </>
+        ) : null}
+
+        <DisclosureHeader
+          title={t(isWorkerView ? 'stats_my_dynamics' : 'stats_business_dynamics')}
+          onHelp={() => setInfoType('trend')}
+          t={t}
+        />
+        <Card>
+          <StatisticsTrendChart
+            rows={dashboard?.trend || []}
+            mode={chartMode}
+            onModeChange={setChartMode}
+            locale={locale}
+            granularity={dashboard?.meta?.granularity}
+            formatMoney={formatMoney}
+            personal={isWorkerView}
+            t={t}
+          />
+        </Card>
       </View>
 
-      {/* User Picker Modal */}
-      <AnimatedFullscreenModal
-        visible={userPickerOpen && canViewFinanceStatsAll}
-        animation="slide"
-        onRequestClose={closeUserPicker}
+      <BaseModal
+        visible={dateModalVisible}
+        onClose={() => setDateModalVisible(false)}
+        title={t('stats_period_picker')}
+        presentation="sheet"
+        maxHeightRatio={0.9}
+        footer={
+          <ModalActionsRow
+            actions={[
+              {
+                key: 'cancel',
+                title: t('btn_cancel'),
+                variant: 'secondary',
+                onPress: () => setDateModalVisible(false),
+              },
+              {
+                key: 'apply',
+                title: t('btn_apply'),
+                disabled: !(draftRange.from && draftRange.to),
+                onPress: () => {
+                  if (!(draftRange.from && draftRange.to)) return;
+                  setCustomRange(draftRange);
+                  setPeriod('custom');
+                  setDateModalVisible(false);
+                },
+              },
+            ]}
+          />
+        }
       >
-        <SafeAreaView style={styles.modal}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{t('stats_employee_picker')}</Text>
-            <TouchableOpacity style={styles.closeButton} onPress={closeUserPicker}>
-              <Ionicons name="close" size={24} color={TOK.TEXT} />
-            </TouchableOpacity>
-          </View>
+        <Text style={s.modalLead}>
+          {draftRange.from && draftRange.to
+            ? `${formatDate(draftRange.from, locale)} — ${formatDate(draftRange.to, locale)}`
+            : t('stats_select_date_range')}
+        </Text>
+        <Calendar
+          onDayPress={onCalendarDayPress}
+          markedDates={markedDates}
+          markingType="period"
+          maxDate={toLocalISODate(new Date())}
+          firstDay={1}
+          enableSwipeMonths
+          theme={{
+            backgroundColor: theme.colors.surface,
+            calendarBackground: theme.colors.surface,
+            textSectionTitleColor: theme.colors.textSecondary,
+            dayTextColor: theme.colors.text,
+            monthTextColor: theme.colors.text,
+            arrowColor: theme.colors.primary,
+            todayTextColor: theme.colors.primary,
+            selectedDayBackgroundColor: theme.colors.primary,
+            selectedDayTextColor: theme.colors.onPrimary,
+          }}
+        />
+      </BaseModal>
 
-          <RNTextInput
-            style={styles.searchInput}
-            placeholder={t('stats_search_by_name')}
-            placeholderTextColor={TOK.SUBTEXT}
-            value={usersSearch}
-            onChangeText={setUsersSearch}
-          />
+      <StatisticsFiltersPanel
+        visible={filtersVisible}
+        value={statisticsFilterValue}
+        employees={canFilterByPeople ? employeeOptions : []}
+        departments={canFilterByPeople ? departmentOptions : []}
+        useDepartments={canFilterByPeople && dashboard?.meta?.use_departments === true}
+        workTypes={workTypeOptions}
+        useWorkTypes={canFilterByWorkTypes}
+        onApply={applyStatisticsFilters}
+        onClose={() => setFiltersVisible(false)}
+      />
 
-          <FlatList
-            data={filteredUsers}
-            keyExtractor={(item) => String(item.id)}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={styles.userItem} onPress={() => selectUser(item)}>
-                <View
-                  style={[
-                    styles.selectedIndicator,
-                    { borderColor: selectedUserId === item.id ? TOK.PRIMARY : TOK.OUTLINE },
-                  ]}
-                >
-                  {selectedUserId === item.id && <View style={styles.selectedDot} />}
-                </View>
-                <View style={styles.userInfo}>
-                  <Text style={styles.userName}>{item.full_name}</Text>
-                  <Text style={styles.userRole}>{item.role}</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Ionicons name="search" size={48} color={TOK.SUBTEXT} />
-                <Text style={styles.emptyText}>{t('stats_employees_not_found')}</Text>
-              </View>
-            }
-          />
-        </SafeAreaView>
-      </AnimatedFullscreenModal>
+      <StatisticsDetailModal
+        visible={Boolean(detailType)}
+        title={detailModel.title}
+        subtitle={detailModel.subtitle}
+        sections={detailModel.sections}
+        onClose={() => setDetailType(null)}
+      />
 
-      {/* Custom Period Modal */}
-      <AnimatedFullscreenModal visible={customModalOpen} animation="slide" onRequestClose={closeCustomPeriod}>
-        <SafeAreaView style={styles.modal}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{t('stats_period_picker')}</Text>
-            <TouchableOpacity style={styles.closeButton} onPress={closeCustomPeriod}>
-              <Ionicons name="close" size={24} color={TOK.TEXT} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.rangeDisplay}>
-            <Text style={styles.rangeText}>
-              {rangeStart && rangeEnd
-                ? `${fmt(fromISODate(rangeStart), locale)} — ${fmt(fromISODate(rangeEnd), locale)}`
-                : t('stats_select_date_range')}
-            </Text>
-          </View>
-
-          <View style={styles.calendarContainer}>
-            <Calendar
-              onDayPress={onDayPress}
-              markedDates={markedDates}
-              markingType="period"
-              maxDate={toISODate(new Date())}
-              theme={{
-                backgroundColor: TOK.SURFACE,
-                calendarBackground: TOK.SURFACE,
-                textSectionTitleColor: TOK.SUBTEXT,
-                dayTextColor: TOK.TEXT,
-                monthTextColor: TOK.TEXT,
-                arrowColor: TOK.PRIMARY,
-                selectedDayBackgroundColor: TOK.PRIMARY,
-                selectedDayTextColor: TOK.ON_PRIMARY,
-                todayTextColor: TOK.PRIMARY,
-              }}
-              firstDay={1}
-              enableSwipeMonths
-            />
-          </View>
-
-          <View style={styles.modalActions}>
-            <View style={{ flex: 1 }}>
-              <Button title={t('btn_cancel')} variant="secondary" onPress={closeCustomPeriod} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Button
-                title={t('btn_apply')}
-                onPress={applyCustomPeriod}
-                disabled={!(rangeStart && rangeEnd)}
-              />
-            </View>
-          </View>
-        </SafeAreaView>
-      </AnimatedFullscreenModal>
-    </View>
+      <BaseModal
+        visible={Boolean(infoType)}
+        onClose={() => setInfoType(null)}
+        title={infoModel.title}
+        presentation="sheet"
+        footer={
+          <Button title={t('btn_close')} onPress={() => setInfoType(null)} />
+        }
+      >
+        <Text style={s.infoBody}>{infoModel.body}</Text>
+      </BaseModal>
+    </Screen>
   );
 }
 
@@ -1099,3 +1316,166 @@ export default function StatsScreen() {
     </DeferredScreen>
   );
 }
+
+const styles = (theme) =>
+  StyleSheet.create({
+    screenContent: { paddingBottom: theme.components.screenLayout.contentPaddingBottom },
+    content: {
+      width: '100%',
+      maxWidth: CONTENT_MAX_WIDTH,
+      alignSelf: 'center',
+      paddingHorizontal: theme.components.screenLayout.contentPaddingX,
+    },
+    centerState: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: theme.spacing.xxl,
+      gap: theme.spacing.md,
+      backgroundColor: theme.colors.background,
+    },
+    loadingText: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm },
+    errorIcon: {
+      width: theme.spacing.xxl * 2 + theme.spacing.lg,
+      height: theme.spacing.xxl * 2 + theme.spacing.lg,
+      borderRadius: theme.radii.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.colors.danger, 0.1),
+    },
+    errorTitle: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.lg,
+      fontWeight: theme.typography.weight.bold,
+      textAlign: 'center',
+    },
+    errorText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      textAlign: 'center',
+      maxWidth: theme.spacing.xxl * 10,
+    },
+    contextHeader: {
+      minHeight: theme.components.listItem.height,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingTop: theme.spacing.md,
+      gap: theme.spacing.md,
+    },
+    contextText: { flex: 1, minWidth: 0 },
+    contextTitle: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.xl,
+      fontWeight: theme.typography.weight.bold,
+    },
+    contextSubtitle: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      marginTop: theme.spacing.xs,
+    },
+    scopeControl: {
+      flexDirection: 'row',
+      gap: theme.spacing.xs,
+      padding: theme.spacing.xs,
+      marginTop: theme.spacing.md,
+      borderRadius: theme.radii.lg,
+      backgroundColor: theme.colors.button.secondaryBg,
+    },
+    scopeButton: {
+      flex: 1,
+      minHeight: theme.components.input.height,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: theme.radii.md,
+      paddingHorizontal: theme.spacing.md,
+    },
+    scopeButtonActive: { backgroundColor: theme.colors.primary },
+    scopeButtonText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+    },
+    scopeButtonTextActive: { color: theme.colors.onPrimary },
+    periodControls: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    periodScroll: { flex: 1, minWidth: 0 },
+    periodRow: {
+      gap: theme.spacing.sm,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.sm,
+    },
+    periodChip: {
+      minHeight: theme.components.button.sizes.sm.h,
+      borderWidth: theme.components.button.borderWidth,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.pill,
+      backgroundColor: theme.colors.surface,
+      paddingHorizontal: theme.spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.spacing.xs,
+    },
+    periodChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+    periodChipText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+    },
+    periodChipTextActive: { color: theme.colors.onPrimary },
+    metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.md },
+    metricPressable: { minWidth: 0 },
+    metricCard: { minHeight: theme.components.listItem.height * 3, justifyContent: 'space-between' },
+    metricHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    metricIcon: {
+      width: theme.components.input.height,
+      height: theme.components.input.height,
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    metricValue: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.xl,
+      fontWeight: theme.typography.weight.bold,
+      marginTop: theme.spacing.md,
+    },
+    metricLabel: {
+      minHeight: Math.round(theme.typography.sizes.sm * theme.typography.lineHeights.normal * 2),
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      lineHeight: Math.round(theme.typography.sizes.sm * theme.typography.lineHeights.normal),
+      marginTop: theme.spacing.xs,
+    },
+    metricTrend: {
+      fontSize: theme.typography.sizes.xs,
+      fontWeight: theme.typography.weight.semibold,
+      marginTop: theme.spacing.sm,
+    },
+    disclosureHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: theme.spacing.sm,
+    },
+    sectionHeaderContainer: { flex: 1, minWidth: 0 },
+    detailsButton: {
+      minHeight: theme.components.button.sizes.sm.h,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.spacing.xs,
+      paddingLeft: theme.spacing.md,
+    },
+    detailsButtonText: {
+      color: theme.colors.primary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+    },
+    pressed: { opacity: theme.components.interactive?.pressedOpacity ?? 0.72 },
+    modalLead: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm, lineHeight: Math.round(theme.typography.sizes.sm * theme.typography.lineHeights.relaxed), marginBottom: theme.spacing.md, textAlign: 'center' },
+    infoBody: { color: theme.colors.text, fontSize: theme.typography.sizes.md, lineHeight: Math.round(theme.typography.sizes.md * theme.typography.lineHeights.relaxed) },
+  });

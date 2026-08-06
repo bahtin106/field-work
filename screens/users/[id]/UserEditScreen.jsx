@@ -101,6 +101,11 @@ const getImagePickerMediaTypesImages = () => {
 
 import { ROLE, EDITABLE_ROLES as ROLES } from '../../../constants/roles';
 
+const SUPER_ADMIN_EDITABLE_ROLES = Object.freeze([
+  ROLE.ADMIN,
+  ...ROLES.filter((role) => role !== ROLE.ADMIN),
+]);
+
 // --- Local date formatter to avoid UTC shifts ---
 const __ymdLocal = (d) => {
   if (!(d instanceof Date) || isNaN(d)) return null;
@@ -255,6 +260,30 @@ function mapSaveErrorToMessage(error, t) {
   }
   if (normalized.includes('profile-update-timeout')) {
     return t('errors_network');
+  }
+  if (normalized.includes('solo_admin_role_locked')) {
+    return t('err_solo_admin_role_locked');
+  }
+  if (
+    normalized.includes('company_admin_transfer_required') ||
+    normalized.includes('company_admin_required')
+  ) {
+    return t('err_company_admin_role_transfer_required');
+  }
+  if (normalized.includes('admin_successor_not_found')) {
+    return t('err_admin_successor_not_found');
+  }
+  if (normalized.includes('admin_successor_blocked')) {
+    return t('err_admin_successor_blocked');
+  }
+  if (
+    normalized.includes('admin_replacement_role_required') ||
+    normalized.includes('invalid_admin_replacement_role')
+  ) {
+    return t('err_admin_replacement_role_required');
+  }
+  if (normalized.includes('company_role_context_required')) {
+    return t('err_company_role_context_required');
   }
 
   return raw || t('error_save_failed');
@@ -564,8 +593,10 @@ function RoleSelectModal({
   role,
   roles = [],
   roleDescriptions = {},
+  title,
   onSelect,
   onClose,
+  onDismiss,
 }) {
   const { t } = useTranslation();
   const items = (roles || []).map((r) => ({
@@ -576,12 +607,13 @@ function RoleSelectModal({
   return (
     <SelectModal
       visible={visible}
-      title={t('user_role_title')}
+      title={title || t('user_role_title')}
       items={items}
       selectedId={role}
       searchable={false}
       onSelect={(it) => onSelect?.(it.id)}
       onClose={onClose}
+      onDismiss={onDismiss}
     />
   );
 }
@@ -599,6 +631,7 @@ export default function EditUser() {
 
   const ROLE_DESCRIPTIONS_LOCAL = React.useMemo(
     () => ({
+      [ROLE.ADMIN]: t('role_desc_admin'),
       [ROLE.DISPATCHER]: t('role_desc_dispatcher'),
       [ROLE.WORKER]: t('role_desc_worker'),
     }),
@@ -764,6 +797,12 @@ export default function EditUser() {
         marginTop: theme.spacing.xs,
         marginLeft: theme.spacing.md,
       },
+      adminTransferHint: {
+        color: theme.colors.textSecondary,
+        fontSize: theme.typography.sizes.xs,
+        marginTop: theme.spacing.xs,
+        marginHorizontal: theme.spacing.md,
+      },
       centeredModal: { justifyContent: 'center', alignItems: 'center', margin: 0 },
     });
   }, [theme, formStyles]);
@@ -794,7 +833,9 @@ export default function EditUser() {
     {
       enabled: !!userId,
       placeholderData: (prev) => prev,
-      refetchOnMount: false,
+      // Role/account context is an authorization-sensitive part of this form.
+      // Always refresh it instead of trusting a possibly partial list/view cache.
+      refetchOnMount: 'always',
     },
   );
   const updateEmployeeMutation = useUpdateEmployeeMutation();
@@ -897,6 +938,13 @@ export default function EditUser() {
   const [_focusPhone, setFocusPhone] = useState(false);
   const [_focusPwd, _setFocusPwd] = useState(false);
   const [role, setRole] = useState(ROLE.WORKER);
+  const [adminRoleSuccessor, setAdminRoleSuccessor] = useState(null);
+  const [adminSuccessorVisible, setAdminSuccessorVisible] = useState(false);
+  const [displacedAdminRole, setDisplacedAdminRole] = useState(null);
+  const [adminReplacementRoleVisible, setAdminReplacementRoleVisible] = useState(false);
+  const pendingAdminDemotionRoleRef = useRef(null);
+  const pendingAdminPromotionRef = useRef(false);
+  const adminRoleFlowActiveRef = useRef(false);
   const [newPassword, setNewPassword] = useState('');
   const [_showPassword, _setShowPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -909,6 +957,89 @@ export default function EditUser() {
   const [resettingPwd, setResettingPwd] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [viewAvatarVisible, setViewAvatarVisible] = useState(false);
+  const companyRoleContext = employeeData?.roleContext || null;
+  const targetAccountType = String(
+    companyRoleContext?.accountType || employeeData?.accountType || '',
+  ).toLowerCase();
+  const isSoloTarget = isSuperAdminEditingOther && (
+    companyRoleContext?.isSolo === true ||
+    companyRoleContext?.roleEditable === false ||
+    targetAccountType === 'solo'
+  );
+  const availableRoleOptions = meIsSuperAdmin ? SUPER_ADMIN_EDITABLE_ROLES : ROLES;
+  const mapCompanyRolePerson = useCallback(
+    (candidate) => {
+      const candidateRole = String(candidate?.role || ROLE.WORKER).toLowerCase();
+      const label =
+        String(candidate?.full_name || '').trim() ||
+        [candidate?.last_name, candidate?.first_name, candidate?.middle_name]
+          .map((part) => String(part || '').trim())
+          .filter(Boolean)
+          .join(' ') ||
+        String(candidate?.email || '').trim() ||
+        String(candidate?.id || '');
+      return {
+        id: candidate.id,
+        label,
+        subtitle: [candidate?.email, t(`role_${candidateRole}`)]
+          .map((part) => String(part || '').trim())
+          .filter(Boolean)
+          .join(' · '),
+        role: candidateRole,
+      };
+    },
+    [t],
+  );
+  const adminSuccessorItems = useMemo(
+    () =>
+      (Array.isArray(companyRoleContext?.candidates)
+        ? companyRoleContext.candidates
+        : []
+      ).map(mapCompanyRolePerson),
+    [companyRoleContext?.candidates, mapCompanyRolePerson],
+  );
+  const companyAdminItems = useMemo(() => {
+    const explicitAdmins = Array.isArray(companyRoleContext?.admins)
+      ? companyRoleContext.admins
+      : [];
+    const source =
+      explicitAdmins.length > 0
+        ? explicitAdmins
+        : (Array.isArray(companyRoleContext?.candidates)
+            ? companyRoleContext.candidates
+            : []
+          ).filter(
+            (candidate) =>
+              String(candidate?.role || '').toLowerCase() === ROLE.ADMIN,
+          );
+    return source.map(mapCompanyRolePerson);
+  }, [
+    companyRoleContext?.admins,
+    companyRoleContext?.candidates,
+    mapCompanyRolePerson,
+  ]);
+  const companyAdminCount = Math.max(
+    Number(companyRoleContext?.adminCount || 0),
+    companyAdminItems.length,
+  );
+  const persistedCompanyRole = String(
+    employeeData?.role || ROLE.WORKER,
+  ).toLowerCase();
+  const requiresAdminTransferOnDemotion =
+    companyRoleContext?.requiresTransferOnDemotion ??
+    (persistedCompanyRole === ROLE.ADMIN && companyAdminCount <= 1);
+  const requiresAdminTransferOnPromotion =
+    companyRoleContext?.requiresTransferOnPromotion ??
+    (persistedCompanyRole !== ROLE.ADMIN && companyAdminCount > 0);
+  useEffect(() => {
+    pendingAdminDemotionRoleRef.current = null;
+    pendingAdminPromotionRef.current = false;
+    adminRoleFlowActiveRef.current = false;
+    setAdminRoleSuccessor(null);
+    setAdminSuccessorVisible(false);
+    setDisplacedAdminRole(null);
+    setAdminReplacementRoleVisible(false);
+  }, [userId]);
   const employeeFieldSettings = useMemo(
     () => employeeFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE),
     [employeeFieldSettingsData],
@@ -1431,6 +1562,36 @@ export default function EditUser() {
     try {
       setSaving(true);
       setErr('');
+      const persistedRole = String(employeeData?.role || ROLE.WORKER).toLowerCase();
+      const nextRole = String(role || ROLE.WORKER).toLowerCase();
+      if (isSoloTarget && nextRole !== ROLE.ADMIN) {
+        throw new Error('SOLO_ADMIN_ROLE_LOCKED');
+      }
+      if (
+        isSuperAdminEditingOther &&
+        persistedRole !== nextRole &&
+        employeeData?.roleContextLoaded !== true
+      ) {
+        throw new Error('COMPANY_ROLE_CONTEXT_REQUIRED');
+      }
+      if (
+        isSuperAdminEditingOther &&
+        persistedRole === ROLE.ADMIN &&
+        nextRole !== ROLE.ADMIN &&
+        requiresAdminTransferOnDemotion &&
+        !adminRoleSuccessor?.id
+      ) {
+        throw new Error('COMPANY_ADMIN_TRANSFER_REQUIRED');
+      }
+      if (
+        isSuperAdminEditingOther &&
+        persistedRole !== ROLE.ADMIN &&
+        nextRole === ROLE.ADMIN &&
+        requiresAdminTransferOnPromotion &&
+        !displacedAdminRole
+      ) {
+        throw new Error('ADMIN_REPLACEMENT_ROLE_REQUIRED');
+      }
       let savedAvatarUrl = avatarUrl || null;
       if (!edgeTargetProfileId) throw new Error('Invalid user id');
       const emailAlreadyChanged = options?.emailAlreadyChanged === true;
@@ -1570,9 +1731,14 @@ export default function EditUser() {
           // Send empty string to explicitly clear department (NULLIF('', '') -> NULL in SQL).
           p_department_id: departmentId == null ? '' : String(departmentId),
           p_avatar_url: savedAvatarUrl,
+          p_successor_profile_id: adminRoleSuccessor?.id || null,
+          p_displaced_admin_role: displacedAdminRole || null,
         };
 
-        const { error: rpcErr } = await supabase.rpc('admin_update_profile_super_full', payload);
+        const { error: rpcErr } = await supabase.rpc(
+          'admin_update_profile_super_full_v3',
+          payload,
+        );
         if (rpcErr) throw rpcErr;
         const { error: middleNameErr } = await supabase
           .from(TABLES.profiles)
@@ -1670,6 +1836,13 @@ export default function EditUser() {
 
       setNewPassword('');
       setConfirmPassword('');
+      pendingAdminDemotionRoleRef.current = null;
+      pendingAdminPromotionRef.current = false;
+      adminRoleFlowActiveRef.current = false;
+      setAdminRoleSuccessor(null);
+      setAdminSuccessorVisible(false);
+      setDisplacedAdminRole(null);
+      setAdminReplacementRoleVisible(false);
       // Force remount of password inputs to clear native masked text state on Android.
       setPasswordFieldResetKey((prev) => prev + 1);
       setConfirmPwdVisible(false);
@@ -1714,6 +1887,33 @@ export default function EditUser() {
       };
       updateEmployeeQueryCaches(queryClient, userId, nextEmployeeSnapshot);
       queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
+      if (persistedRole !== nextRole) {
+        if (adminRoleSuccessor?.id) {
+          updateEmployeeQueryCaches(queryClient, adminRoleSuccessor.id, { role: ROLE.ADMIN });
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.employees.detail(adminRoleSuccessor.id),
+          });
+        }
+        if (displacedAdminRole) {
+          companyAdminItems.forEach((adminItem) => {
+            if (!adminItem?.id || String(adminItem.id) === String(userId)) return;
+            updateEmployeeQueryCaches(queryClient, adminItem.id, {
+              role: displacedAdminRole,
+            });
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.employees.detail(adminItem.id),
+            });
+          });
+        }
+        queryClient.invalidateQueries({ queryKey: ['employees'] });
+        queryClient.invalidateQueries({ queryKey: ['adminUsersV2'] });
+        if (employeeData?.companyId) {
+          queryClient.invalidateQueries({
+            queryKey: ['adminCompany', employeeData.companyId],
+          });
+        }
+        queryClient.invalidateQueries({ queryKey: ['adminCompanies'] });
+      }
       if (meId && String(meId) === String(userId)) {
         const normalizedUserId = String(userId);
         const nextProfileSnapshot = {
@@ -1963,7 +2163,16 @@ export default function EditUser() {
     const normalizedSuspended = !!employeeData?.isSuspended
       || !!employeeData?.is_admin_blocked;
     setIsSuspended(normalizedSuspended);
-    setRole(employeeData?.role || ROLE.WORKER);
+    // A realtime/refetch update may arrive while the role picker is closing.
+    // Preserve the pending transfer until the successor has been selected or
+    // the user has explicitly cancelled that flow.
+    if (!adminRoleFlowActiveRef.current) {
+      setRole(employeeData?.role || ROLE.WORKER);
+      setAdminRoleSuccessor(null);
+      setAdminSuccessorVisible(false);
+      setDisplacedAdminRole(null);
+      setAdminReplacementRoleVisible(false);
+    }
 
     const parsedBirthdateObj = __parseLocalYMD(employeeData?.birthdate || null);
     setBirthdate(parsedBirthdateObj.date);
@@ -2536,6 +2745,125 @@ export default function EditUser() {
     loadAvailableEmployees();
     setPickerVisible(true);
   };
+  const handleRoleSelection = (nextRoleRaw) => {
+    const nextRole = String(nextRoleRaw || '').toLowerCase();
+    if (!availableRoleOptions.includes(nextRole)) {
+      showWarning(t('error_no_access'));
+      setShowRoles(false);
+      return;
+    }
+    if (isSoloTarget) {
+      showWarning(t('err_solo_admin_role_locked'));
+      setShowRoles(false);
+      return;
+    }
+
+    const persistedRole = String(employeeData?.role || ROLE.WORKER).toLowerCase();
+    if (nextRole === String(role || ROLE.WORKER).toLowerCase()) {
+      setShowRoles(false);
+      return;
+    }
+    if (
+      isSuperAdminEditingOther &&
+      persistedRole !== nextRole &&
+      employeeData?.roleContextLoaded !== true
+    ) {
+      pendingAdminDemotionRoleRef.current = null;
+      pendingAdminPromotionRef.current = false;
+      adminRoleFlowActiveRef.current = false;
+      setShowRoles(false);
+      showWarning(t('err_company_role_context_required'));
+      return;
+    }
+    const requiresAdminTransfer =
+      isSuperAdminEditingOther &&
+      persistedRole === ROLE.ADMIN &&
+      nextRole !== ROLE.ADMIN &&
+      requiresAdminTransferOnDemotion;
+    const requiresAdminReplacement =
+      isSuperAdminEditingOther &&
+      persistedRole !== ROLE.ADMIN &&
+      nextRole === ROLE.ADMIN &&
+      requiresAdminTransferOnPromotion;
+
+    if (requiresAdminTransfer) {
+      if (adminSuccessorItems.length === 0) {
+        pendingAdminDemotionRoleRef.current = null;
+        pendingAdminPromotionRef.current = false;
+        adminRoleFlowActiveRef.current = false;
+        setAdminRoleSuccessor(null);
+        setDisplacedAdminRole(null);
+        setShowRoles(false);
+        showWarning(t('user_admin_transfer_no_candidates'));
+        return;
+      }
+      pendingAdminDemotionRoleRef.current = nextRole;
+      pendingAdminPromotionRef.current = false;
+      adminRoleFlowActiveRef.current = true;
+      setDisplacedAdminRole(null);
+      setShowRoles(false);
+      return;
+    }
+    if (requiresAdminReplacement) {
+      pendingAdminDemotionRoleRef.current = null;
+      pendingAdminPromotionRef.current = true;
+      adminRoleFlowActiveRef.current = true;
+      setAdminRoleSuccessor(null);
+      setShowRoles(false);
+      return;
+    }
+
+    pendingAdminDemotionRoleRef.current = null;
+    pendingAdminPromotionRef.current = false;
+    adminRoleFlowActiveRef.current = false;
+    setAdminRoleSuccessor(null);
+    setDisplacedAdminRole(null);
+    setRole(nextRole);
+    setShowRoles(false);
+  };
+  const handleRoleModalDismiss = () => {
+    if (pendingAdminDemotionRoleRef.current && adminSuccessorItems.length > 0) {
+      setAdminSuccessorVisible(true);
+      return;
+    }
+    if (pendingAdminPromotionRef.current) {
+      setAdminReplacementRoleVisible(true);
+    }
+  };
+  const handleAdminSuccessorSelect = (item) => {
+    const nextRole = pendingAdminDemotionRoleRef.current;
+    if (!item?.id || !nextRole) return;
+    setAdminRoleSuccessor({
+      id: item.id,
+      name: item.label,
+      role: item.role || ROLE.WORKER,
+    });
+    setDisplacedAdminRole(null);
+    setRole(nextRole);
+    pendingAdminDemotionRoleRef.current = null;
+    setAdminSuccessorVisible(false);
+  };
+  const closeAdminSuccessorPicker = () => {
+    pendingAdminDemotionRoleRef.current = null;
+    adminRoleFlowActiveRef.current = !!adminRoleSuccessor?.id && role !== ROLE.ADMIN;
+    setAdminSuccessorVisible(false);
+  };
+  const handleAdminReplacementRoleSelect = (nextRoleRaw) => {
+    const nextRole = String(nextRoleRaw || '').toLowerCase();
+    if (!ROLES.includes(nextRole) || nextRole === ROLE.ADMIN) return;
+    pendingAdminPromotionRef.current = false;
+    adminRoleFlowActiveRef.current = true;
+    setAdminRoleSuccessor(null);
+    setDisplacedAdminRole(nextRole);
+    setRole(ROLE.ADMIN);
+    setAdminReplacementRoleVisible(false);
+  };
+  const closeAdminReplacementRolePicker = () => {
+    pendingAdminPromotionRef.current = false;
+    adminRoleFlowActiveRef.current = false;
+    setDisplacedAdminRole(null);
+    setAdminReplacementRoleVisible(false);
+  };
   if (employeeLoading && !employeeData) {
     return (
       <EditScreenTemplate scrollEnabled={false}>
@@ -2564,6 +2892,10 @@ export default function EditUser() {
     );
   }
   const isSelfAdmin = meIsAdmin && meId === userId;
+  const canShowRoleField = !isSelfAdmin && !isSoloTarget;
+  const hasVisibleCompanyEditorFields =
+    (useDepartments && fieldUi.isVisible('department_id')) ||
+    (canShowRoleField && fieldUi.isVisible('role'));
   const initials = formatPersonInitials({ firstName, middleName, lastName });
   const personalFieldRenderers = {
       first_name: () => (
@@ -2736,7 +3068,7 @@ export default function EditUser() {
           <FieldErrorText message={departmentError} />
         </>
       ) : null,
-      role: !isSelfAdmin ? (
+      role: canShowRoleField ? (
         <>
           <TextField
             label={fieldUi.withRequiredLabel('role', t('label_role'))}
@@ -2745,6 +3077,23 @@ export default function EditUser() {
             pressable
             onPress={() => setShowRoles(true)}
           />
+          {adminRoleSuccessor?.name && role !== ROLE.ADMIN ? (
+            <Text style={styles.adminTransferHint}>
+              {t('user_admin_transfer_selected').replace(
+                '{name}',
+                adminRoleSuccessor.name,
+              )}
+            </Text>
+          ) : null}
+          {displacedAdminRole && role === ROLE.ADMIN ? (
+            <Text style={styles.adminTransferHint}>
+              {t(
+                companyAdminCount > 1
+                  ? 'user_admin_replacements_selected'
+                  : 'user_admin_replacement_selected',
+              ).replace('{role}', t(`role_${displacedAdminRole}`))}
+            </Text>
+          ) : null}
         </>
       ) : null,
     };
@@ -3001,7 +3350,7 @@ export default function EditUser() {
               </>
             )}
 
-            {meIsAdmin && canShowCompanySection && (useDepartments || !isSelfAdmin) ? (
+            {meIsAdmin && canShowCompanySection && hasVisibleCompanyEditorFields ? (
               <>
                 <SectionHeader>{t('section_company_role')}</SectionHeader>
                 <Card>
@@ -3285,13 +3634,33 @@ export default function EditUser() {
             <RoleSelectModal
               visible={showRoles}
               role={role}
+              roles={availableRoleOptions}
+              roleDescriptions={ROLE_DESCRIPTIONS_LOCAL}
+              onSelect={handleRoleSelection}
+              onClose={() => setShowRoles(false)}
+              onDismiss={handleRoleModalDismiss}
+            />
+            <SelectModal
+              visible={adminSuccessorVisible}
+              title={t('user_admin_transfer_picker_title')}
+              items={adminSuccessorItems}
+              selectedId={adminRoleSuccessor?.id || null}
+              searchable={adminSuccessorItems.length > 6}
+              onSelect={handleAdminSuccessorSelect}
+              onClose={closeAdminSuccessorPicker}
+            />
+            <RoleSelectModal
+              visible={adminReplacementRoleVisible}
+              role={displacedAdminRole}
               roles={ROLES}
               roleDescriptions={ROLE_DESCRIPTIONS_LOCAL}
-              onSelect={(r) => {
-                setRole(r);
-                setShowRoles(false);
-              }}
-              onClose={() => setShowRoles(false)}
+              title={t(
+                companyAdminCount > 1
+                  ? 'user_admin_replacement_role_title_many'
+                  : 'user_admin_replacement_role_title_one',
+              )}
+              onSelect={handleAdminReplacementRoleSelect}
+              onClose={closeAdminReplacementRolePicker}
             />
             {/* removed old role select dialog */}
 

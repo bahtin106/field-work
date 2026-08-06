@@ -85,6 +85,7 @@ const TextField = forwardRef(function TextField(
     floatingLabel = false,
     floatingLabelShiftX = 0,
     floatingLabelGapScale = 1,
+    labelAccessory,
   },
   ref,
 ) {
@@ -290,7 +291,16 @@ const TextField = forwardRef(function TextField(
         disabled && { opacity: theme.components?.listItem?.disabledOpacity ?? 0.5 },
       ]}
     >
-      {!floatingLabel && resolvedLabel ? <Text style={s.topLabel}>{String(resolvedLabel)}</Text> : null}
+      {!floatingLabel && resolvedLabel ? (
+        labelAccessory ? (
+          <View style={s.topLabelRow}>
+            <Text style={[s.topLabel, s.topLabelInRow]}>{String(resolvedLabel)}</Text>
+            <View style={s.topLabelAccessory}>{labelAccessory}</View>
+          </View>
+        ) : (
+          <Text style={s.topLabel}>{String(resolvedLabel)}</Text>
+        )
+      ) : null}
       <View
         style={[
           s.wrap,
@@ -534,6 +544,24 @@ const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMul
       marginTop: t.spacing?.xs ?? 4,
       marginLeft: ml,
       marginRight: mr,
+    },
+    topLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: labelSpacing,
+      marginLeft: ml,
+      marginRight: mr,
+    },
+    topLabelInRow: {
+      flexShrink: 1,
+      marginTop: 0,
+      marginBottom: 0,
+      marginLeft: 0,
+      marginRight: 0,
+    },
+    topLabelAccessory: {
+      marginLeft: t.spacing?.xs ?? 4,
+      flexShrink: 0,
     },
   });
 };

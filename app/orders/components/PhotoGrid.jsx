@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 import Animated, {
@@ -237,34 +237,58 @@ function PhotoGrid({
   const { t } = useTranslation();
   const s = useMemo(() => buildStyles(theme), [theme]);
   const selectedUrlsSet = useMemo(() => new Set((selectedUris || []).map((value) => String(value))), [selectedUris]);
+  const stableDisplayBySourceRef = useRef(new Map());
 
   const data = useMemo(() => {
     const mapped = [];
     const completedUrls = new Set();
-    for (const p of pending || []) {
+    const occurrenceBySource = new Map();
+    for (let i = 0; i < (pending || []).length; i += 1) {
+      const p = pending[i];
       const uploadedUrl = String(p?.uploadedUrl || '').trim();
       if (uploadedUrl) completedUrls.add(uploadedUrl);
       const completedIndex = uploadedUrl
         ? (photos || []).findIndex((url) => String(url || '') === uploadedUrl)
         : -1;
+      const visibleUri = String(p?.uri || '').trim();
+      const uploadedSourceKey = normalizePhotoKeySource(uploadedUrl);
+      if (uploadedSourceKey && visibleUri) {
+        stableDisplayBySourceRef.current.set(uploadedSourceKey, visibleUri);
+      }
+      const keySource = normalizePhotoKeySource(visibleUri) || normalizePhotoKeySource(uploadedUrl);
+      const occurrenceIndex = Number(occurrenceBySource.get(keySource) || 0);
+      if (keySource) occurrenceBySource.set(keySource, occurrenceIndex + 1);
       mapped.push({
-        key: p.id || `pending_${p.uri}`,
-        uri: uploadedUrl || p.uri,
-        displayUri: p.uri,
+        key: buildPhotoKey(uploadedUrl || visibleUri, visibleUri, i, occurrenceIndex),
+        uri: uploadedUrl || visibleUri,
+        displayUri: visibleUri,
+        fallbackUri: uploadedUrl && uploadedUrl !== visibleUri ? uploadedUrl : '',
         isPending: p.pending !== false && !uploadedUrl,
         isFailed: p.failed === true,
         pendingPhoto: p,
         actualIndex: completedIndex,
       });
     }
-    const occurrenceBySource = new Map();
     for (let i = 0; i < (photos || []).length; i += 1) {
       const url = photos[i];
       if (completedUrls.has(String(url || ''))) continue;
       const thumbUri = getThumbnailUrl ? getThumbnailUrl(url) : '';
       const displayUri = getDisplayUrl ? getDisplayUrl(url) : url;
-      const visibleUri = thumbUri || displayUri;
-      const fallbackUri = getFallbackUrl ? getFallbackUrl(url) : displayUri;
+      const sourceKey = normalizePhotoKeySource(url) || normalizePhotoKeySource(displayUri);
+      const candidates = [thumbUri, displayUri]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+      const retainedUri = String(stableDisplayBySourceRef.current.get(sourceKey) || '').trim();
+      // Choose the best source available on first render, then retain it. A thumbnail
+      // arriving later must not reload every tile that is already visible.
+      const visibleUri = retainedUri && candidates.includes(retainedUri)
+        ? retainedUri
+        : candidates[0] || '';
+      if (sourceKey && visibleUri) stableDisplayBySourceRef.current.set(sourceKey, visibleUri);
+      const remoteFallbackUri = getFallbackUrl ? getFallbackUrl(url) : '';
+      const fallbackUri = [remoteFallbackUri, thumbUri, displayUri]
+        .map((value) => String(value || '').trim())
+        .find((value) => value && value !== visibleUri);
       const keySource = normalizePhotoKeySource(url) || normalizePhotoKeySource(visibleUri);
       const occurrenceIndex = Number(occurrenceBySource.get(keySource) || 0);
       if (keySource) occurrenceBySource.set(keySource, occurrenceIndex + 1);
@@ -282,6 +306,20 @@ function PhotoGrid({
     }
     return mapped;
   }, [getDisplayUrl, getFallbackUrl, getIssue, getThumbnailUrl, pending, photos]);
+
+  useEffect(() => {
+    const activeSources = new Set(
+      [
+        ...(photos || []),
+        ...(pending || []).map((item) => item?.uploadedUrl),
+      ]
+        .map(normalizePhotoKeySource)
+        .filter(Boolean),
+    );
+    for (const sourceKey of stableDisplayBySourceRef.current.keys()) {
+      if (!activeSources.has(sourceKey)) stableDisplayBySourceRef.current.delete(sourceKey);
+    }
+  }, [pending, photos]);
 
   useEffect(() => {
     const displayUrls = data

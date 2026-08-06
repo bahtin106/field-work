@@ -2,6 +2,7 @@
 import { Stack } from 'expo-router';
 import { useRef } from 'react';
 import { View } from 'react-native';
+import { renderNavigationScreen } from '../../components/navigation/NavigationCommitBoundary';
 import { getLastPublicAuthScreen } from '../../lib/authFlowNavigationState';
 
 export default function AuthLayout() {
@@ -11,6 +12,7 @@ export default function AuthLayout() {
     <View style={{ flex: 1 }}>
       <Stack
         initialRouteName={initialAuthScreenRef.current}
+        screenLayout={renderNavigationScreen}
         screenOptions={{
           headerShown: false,
           animation: 'none',

@@ -15,13 +15,30 @@ import {
   extractOrderAddress,
   normalizeOrderAddressMode,
 } from './addressing';
-import { applyOrderRelationFilters } from './relationFilters';
+import { applyOrderRelationFilters, hasRelationFilters } from './relationFilters';
 import { resolveRequestTitle } from './title';
 import { getMyCompanyId } from '../profile/api';
 import { buildClientObjectLocationSummary } from '../objects/addressing';
 
 const DEFAULT_PAGE_SIZE = 20;
 const SECURE_ORDER_SELECT_COLUMNS = '*';
+const OBJECT_LOCATION_SELECT_COLUMNS = [
+  'id',
+  'name',
+  'country',
+  'region',
+  'district',
+  'city',
+  'street',
+  'house',
+  'postal_code',
+  'floor',
+  'entrance',
+  'apartment',
+  'geo_lat',
+  'geo_lng',
+  'location_mode',
+].join(', ');
 // PostgreSQL accepts canonical UUID strings regardless of their version bits.
 // Do not reject imported or legacy identifiers solely because their version is unusual.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -141,6 +158,12 @@ function normalizeOrder(row) {
   const clientItem = row.client || null;
   const address = extractOrderAddress(row);
   const addressMode = normalizeOrderAddressMode(row.address_mode);
+  const objectLocationMode =
+    String(objectItem?.location_mode || row.object_location_mode || '').trim() || null;
+  const objectSummary =
+    buildClientObjectLocationSummary(objectItem, { compact: true }) ||
+    String(row.object_summary || '').trim() ||
+    null;
   const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
   const departureTime = normalizeDepartureTimeString(row?.departure_time);
   return {
@@ -161,8 +184,8 @@ function normalizeOrder(row) {
     fio: customerName || null,
     customer_name: customerName || null,
     object_name: objectItem?.name || String(row.object_name || '').trim() || null,
-    object_summary: buildClientObjectLocationSummary(objectItem, { compact: true }) || null,
-    object_location_mode: String(objectItem?.location_mode || '').trim() || null,
+    object_summary: objectSummary,
+    object_location_mode: objectLocationMode,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,
     country: address.country || null,
@@ -176,11 +199,81 @@ function normalizeOrder(row) {
     floor: address.floor || null,
     entrance: address.entrance || null,
     apartment: address.apartment || null,
-    entrance_info: address.comment || address.entrance_info || null,
+    entrance_info: address.entrance_info || null,
     parking_notes: null,
     geo_lat: address.geo_lat || null,
     geo_lng: address.geo_lng || null,
   };
+}
+
+function readExplicitObjectLocationMode(row) {
+  const mode = String(
+    row?.object?.location_mode ||
+      row?.client_object?.location_mode ||
+      row?.object_location_mode ||
+      '',
+  )
+    .trim()
+    .toLowerCase();
+  return mode === 'map' || mode === 'address' ? mode : '';
+}
+
+export async function hydrateRequestObjectLocations(rows: any[] = []) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const objectIds = Array.from(
+    new Set(
+      safeRows
+        .filter(
+          (row) =>
+            normalizeOrderAddressMode(row?.address_mode) === 'object' &&
+            !readExplicitObjectLocationMode(row),
+        )
+        .map((row) => String(row?.object_id || '').trim())
+        .filter((id) => isUuid(id)),
+    ),
+  );
+
+  if (!objectIds.length) return safeRows.map(normalizeOrder);
+
+  try {
+    const { data, error } = await supabase
+      .from('client_objects_secure')
+      .select(OBJECT_LOCATION_SELECT_COLUMNS)
+      .in('id', objectIds);
+    if (error) throw error;
+
+    const objectsById = new Map<string, any>();
+    const objectRows = Array.isArray(data) ? (data as any[]) : [];
+    objectRows.forEach((objectItem) => {
+      const id = String(objectItem?.id || '').trim();
+      if (id) objectsById.set(id, objectItem);
+    });
+
+    return safeRows.map((row) => {
+      const objectId = String(row?.object_id || '').trim();
+      const objectItem = objectsById.get(objectId);
+      if (!objectItem) return normalizeOrder(row);
+
+      const mergedObject = {
+        ...(row?.client_object || {}),
+        ...(row?.object || {}),
+        ...objectItem,
+      };
+      return normalizeOrder({
+        ...row,
+        object: mergedObject,
+        object_location_mode: objectItem.location_mode,
+        object_name: objectItem.name || row?.object_name,
+        object_summary:
+          buildClientObjectLocationSummary(mergedObject, { compact: true }) ||
+          row?.object_summary,
+      });
+    });
+  } catch {
+    // The list itself remains usable if the lightweight object projection is
+    // temporarily unavailable; a later refresh can retry the enrichment.
+    return safeRows.map(normalizeOrder);
+  }
 }
 
 async function enrichOrderWithExtraFields(row) {
@@ -210,12 +303,6 @@ function buildConcurrencyError(message: string, latest: any = null) {
   return error;
 }
 
-async function getRequestByIdFresh(id) {
-  const key = String(id || '').trim();
-  if (!key || !isUuid(key)) return null;
-  return getRequestById(key);
-}
-
 export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = null) {
   return measureNetwork('requests.update.withVersion', async () => {
     if (!id) throw new Error('Order id is required');
@@ -242,13 +329,16 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
             p_patch: patch ?? {},
           });
           if (!retryError && retryData) {
-            return getRequestByIdFresh(id);
+            return normalizeOrder(Array.isArray(retryData) ? retryData[0] : retryData);
           }
         }
         throw buildConcurrencyError('Order was modified concurrently', latest || null);
       }
 
-      return getRequestByIdFresh(id);
+      // The RPC already returns the committed order row. A mandatory follow-up
+      // request made a successful save look failed whenever that second request
+      // was interrupted on a slow device or during a session transition.
+      return normalizeOrder(Array.isArray(rpcData) ? rpcData[0] : rpcData);
     } catch (rpcFailure) {
       // All order mutations are authorized atomically in the database.
       // A direct-table fallback would bypass the configured access matrix.
@@ -270,6 +360,7 @@ export async function listRequests(params: any = {}) {
       relationClientId = '',
       relationObjectIds = [],
       clientIds = [],
+      objectIds = [],
       orderIds = [],
       clientTags = [],
       objectTags = [],
@@ -348,6 +439,9 @@ export async function listRequests(params: any = {}) {
     if (Array.isArray(clientIds) && clientIds.length) {
       query = query.in('client_id', clientIds.map(String));
     }
+    if (Array.isArray(objectIds) && objectIds.length) {
+      query = query.in('object_id', objectIds.map(String));
+    }
     if (Array.isArray(orderIds) && orderIds.length) {
       query = query.in('id', orderIds.map(String));
     }
@@ -372,7 +466,44 @@ export async function listRequests(params: any = {}) {
 
     const { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
     if (error) throw error;
-    return warmExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
+    const rows = await hydrateRequestObjectLocations(Array.isArray(data) ? data : []);
+    return warmExecutorNames(rows);
+  });
+}
+
+export async function getRelatedRequestCount({
+  scope = 'my',
+  clientId = '',
+  objectIds = [],
+}: any = {}) {
+  const relationFilters = {
+    clientId: String(clientId || '').trim(),
+    objectIds: Array.from(
+      new Set(
+        (Array.isArray(objectIds) ? objectIds : [])
+          .map((value) => String(value || '').trim())
+          .filter(Boolean),
+      ),
+    ),
+  };
+  if (!hasRelationFilters(relationFilters)) return 0;
+
+  return measureNetwork('requests.relatedCount', async () => {
+    const session = await requireRequestSession();
+    let query = supabase
+      .from('orders_accessible')
+      .select('id', { count: 'exact', head: true });
+
+    if (scope !== 'all') {
+      query = query.eq('assigned_to', session.user.id);
+    }
+
+    query = excludeFeedStatuses(query);
+    query = applyOrderRelationFilters(query, relationFilters);
+
+    const { count, error } = await query;
+    if (error) throw error;
+    return Math.max(0, Number(count || 0));
   });
 }
 
@@ -472,7 +603,8 @@ export async function listCalendarRequests({
     const { data, error } = await query;
     if (error) throw error;
 
-    const rows = warmExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
+    const hydratedRows = await hydrateRequestObjectLocations(Array.isArray(data) ? data : []);
+    const rows = warmExecutorNames(hydratedRows);
     if (normalizedScope === 'my' && userId) return rows.filter((row) => row.assigned_to === userId);
 
     return rows;

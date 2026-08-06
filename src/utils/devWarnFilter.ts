@@ -1,5 +1,5 @@
 const SUPPRESSED_DEV_LOG_RE =
-  /`setBehaviorAsync` is not supported with edge-to-edge enabled\.|`setBackgroundColorAsync` is not supported with edge-to-edge enabled\.|`expo-notifications` functionality is not fully supported in Expo Go|expo-notifications: Android Push notifications \(remote notifications\) functionality provided .* removed from Expo Go|Expo Go can no longer provide full access to the media library|Due to changes in Androids permission requirements, Expo Go can no longer provide full access to the media library/i;
+  /`expo-notifications` functionality is not fully supported in Expo Go|expo-notifications: Android Push notifications \(remote notifications\) functionality provided .* removed from Expo Go|Expo Go can no longer provide full access to the media library|Due to changes in Androids permission requirements, Expo Go can no longer provide full access to the media library/i;
 const REPEATED_LOG_DEDUP_WINDOW_MS = 1200;
 
 function normalizeLogSignature(args: any[]) {

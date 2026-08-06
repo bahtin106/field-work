@@ -406,9 +406,10 @@ export async function createClientObject(payload: Record<string, any>) {
         insertPayload[key] = trimToNull(payload[key]);
       }
     });
-    if (Object.prototype.hasOwnProperty.call(payload, 'media_sections')) {
-      insertPayload.media_sections = normalizeMediaSections(payload.media_sections);
-    }
+    // A new object never inherits media sections from company field settings.
+    // Existing legacy objects may still have NULL and keep their compatibility
+    // fallback, while every newly created object starts with an explicit [].
+    insertPayload.media_sections = normalizeMediaSections(payload.media_sections) ?? [];
     let query = supabase
       .from('client_objects')
       .insert(insertPayload)

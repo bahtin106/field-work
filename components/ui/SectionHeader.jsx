@@ -13,6 +13,7 @@ export default function SectionHeader({
   children,
   containerStyle,
   style,
+  accessory,
   ...rest
 }) {
   const { theme } = useTheme();
@@ -29,10 +30,14 @@ export default function SectionHeader({
     theme,
   );
   return (
-    <View style={[{ marginTop, marginBottom }, containerStyle]}>
-      <Text style={[base.sectionTitle, { marginTop: 0, marginBottom: 0 }, style]} {...rest}>
+    <View style={[{ marginTop, marginBottom }, accessory ? { flexDirection: 'row', alignItems: 'center' } : null, containerStyle]}>
+      <Text
+        style={[base.sectionTitle, { marginTop: 0, marginBottom: 0 }, accessory ? { flexShrink: 1 } : null, style]}
+        {...rest}
+      >
         {children}
       </Text>
+      {accessory ? <View style={{ marginLeft: theme.spacing?.xs ?? 4 }}>{accessory}</View> : null}
     </View>
   );
 }

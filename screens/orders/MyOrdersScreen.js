@@ -2,7 +2,7 @@ import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/n
 import { useQueryClient } from '@tanstack/react-query';
 import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -22,6 +22,7 @@ import DynamicOrderCard from '../../components/DynamicOrderCard';
 import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import StatusSelectModal from '../../components/filters/StatusSelectModal';
+import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useAuth } from '../../components/hooks/useAuth';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
@@ -49,6 +50,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes } from '../../lib/workTypes';
 import { useClients } from '../../src/features/clients/queries';
+import { useCompanyObjects } from '../../src/features/objects/queries';
 import { useCompanyTags } from '../../src/features/tags/queries';
 import { buildTagFilterOptions } from '../../src/features/tags/filtering';
 import {
@@ -81,7 +83,10 @@ import {
   prefetchExecutorNames,
   seedExecutorNames,
 } from '../../src/features/requests/executorNameCache';
-import { listRequests } from '../../src/features/requests/api';
+import {
+  hydrateRequestObjectLocations,
+  listRequests,
+} from '../../src/features/requests/api';
 import {
   applyOrderRelationFilters,
   hasRelationFilters,
@@ -142,6 +147,7 @@ const ORDER_FILTER_DEFAULTS = Object.freeze({
   workTypes: [],
   statuses: [],
   clientIds: [],
+  objectIds: [],
   clientTags: [],
   objectTags: [],
   departureDateFrom: null,
@@ -239,8 +245,6 @@ function rankStatusFilterOptions(options = [], usage = {}) {
     })
     .map(({ option }) => option);
 }
-
-const SortSelectModal = lazy(() => import('../../components/filters/SortSelectModal'));
 
 function buildScopedStorageKey(prefix, scopeKey) {
   return `${prefix}:${String(scopeKey || 'anonymous')}`;
@@ -440,6 +444,7 @@ function MyOrdersContent() {
   );
 
   const setFilterValue = filters.setValue;
+  const applyFilters = filters.apply;
   const selectedStatusFilters = filters.values?.statuses;
   const revalidateFilters = filters.revalidate;
 
@@ -461,10 +466,36 @@ function MyOrdersContent() {
   const {
     seedFilter,
     seedSearch,
+    client_ids,
+    object_ids,
+    filter_entity_type,
+    filter_entity_id,
+    filter_entity_label,
+    reset_order_filters,
     relation_client_id,
     relation_object_ids,
     relation_label,
   } = useLocalSearchParams();
+  const routeClientIds = useMemo(() => parseRelationIdsParam(client_ids), [client_ids]);
+  const routeObjectIds = useMemo(() => parseRelationIdsParam(object_ids), [object_ids]);
+  const routeEntityFilterType = useMemo(
+    () =>
+      String(Array.isArray(filter_entity_type) ? filter_entity_type[0] || '' : filter_entity_type || '')
+        .trim()
+        .toLowerCase(),
+    [filter_entity_type],
+  );
+  const routeEntityFilterId = useMemo(
+    () => String(Array.isArray(filter_entity_id) ? filter_entity_id[0] || '' : filter_entity_id || '').trim(),
+    [filter_entity_id],
+  );
+  const routeEntityFilterLabel = useMemo(
+    () =>
+      String(Array.isArray(filter_entity_label) ? filter_entity_label[0] || '' : filter_entity_label || '').trim(),
+    [filter_entity_label],
+  );
+  const shouldResetOrderFiltersFromRoute =
+    String(Array.isArray(reset_order_filters) ? reset_order_filters[0] || '' : reset_order_filters || '') === '1';
   const relationClientId = useMemo(
     () =>
       Array.isArray(relation_client_id)
@@ -489,6 +520,47 @@ function MyOrdersContent() {
     () => JSON.stringify({ clientId: relationClientId, objectIds: relationObjectIds }),
     [relationClientId, relationObjectIds],
   );
+  const routeEntitySeedRef = useRef('');
+  useEffect(() => {
+    if (!shouldResetOrderFiltersFromRoute) {
+      routeEntitySeedRef.current = '';
+      return undefined;
+    }
+    const fingerprint = JSON.stringify({
+      clientIds: routeClientIds,
+      objectIds: routeObjectIds,
+    });
+    if (routeEntitySeedRef.current === fingerprint) return undefined;
+    routeEntitySeedRef.current = fingerprint;
+
+    let cancelled = false;
+    const seedEntityFilter = async () => {
+      await revalidateFilters();
+      if (cancelled) return;
+      const nextValues = {
+        ...ORDER_FILTER_DEFAULTS,
+        clientIds: routeClientIds,
+        objectIds: routeObjectIds,
+      };
+      Object.entries(nextValues).forEach(([key, value]) => setFilterValue(key, value));
+      await applyFilters(nextValues);
+      if (!cancelled) {
+        router.setParams({ reset_order_filters: undefined });
+      }
+    };
+    void seedEntityFilter();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    applyFilters,
+    revalidateFilters,
+    routeClientIds,
+    routeObjectIds,
+    router,
+    setFilterValue,
+    shouldResetOrderFiltersFromRoute,
+  ]);
 
   const orderStatusOptions = useMemo(
     () =>
@@ -583,14 +655,17 @@ function MyOrdersContent() {
   const departureTimeEnabled = orderFieldsByKey.get('departure_time')?.isEnabled !== false;
   const hasSelectedClientFilters =
     Array.isArray(filters.values?.clientIds) && filters.values.clientIds.length > 0;
-  const shouldLoadClientOptions = !!companyId && (filters.visible || hasSelectedClientFilters);
+  const hasSelectedObjectFilters =
+    Array.isArray(filters.values?.objectIds) && filters.values.objectIds.length > 0;
+  const shouldLoadClientOptions =
+    !!companyId && (filters.visible || hasSelectedClientFilters || hasSelectedObjectFilters);
   const { data: companyClients = [] } = useClients(
     { companyId, search: '' },
     { enabled: shouldLoadClientOptions },
   );
   const clientOptions = useMemo(
-    () =>
-      (Array.isArray(companyClients) ? companyClients : [])
+    () => {
+      const options = (Array.isArray(companyClients) ? companyClients : [])
         .map((row) => {
           const id = String(row?.id || '').trim();
           if (!id) return null;
@@ -601,9 +676,67 @@ function MyOrdersContent() {
             id;
           return { id, value: id, label };
         })
-        .filter(Boolean),
-    [companyClients],
+        .filter(Boolean);
+      if (
+        routeEntityFilterType === 'client' &&
+        routeEntityFilterId &&
+        routeEntityFilterLabel &&
+        !options.some((item) => item.id === routeEntityFilterId)
+      ) {
+        options.push({
+          id: routeEntityFilterId,
+          value: routeEntityFilterId,
+          label: routeEntityFilterLabel,
+        });
+      }
+      return options;
+    },
+    [companyClients, routeEntityFilterId, routeEntityFilterLabel, routeEntityFilterType],
   );
+  const shouldLoadObjectOptions =
+    !!companyId && (filters.visible || hasSelectedObjectFilters);
+  const { data: companyObjects = [] } = useCompanyObjects(companyId, {
+    enabled: shouldLoadObjectOptions,
+  });
+  const objectOptions = useMemo(() => {
+    const clientLabelById = new Map(clientOptions.map((item) => [String(item.id), item.label]));
+    const options = (Array.isArray(companyObjects) ? companyObjects : [])
+      .map((row) => {
+        const id = String(row?.id || '').trim();
+        if (!id) return null;
+        const objectName =
+          String(row?.name || '').trim() ||
+          String(row?.summary || '').trim() ||
+          t('objects_unnamed');
+        const clientLabel = clientLabelById.get(String(row?.client_id || '')) || '';
+        return {
+          id,
+          value: id,
+          label: clientLabel ? `${objectName} — ${clientLabel}` : objectName,
+        };
+      })
+      .filter(Boolean);
+    if (
+      routeEntityFilterType === 'object' &&
+      routeEntityFilterId &&
+      routeEntityFilterLabel &&
+      !options.some((item) => item.id === routeEntityFilterId)
+    ) {
+      options.push({
+        id: routeEntityFilterId,
+        value: routeEntityFilterId,
+        label: routeEntityFilterLabel,
+      });
+    }
+    return options.sort((left, right) => left.label.localeCompare(right.label, 'ru'));
+  }, [
+    clientOptions,
+    companyObjects,
+    routeEntityFilterId,
+    routeEntityFilterLabel,
+    routeEntityFilterType,
+    t,
+  ]);
   const hasSelectedTagFilters = Boolean(
     filters.values?.clientTags?.length || filters.values?.objectTags?.length,
   );
@@ -678,6 +811,7 @@ function MyOrdersContent() {
       workTypes: selectedWorkTypes,
       statuses,
       clientIds,
+      objectIds,
       clientTags,
       objectTags,
       departureDateFrom,
@@ -732,6 +866,27 @@ function MyOrdersContent() {
         );
         compactParts.push(
           summarizeFilterPart({ label: t('common_client'), values: labels, countWhenMany: true }),
+        );
+      }
+    }
+    if (objectIds?.length) {
+      const labels = objectIds
+        .map((id) => objectOptions.find((item) => String(item.id) === String(id))?.label)
+        .filter(Boolean);
+      if (labels.length) {
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('routes_objects_object'),
+            values: labels,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('routes_objects_object'),
+            values: labels,
+            countWhenMany: true,
+          }),
         );
       }
     }
@@ -810,7 +965,15 @@ function MyOrdersContent() {
       full: joinFilterSummary(fullParts, t('common_bullet')),
       compact: joinFilterSummary(compactParts, t('common_bullet')),
     };
-  }, [clientOptions, filters.values, statusFilterLabels, statusSystem.isEnabled, workTypeOptions, t]);
+  }, [
+    clientOptions,
+    filters.values,
+    objectOptions,
+    statusFilterLabels,
+    statusSystem.isEnabled,
+    workTypeOptions,
+    t,
+  ]);
 
   const cacheScopeKey = useMemo(() => {
     const scopedUserId = String(auth.user?.id || auth.profile?.id || '').trim();
@@ -1728,6 +1891,9 @@ function MyOrdersContent() {
       const clientIds = Array.isArray(filterValues.clientIds)
         ? filterValues.clientIds.map(String).filter(Boolean)
         : [];
+      const objectIds = Array.isArray(filterValues.objectIds)
+        ? filterValues.objectIds.map(String).filter(Boolean)
+        : [];
       const clientTags = Array.isArray(filterValues.clientTags)
         ? filterValues.clientTags.map(String).filter(Boolean)
         : [];
@@ -1792,6 +1958,7 @@ function MyOrdersContent() {
         if (key === 'all' && isFeedFeatureEnabled) query = excludeFeedStatuses(query);
         if (statusFilters.length) query = query.in('status', statusFilters);
         if (clientIds.length) query = query.in('client_id', clientIds);
+        if (objectIds.length) query = query.in('object_id', objectIds);
         if (clientTags.length) query = query.overlaps('client_tags', clientTags);
         if (objectTags.length) query = query.overlaps('object_tags', objectTags);
         if (!Number.isNaN(sumMin)) query = query.gte('start_price', sumMin);
@@ -1818,6 +1985,7 @@ function MyOrdersContent() {
             sortKey: normalizedSortKey,
             statuses: selectedStatusKeys,
             clientIds,
+            objectIds,
             clientTags,
             objectTags,
             orderIds: Array.isArray(workTypeOrderIds) ? workTypeOrderIds : [],
@@ -1840,7 +2008,10 @@ function MyOrdersContent() {
           normalizedSortKey,
         ).range(from, to);
         if (pageError) throw pageError;
-        return enrichOrdersWithExecutorNames(Array.isArray(rows) ? rows : []);
+        const hydratedRows = await hydrateRequestObjectLocations(
+          Array.isArray(rows) ? rows : [],
+        );
+        return enrichOrdersWithExecutorNames(hydratedRows);
       };
 
       let data = null;
@@ -2001,9 +2172,11 @@ function MyOrdersContent() {
             prefix: t('order_auto_title_prefix'),
           }),
           includePhones: shouldShowOrderPhoneForRole(o, companySettings, auth.profile?.role),
-          extraTexts: [
-            workTypeOptions.find((item) => String(item?.id || '') === String(o?.work_type_id || ''))?.name,
-          ],
+          extraTexts: useWorkTypesFlag
+            ? [
+                workTypeOptions.find((item) => String(item?.id || '') === String(o?.work_type_id || ''))?.name,
+              ]
+            : [],
         }),
         q,
       );
@@ -2017,6 +2190,7 @@ function MyOrdersContent() {
     filters.values.departureTimeTo,
     filters.values.createdTimeFrom,
     filters.values.createdTimeTo,
+    useWorkTypesFlag,
     workTypeOptions,
     t,
   ]);
@@ -2032,15 +2206,24 @@ function MyOrdersContent() {
     [feedTotalCount],
   );
   const ordersFacetCounts = useOrderFacetCounts(filteredOrders, panelStatusOptions, {
-    isStatusNarrowed: normalizeMyOrdersStatusFilter(effectiveFilter || 'all') !== 'all',
+    enabled: isFocused && !statusSystem.isLoading && !!(auth.user?.id || auth.profile?.id),
+    scope: 'my',
     scopeKey: cacheScopeKey,
     statusOverrides: feedFacetOverride,
+    verifyClientTags: clientTagOptions.length > 0,
+    verifyObjectTags: objectTagOptions.length > 0,
+    verifyObjects: objectOptions.length > 0,
   });
 
   // List item renderer helpers
   const returnParamsRef = useRef({
     seedFilter: effectiveFilter,
     seedSearch: searchQuery,
+    client_ids: Array.isArray(filters.values?.clientIds) ? filters.values.clientIds.join(',') : '',
+    object_ids: Array.isArray(filters.values?.objectIds) ? filters.values.objectIds.join(',') : '',
+    filter_entity_type: routeEntityFilterType,
+    filter_entity_id: routeEntityFilterId,
+    filter_entity_label: routeEntityFilterLabel,
     relation_client_id: relationClientId,
     relation_object_ids: relationObjectIds.join(','),
     relation_label: relationLabel,
@@ -2049,11 +2232,27 @@ function MyOrdersContent() {
     returnParamsRef.current = {
       seedFilter: effectiveFilter,
       seedSearch: searchQuery,
+      client_ids: Array.isArray(filters.values?.clientIds) ? filters.values.clientIds.join(',') : '',
+      object_ids: Array.isArray(filters.values?.objectIds) ? filters.values.objectIds.join(',') : '',
+      filter_entity_type: routeEntityFilterType,
+      filter_entity_id: routeEntityFilterId,
+      filter_entity_label: routeEntityFilterLabel,
       relation_client_id: relationClientId,
       relation_object_ids: relationObjectIds.join(','),
       relation_label: relationLabel,
     };
-  }, [effectiveFilter, relationClientId, relationLabel, relationObjectIds, searchQuery]);
+  }, [
+    effectiveFilter,
+    filters.values?.clientIds,
+    filters.values?.objectIds,
+    relationClientId,
+    relationLabel,
+    relationObjectIds,
+    routeEntityFilterId,
+    routeEntityFilterLabel,
+    routeEntityFilterType,
+    searchQuery,
+  ]);
   const openOrderDetails = useCallback(
     (orderIdRaw, orderSeed = null) => {
       const orderId = String(orderIdRaw || '').trim();
@@ -2306,6 +2505,17 @@ function MyOrdersContent() {
             const resetValues = filters.reset();
             await filters.apply(resetValues);
             selectStatusFilter('all');
+            router.setParams({
+              client_ids: undefined,
+              object_ids: undefined,
+              filter_entity_type: undefined,
+              filter_entity_id: undefined,
+              filter_entity_label: undefined,
+              reset_order_filters: undefined,
+              relation_client_id: undefined,
+              relation_object_ids: undefined,
+              relation_label: undefined,
+            });
           }}
           metaText={`${t('common_shown')} ${sortedFilteredOrders.length} ${t('common_of')} ${Math.max(totalOrdersCount, orders.length)}`}
         />
@@ -2335,6 +2545,7 @@ function MyOrdersContent() {
       totalOrdersCount,
       hasLinkedRelationFilter,
       relationLabel,
+      router,
       t,
       visibleQuickStatusKeys,
     ],
@@ -2562,6 +2773,7 @@ function MyOrdersContent() {
             statusOptions={statusSystem.isEnabled ? panelStatusOptions : []}
             workTypeOptions={useWorkTypesFlag ? workTypeOptions : []}
             clientOptions={clientOptions}
+            objectOptions={objectOptions}
             clientTagOptions={clientTagOptions}
             objectTagOptions={objectTagOptions}
             facetCounts={ordersFacetCounts}
@@ -2571,6 +2783,17 @@ function MyOrdersContent() {
             onReset={() => {
               filters.reset();
               selectStatusFilter('all');
+              router.setParams({
+                client_ids: undefined,
+                object_ids: undefined,
+                filter_entity_type: undefined,
+                filter_entity_id: undefined,
+                filter_entity_label: undefined,
+                reset_order_filters: undefined,
+                relation_client_id: undefined,
+                relation_object_ids: undefined,
+                relation_label: undefined,
+              });
             }}
             onApply={async (nextValues, applyMeta) => {
               const nextStatuses = Array.from(
@@ -2594,6 +2817,18 @@ function MyOrdersContent() {
               );
               await filters.apply(normalizedNextValues);
               selectStatusFilter(nextStatus, { syncFilter: false });
+              router.setParams({
+                client_ids: normalizedNextValues.clientIds?.length
+                  ? normalizedNextValues.clientIds.join(',')
+                  : undefined,
+                object_ids: normalizedNextValues.objectIds?.length
+                  ? normalizedNextValues.objectIds.join(',')
+                  : undefined,
+                filter_entity_type: undefined,
+                filter_entity_id: undefined,
+                filter_entity_label: undefined,
+                reset_order_filters: undefined,
+              });
             }}
       />
       {hasStatusNavigation ? (
@@ -2607,17 +2842,15 @@ function MyOrdersContent() {
         />
       ) : null}
       {sortVisible ? (
-        <Suspense fallback={null}>
-          <SortSelectModal
-            visible={sortVisible}
-            onClose={() => setSortVisible(false)}
-            options={sortOptions}
-            value={normalizedSortKey}
-            onChange={(nextSort) => {
-              if (nextSort) setSortKey(nextSort);
-            }}
-          />
-        </Suspense>
+        <SortSelectModal
+          visible={sortVisible}
+          onClose={() => setSortVisible(false)}
+          options={sortOptions}
+          value={normalizedSortKey}
+          onChange={(nextSort) => {
+            if (nextSort) setSortKey(nextSort);
+          }}
+        />
       ) : null}
     </Screen>
   );

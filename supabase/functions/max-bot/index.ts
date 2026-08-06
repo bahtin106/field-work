@@ -848,7 +848,10 @@ async function handleSaveConfig(req: Request, admin: AdminClient, body: Record<s
   const config = (body.config && typeof body.config === 'object' ? body.config : {}) as Record<string, unknown>;
   const current = await ensureIntegration(admin, caller.companyId);
   const destinationType = config.destination_type === 'assignee' ? 'assignee' : 'feed';
-  const destinationUserId = normalizeText(config.destination_user_id) || current.destination_user_id || null;
+  const destinationUserId =
+    destinationType === 'assignee'
+      ? normalizeText(config.destination_user_id) || current.destination_user_id || null
+      : null;
 
   if (destinationType === 'assignee' && !destinationUserId) {
     return json(400, { success: false, message: 'Нужно выбрать ответственного.' });
@@ -2061,6 +2064,7 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
       entrance: address.entrance || null,
       floor: address.floor || null,
       comment: address.comment || null,
+      media_sections: [],
     })
     .select('id, name')
     .single();

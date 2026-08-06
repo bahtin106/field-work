@@ -3,6 +3,7 @@ import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -21,6 +22,26 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+    normalizeLegacyStatusBarProtection()
+  }
+
+  /**
+   * Some Android and Huawei builds retain a legacy status-bar background after
+   * the splash screen. That makes the system draw its own protection color over
+   * the themed edge-to-edge root view.
+   *
+   * Give the status bar the resolved day/night app background on releases
+   * where the color API is supported. Android 15+ owns edge-to-edge.
+   */
+  @Suppress("DEPRECATION")
+  private fun normalizeLegacyStatusBarProtection() {
+    if (Build.VERSION.SDK_INT >= 35) {
+      return
+    }
+
+    window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+    window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+    LegacySystemBarColorCompat.setStatusBarColor(window, getColor(R.color.app_background))
   }
 
   /**
