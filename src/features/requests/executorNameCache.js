@@ -9,6 +9,7 @@ const EXECUTOR_NAME_BATCH_STATE = (globalThis.EXECUTOR_NAME_BATCH_STATE ||= {
   waiters: new Map(),
   timer: null,
   flushing: false,
+  controller: null,
 });
 
 const EXECUTOR_NAME_CACHE_MAX_ENTRIES = 300;
@@ -47,7 +48,34 @@ const EXECUTOR_NAME_PERSIST_STATE = (globalThis.EXECUTOR_NAME_PERSIST_STATE ||= 
   hydrated: false,
   hydratePromise: null,
   persistTimer: null,
+  generation: 0,
+  writeChain: Promise.resolve(),
 });
+if (!Number.isFinite(EXECUTOR_NAME_PERSIST_STATE.generation)) {
+  EXECUTOR_NAME_PERSIST_STATE.generation = 0;
+}
+if (!EXECUTOR_NAME_PERSIST_STATE.writeChain?.then) {
+  EXECUTOR_NAME_PERSIST_STATE.writeChain = Promise.resolve();
+}
+
+function getExecutorNameCacheGeneration() {
+  return Number(EXECUTOR_NAME_PERSIST_STATE.generation || 0);
+}
+
+function throwIfExecutorCacheGenerationChanged(expectedGeneration) {
+  if (expectedGeneration === getExecutorNameCacheGeneration()) return;
+  const error = new Error('Executor name cache scope changed');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function throwIfExecutorReadAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Executor name read was aborted');
+  error.name = 'AbortError';
+  throw error;
+}
 
 function looksLikeUuid(value) {
   const normalized = String(value || '').trim();
@@ -63,7 +91,12 @@ function getCachedExecutorName(userId) {
   return typeof value === 'string' ? value : '';
 }
 
-function setCachedExecutorName(userId, displayName) {
+function setCachedExecutorName(
+  userId,
+  displayName,
+  expectedGeneration = getExecutorNameCacheGeneration(),
+) {
+  if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
   const uid = String(userId || '').trim();
   if (!uid) return;
   const value = String(displayName || '').trim();
@@ -78,43 +111,60 @@ function setCachedExecutorName(userId, displayName) {
     if (oldestKey == null) break;
     EXECUTOR_NAME_CACHE.delete(oldestKey);
   }
-  scheduleExecutorNamePersist();
+  scheduleExecutorNamePersist(expectedGeneration);
 }
 
 export function readCachedExecutorName(userId) {
   return getCachedExecutorName(userId);
 }
 
-function scheduleExecutorNamePersist() {
+function scheduleExecutorNamePersist(expectedGeneration = getExecutorNameCacheGeneration()) {
+  if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
   if (EXECUTOR_NAME_PERSIST_STATE.persistTimer) {
     clearTimeout(EXECUTOR_NAME_PERSIST_STATE.persistTimer);
   }
   EXECUTOR_NAME_PERSIST_STATE.persistTimer = setTimeout(() => {
     EXECUTOR_NAME_PERSIST_STATE.persistTimer = null;
-    persistExecutorNameCache().catch(() => {});
+    if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
+    persistExecutorNameCache(expectedGeneration).catch(() => {});
   }, EXECUTOR_NAME_PERSIST_DEBOUNCE_MS);
 }
 
-async function persistExecutorNameCache() {
-  const entries = Array.from(EXECUTOR_NAME_CACHE.entries())
-    .filter(([id, name]) => looksLikeUuid(id) && String(name || '').trim())
-    .slice(-EXECUTOR_NAME_CACHE_MAX_ENTRIES);
-  await AsyncStorage.setItem(
-    EXECUTOR_NAME_PERSIST_STORAGE_KEY,
-    JSON.stringify({
+function persistExecutorNameCache(expectedGeneration = getExecutorNameCacheGeneration()) {
+  const run = async () => {
+    if (expectedGeneration !== getExecutorNameCacheGeneration()) return false;
+    const entries = Array.from(EXECUTOR_NAME_CACHE.entries())
+      .filter(([id, name]) => looksLikeUuid(id) && String(name || '').trim())
+      .slice(-EXECUTOR_NAME_CACHE_MAX_ENTRIES);
+    const serialized = JSON.stringify({
       savedAt: Date.now(),
       entries,
-    }),
-  );
+    });
+    if (expectedGeneration !== getExecutorNameCacheGeneration()) return false;
+    await AsyncStorage.setItem(EXECUTOR_NAME_PERSIST_STORAGE_KEY, serialized);
+    if (expectedGeneration !== getExecutorNameCacheGeneration()) {
+      const current = await AsyncStorage.getItem(EXECUTOR_NAME_PERSIST_STORAGE_KEY).catch(() => null);
+      if (current === serialized) {
+        await AsyncStorage.removeItem(EXECUTOR_NAME_PERSIST_STORAGE_KEY).catch(() => {});
+      }
+      return false;
+    }
+    return true;
+  };
+  const queued = EXECUTOR_NAME_PERSIST_STATE.writeChain.then(run, run);
+  EXECUTOR_NAME_PERSIST_STATE.writeChain = queued.catch(() => {});
+  return queued;
 }
 
 export async function hydrateExecutorNameCache() {
   if (EXECUTOR_NAME_PERSIST_STATE.hydrated) return true;
   if (EXECUTOR_NAME_PERSIST_STATE.hydratePromise) return EXECUTOR_NAME_PERSIST_STATE.hydratePromise;
 
-  EXECUTOR_NAME_PERSIST_STATE.hydratePromise = (async () => {
+  const expectedGeneration = getExecutorNameCacheGeneration();
+  const hydratePromise = (async () => {
     try {
       const raw = await AsyncStorage.getItem(EXECUTOR_NAME_PERSIST_STORAGE_KEY);
+      throwIfExecutorCacheGenerationChanged(expectedGeneration);
       const parsed = raw ? JSON.parse(raw) : null;
       const savedAt = Number(parsed?.savedAt || 0);
       if (
@@ -125,20 +175,27 @@ export async function hydrateExecutorNameCache() {
       ) {
         parsed.entries.forEach(([id, name]) => {
           if (looksLikeUuid(id) && String(name || '').trim()) {
-            setCachedExecutorName(id, name);
+            setCachedExecutorName(id, name, expectedGeneration);
           }
         });
       }
     } catch {
+      if (expectedGeneration !== getExecutorNameCacheGeneration()) return false;
       // Best-effort warm cache; network path remains the source of truth.
     } finally {
-      EXECUTOR_NAME_PERSIST_STATE.hydrated = true;
-      EXECUTOR_NAME_PERSIST_STATE.hydratePromise = null;
+      if (
+        expectedGeneration === getExecutorNameCacheGeneration() &&
+        EXECUTOR_NAME_PERSIST_STATE.hydratePromise === hydratePromise
+      ) {
+        EXECUTOR_NAME_PERSIST_STATE.hydrated = true;
+        EXECUTOR_NAME_PERSIST_STATE.hydratePromise = null;
+      }
     }
     return true;
   })();
+  EXECUTOR_NAME_PERSIST_STATE.hydratePromise = hydratePromise;
 
-  return EXECUTOR_NAME_PERSIST_STATE.hydratePromise;
+  return hydratePromise;
 }
 
 function joinExecutorName(obj) {
@@ -182,6 +239,18 @@ function readDirectExecutorName(row) {
 
 export function clearExecutorNameCache() {
   try {
+    EXECUTOR_NAME_PERSIST_STATE.generation = getExecutorNameCacheGeneration() + 1;
+    try {
+      EXECUTOR_NAME_BATCH_STATE.controller?.abort();
+    } catch {}
+    EXECUTOR_NAME_BATCH_STATE.controller = null;
+    for (const waiters of EXECUTOR_NAME_BATCH_STATE.waiters.values()) {
+      (Array.isArray(waiters) ? waiters : []).forEach((resolve) => {
+        try {
+          resolve('');
+        } catch {}
+      });
+    }
     EXECUTOR_NAME_CACHE.clear();
     EXECUTOR_NAME_INFLIGHT.clear();
     EXECUTOR_NAME_BATCH_STATE.pending.clear();
@@ -200,7 +269,11 @@ export function clearExecutorNameCache() {
   } catch {}
 }
 
-export function seedExecutorNames(rows = []) {
+export function seedExecutorNames(
+  rows = [],
+  { expectedGeneration = getExecutorNameCacheGeneration() } = {},
+) {
+  if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
   for (const row of Array.isArray(rows) ? rows : []) {
     const profileLike =
       row?.first_name != null ||
@@ -216,7 +289,7 @@ export function seedExecutorNames(rows = []) {
       readDirectExecutorName(row) ||
       formatExecutorDisplayName(row);
     if (!directName) continue;
-    setCachedExecutorName(uid, directName);
+    setCachedExecutorName(uid, directName, expectedGeneration);
   }
 }
 
@@ -232,27 +305,41 @@ export function readOrderExecutorName(order) {
   return readCachedExecutorName(order?.assigned_to);
 }
 
-async function fetchExecutorNamesViaRpc(ids) {
-  const { data, error } = await supabase.rpc('get_order_executor_display_names', {
+async function fetchExecutorNamesViaRpc(
+  ids,
+  signal,
+  expectedGeneration = getExecutorNameCacheGeneration(),
+) {
+  let query = supabase.rpc('get_order_executor_display_names', {
     p_user_ids: ids,
   });
+  if (signal) query = query.abortSignal(signal);
+  const { data, error } = await query;
+  throwIfExecutorCacheGenerationChanged(expectedGeneration);
   if (error) throw error;
   const names = {};
   (Array.isArray(data) ? data : []).forEach((row) => {
     const uid = String(row?.id || '').trim();
     const name = String(row?.display_name || '').trim();
     if (!uid || !name) return;
-    setCachedExecutorName(uid, name);
+    setCachedExecutorName(uid, name, expectedGeneration);
     names[uid] = name;
   });
   return names;
 }
 
-async function fetchExecutorNamesViaProfiles(ids) {
-  const { data, error } = await supabase
+async function fetchExecutorNamesViaProfiles(
+  ids,
+  signal,
+  expectedGeneration = getExecutorNameCacheGeneration(),
+) {
+  let query = supabase
     .from('profiles')
     .select(EXECUTOR_PROFILE_SELECT)
     .in('id', ids);
+  if (signal) query = query.abortSignal(signal);
+  const { data, error } = await query;
+  throwIfExecutorCacheGenerationChanged(expectedGeneration);
   if (error) throw error;
 
   const names = {};
@@ -261,14 +348,17 @@ async function fetchExecutorNamesViaProfiles(ids) {
     if (!uid) return;
     const name = formatExecutorDisplayName(row);
     if (!name) return;
-    setCachedExecutorName(uid, name);
+    setCachedExecutorName(uid, name, expectedGeneration);
     names[uid] = name;
   });
   return names;
 }
 
-export async function fetchExecutorNamesByIds(userIds = []) {
+export async function fetchExecutorNamesByIds(userIds = [], { signal } = {}) {
+  const expectedGeneration = getExecutorNameCacheGeneration();
   await hydrateExecutorNameCache();
+  throwIfExecutorCacheGenerationChanged(expectedGeneration);
+  throwIfExecutorReadAborted(signal);
   const ids = Array.from(
     new Set(
       (Array.isArray(userIds) ? userIds : [])
@@ -287,7 +377,7 @@ export async function fetchExecutorNamesByIds(userIds = []) {
       names[id] = getCachedExecutorName(id);
       return;
     }
-    const pending = EXECUTOR_NAME_INFLIGHT.get(id);
+    const pending = signal ? null : EXECUTOR_NAME_INFLIGHT.get(id);
     if (pending) {
       inflight.push(
         pending.then((name) => {
@@ -303,22 +393,27 @@ export async function fetchExecutorNamesByIds(userIds = []) {
   if (missing.length) {
     batchPromise = (async () => {
       try {
-        return await fetchExecutorNamesViaRpc(missing);
-      } catch {}
+        return await fetchExecutorNamesViaRpc(missing, signal, expectedGeneration);
+      } catch {
+        throwIfExecutorReadAborted(signal);
+      }
 
       try {
-        return await fetchExecutorNamesViaProfiles(missing);
+        return await fetchExecutorNamesViaProfiles(missing, signal, expectedGeneration);
       } catch {
+        throwIfExecutorReadAborted(signal);
         return {};
       }
     })();
 
-    missing.forEach((id) => {
-      EXECUTOR_NAME_INFLIGHT.set(
-        id,
-        batchPromise.then((map) => map?.[id] || ''),
-      );
-    });
+    if (!signal) {
+      missing.forEach((id) => {
+        EXECUTOR_NAME_INFLIGHT.set(
+          id,
+          batchPromise.then((map) => map?.[id] || ''),
+        );
+      });
+    }
 
     inflight.push(
       batchPromise.then((map) => {
@@ -329,21 +424,28 @@ export async function fetchExecutorNamesByIds(userIds = []) {
 
   try {
     await Promise.all(inflight);
+    throwIfExecutorCacheGenerationChanged(expectedGeneration);
+    throwIfExecutorReadAborted(signal);
   } finally {
-    missing.forEach((id) => {
-      EXECUTOR_NAME_INFLIGHT.delete(id);
-    });
+    if (!signal && expectedGeneration === getExecutorNameCacheGeneration()) {
+      missing.forEach((id) => {
+        EXECUTOR_NAME_INFLIGHT.delete(id);
+      });
+    }
   }
 
   return names;
 }
 
-export async function enrichOrdersWithExecutorNames(rows = []) {
+export async function enrichOrdersWithExecutorNames(rows = [], { signal } = {}) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return list;
 
+  const expectedGeneration = getExecutorNameCacheGeneration();
   await hydrateExecutorNameCache();
-  seedExecutorNames(list);
+  throwIfExecutorCacheGenerationChanged(expectedGeneration);
+  throwIfExecutorReadAborted(signal);
+  seedExecutorNames(list, { expectedGeneration });
   const missingIds = Array.from(
     new Set(
       list
@@ -355,8 +457,10 @@ export async function enrichOrdersWithExecutorNames(rows = []) {
 
   let fetchedNames = {};
   if (missingIds.length) {
-    fetchedNames = await fetchExecutorNamesByIds(missingIds);
+    fetchedNames = await fetchExecutorNamesByIds(missingIds, { signal });
   }
+  throwIfExecutorCacheGenerationChanged(expectedGeneration);
+  throwIfExecutorReadAborted(signal);
 
   return list.map((row) => {
     const uid = String(row?.assigned_to || '').trim();
@@ -415,26 +519,38 @@ function resolveExecutorNameWaiters(uid, value) {
   });
 }
 
-function scheduleExecutorNameBatch() {
+function scheduleExecutorNameBatch(expectedGeneration = getExecutorNameCacheGeneration()) {
+  if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
   if (EXECUTOR_NAME_BATCH_STATE.timer || EXECUTOR_NAME_BATCH_STATE.flushing) return;
   EXECUTOR_NAME_BATCH_STATE.timer = setTimeout(() => {
     EXECUTOR_NAME_BATCH_STATE.timer = null;
-    flushExecutorNameBatch().catch(() => {});
+    if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
+    flushExecutorNameBatch(expectedGeneration).catch(() => {});
   }, EXECUTOR_NAME_BATCH_DELAY_MS);
 }
 
-async function flushExecutorNameBatch() {
+async function flushExecutorNameBatch(expectedGeneration = getExecutorNameCacheGeneration()) {
+  if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
   if (EXECUTOR_NAME_BATCH_STATE.flushing) return;
   const ids = Array.from(EXECUTOR_NAME_BATCH_STATE.pending).slice(0, EXECUTOR_NAME_BATCH_MAX_IDS);
   ids.forEach((id) => EXECUTOR_NAME_BATCH_STATE.pending.delete(id));
   if (!ids.length) return;
 
   EXECUTOR_NAME_BATCH_STATE.flushing = true;
+  const controller = new AbortController();
+  EXECUTOR_NAME_BATCH_STATE.controller = controller;
   try {
     const { data, error } = await supabase
-      .rpc('get_order_executor_display_names', { p_user_ids: ids });
+      .rpc('get_order_executor_display_names', { p_user_ids: ids })
+      .abortSignal(controller.signal);
+    throwIfExecutorCacheGenerationChanged(expectedGeneration);
     if (error) {
-      const fallback = await fetchExecutorNamesViaProfiles(ids);
+      const fallback = await fetchExecutorNamesViaProfiles(
+        ids,
+        controller.signal,
+        expectedGeneration,
+      );
+      throwIfExecutorCacheGenerationChanged(expectedGeneration);
       ids.forEach((uid) => {
         const value = fallback?.[uid] || '';
         resolveExecutorNameWaiters(uid, value);
@@ -445,26 +561,32 @@ async function flushExecutorNameBatch() {
 
     ids.forEach((uid) => {
       const value = (Array.isArray(data) ? data : []).find((row) => String(row?.id || '') === uid)?.display_name || '';
-      if (value) setCachedExecutorName(uid, value);
+      if (value) setCachedExecutorName(uid, value, expectedGeneration);
       resolveExecutorNameWaiters(uid, value);
       EXECUTOR_NAME_INFLIGHT.delete(uid);
     });
   } catch {
+    if (expectedGeneration !== getExecutorNameCacheGeneration()) return;
     ids.forEach((uid) => {
-      setCachedExecutorName(uid, '');
+      setCachedExecutorName(uid, '', expectedGeneration);
       resolveExecutorNameWaiters(uid, '');
       EXECUTOR_NAME_INFLIGHT.delete(uid);
     });
   } finally {
-    EXECUTOR_NAME_BATCH_STATE.flushing = false;
-    if (EXECUTOR_NAME_BATCH_STATE.pending.size > 0) {
-      scheduleExecutorNameBatch();
+    if (EXECUTOR_NAME_BATCH_STATE.controller === controller) {
+      EXECUTOR_NAME_BATCH_STATE.controller = null;
+      EXECUTOR_NAME_BATCH_STATE.flushing = false;
+      if (EXECUTOR_NAME_BATCH_STATE.pending.size > 0) {
+        scheduleExecutorNameBatch(expectedGeneration);
+      }
     }
   }
 }
 
 export async function fetchExecutorNameById(userId) {
+  const expectedGeneration = getExecutorNameCacheGeneration();
   await hydrateExecutorNameCache();
+  throwIfExecutorCacheGenerationChanged(expectedGeneration);
   const uid = String(userId || '').trim();
   if (!uid || !looksLikeUuid(uid)) return '';
   if (EXECUTOR_NAME_CACHE.has(uid)) return getCachedExecutorName(uid);
@@ -475,7 +597,7 @@ export async function fetchExecutorNameById(userId) {
     waiters.push(resolve);
     EXECUTOR_NAME_BATCH_STATE.waiters.set(uid, waiters);
     EXECUTOR_NAME_BATCH_STATE.pending.add(uid);
-    scheduleExecutorNameBatch();
+    scheduleExecutorNameBatch(expectedGeneration);
   });
 
   EXECUTOR_NAME_INFLIGHT.set(uid, runner);

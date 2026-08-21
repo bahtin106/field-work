@@ -8,6 +8,10 @@ import {
 } from '../src/shared/media/assets';
 import { prefetchMediaUrls } from '../src/shared/media/imagePipeline';
 import { isSignedMediaUrlStale } from '../src/shared/media/signedUrl';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../src/shared/offline/offlineStatus';
 
 function isLikelyYandexLink(url) {
   const raw = String(url || '').toLowerCase();
@@ -19,6 +23,9 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
   const [thumbUrls, setThumbUrls] = useState({});
   const [issues, setIssues] = useState({});
   const [mediaInfoBySource, setMediaInfoBySource] = useState({});
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseMediaNetwork = canRunDeferredNetworkWork(offlineSnapshot);
+  const canUseMediaNetworkRef = useRef(canUseMediaNetwork);
   const isMounted = useRef(true);
   const activeFinanceEntryIdRef = useRef(String(financeEntryId || ''));
   const inspectRequestIdRef = useRef(0);
@@ -34,6 +41,10 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       isMounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    canUseMediaNetworkRef.current = canUseMediaNetwork;
+  }, [canUseMediaNetwork]);
 
   useEffect(() => {
     inspectRequestIdRef.current += 1;
@@ -90,7 +101,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
 
   const inspectUrls = useCallback(
     async (urls = []) => {
-      if (!enabled || !financeEntryId) {
+      if (!enabled || !financeEntryId || !canUseMediaNetwork) {
         return { resolved_urls: {}, issues: {}, photo_urls: urls };
       }
       const requestFinanceEntryId = String(financeEntryId || '');
@@ -142,14 +153,16 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
         setResolvedUrls(nextResolved);
         setIssues(nextIssues);
       }
-      prefetchMediaUrls(Object.values(nextResolved).length ? Object.values(nextResolved) : targets).catch(() => {});
+      if (canUseMediaNetworkRef.current) {
+        prefetchMediaUrls(Object.values(nextResolved).length ? Object.values(nextResolved) : targets).catch(() => {});
+      }
       return data || { resolved_urls: nextResolved, issues: nextIssues, photo_urls: targets };
     },
-    [enabled, financeEntryId],
+    [canUseMediaNetwork, enabled, financeEntryId],
   );
 
   useEffect(() => {
-    if (!enabled || !financeEntryId) return;
+    if (!enabled || !financeEntryId || !canUseMediaNetwork) return;
     let cancelled = false;
     listMediaAssets({
       entityType: 'finance_entry',
@@ -163,11 +176,15 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
         const infoMap = buildMediaAssetInfoMap(assets);
         if (Object.keys(displayMap).length) {
           setResolvedUrls((prev) => ({ ...displayMap, ...prev }));
-          prefetchMediaUrls(Object.values(displayMap)).catch(() => {});
+          if (canUseMediaNetworkRef.current) {
+            prefetchMediaUrls(Object.values(displayMap)).catch(() => {});
+          }
         }
         if (Object.keys(thumbMap).length) {
           setThumbUrls((prev) => ({ ...thumbMap, ...prev }));
-          prefetchMediaUrls(Object.values(thumbMap)).catch(() => {});
+          if (canUseMediaNetworkRef.current) {
+            prefetchMediaUrls(Object.values(thumbMap)).catch(() => {});
+          }
         }
         if (Object.keys(infoMap).length) {
           setMediaInfoBySource((prev) => ({ ...prev, ...infoMap }));
@@ -177,10 +194,10 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
     return () => {
       cancelled = true;
     };
-  }, [enabled, financeEntryId, photoSignature]);
+  }, [canUseMediaNetwork, enabled, financeEntryId, photoSignature]);
 
   useEffect(() => {
-    if (!enabled || !financeEntryId) return;
+    if (!enabled || !financeEntryId || !canUseMediaNetwork) return;
     const urls = (photoUrls || []).map((value) => String(value || '').trim()).filter(Boolean);
     if (!urls.some((url) => isLikelyYandexLink(url) || /^https?:\/\//i.test(String(url || '')))) {
       setResolvedUrls((prev) => (Object.keys(prev).length ? {} : prev));
@@ -190,7 +207,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       return;
     }
     inspectUrls(urls).catch(() => {});
-  }, [enabled, financeEntryId, inspectUrls, mediaProvider, photoUrls]);
+  }, [canUseMediaNetwork, enabled, financeEntryId, inspectUrls, mediaProvider, photoUrls]);
 
   const removeFromCache = useCallback((url) => {
     setResolvedUrls((prev) => {

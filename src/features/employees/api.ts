@@ -3,7 +3,24 @@ import { formatPersonNameParts } from '../../../lib/personName';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { inspectProfileMedia } from '../profileMedia/api';
 import { normalizeDepartmentFilterIds } from './departments';
+import {
+  assertOwnerBoundAuthorization,
+  pinOwnerBoundPostgrestRequest,
+  type OwnerBoundAuthorization,
+} from '../../shared/security/ownerBoundAuthorization';
 const employeeByIdInFlight = new Map<string, Promise<any>>();
+
+function applyReadAbortSignal(query: any, signal?: AbortSignal) {
+  return signal ? query.abortSignal(signal) : query;
+}
+
+function throwIfReadAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Employee read was aborted');
+  error.name = 'AbortError';
+  throw error;
+}
 
 function isMissingUserIdColumn(error: any) {
   return error?.code === '42703' || /user_id/i.test(String(error?.message || ''));
@@ -21,35 +38,50 @@ function withoutUserIdColumn(columns: any) {
   return columns;
 }
 
-async function selectProfileByLookup(lookupId: any, columns = '*') {
+async function selectProfileByLookup(
+  lookupId: any,
+  columns = '*',
+  signal?: AbortSignal,
+) {
   const id = String(lookupId || '').trim();
   if (!id) return { data: null, error: null };
 
-  const result = await supabase
-    .from('profiles')
-    .select(columns)
-    .or(`id.eq.${id},user_id.eq.${id}`)
-    .maybeSingle();
+  const result = await applyReadAbortSignal(
+    supabase
+      .from('profiles')
+      .select(columns)
+      .or(`id.eq.${id},user_id.eq.${id}`)
+      .maybeSingle(),
+    signal,
+  );
 
   if (result.error && isMissingUserIdColumn(result.error)) {
-    return supabase
-      .from('profiles')
-      .select(withoutUserIdColumn(columns))
-      .eq('id', id)
-      .maybeSingle();
+    return applyReadAbortSignal(
+      supabase
+        .from('profiles')
+        .select(withoutUserIdColumn(columns))
+        .eq('id', id)
+        .maybeSingle(),
+      signal,
+    );
   }
 
   return result;
 }
 
-async function resolveCurrentUserScope() {
+async function resolveCurrentUserScope(signal?: AbortSignal) {
   const { data: auth } = await supabase.auth.getUser();
+  throwIfReadAborted(signal);
   const uid = auth?.user?.id || null;
   if (!uid) {
     return { uid: null, profileId: null, companyId: null, role: '' };
   }
 
-  const { data: me } = await selectProfileByLookup(uid, 'id, user_id, role, company_id');
+  const { data: me } = await selectProfileByLookup(
+    uid,
+    'id, user_id, role, company_id',
+    signal,
+  );
 
   return {
     uid,
@@ -133,10 +165,10 @@ function normalizeCompanyRoleContext(data: any) {
   };
 }
 
-export async function listEmployees(filters: any = {}) {
+export async function listEmployees(filters: any = {}, signal?: AbortSignal) {
   return measureNetwork('employees.list', async () => {
     const explicitCompanyId = String(filters?.companyId || '').trim() || null;
-    const scope = explicitCompanyId ? null : await resolveCurrentUserScope();
+    const scope = explicitCompanyId ? null : await resolveCurrentUserScope(signal);
     const scopedCompanyId = explicitCompanyId || scope?.companyId || null;
     if (!scopedCompanyId) return [];
 
@@ -169,7 +201,7 @@ export async function listEmployees(filters: any = {}) {
         .neq('license_state', 'blocked_by_license');
     }
 
-    const { data, error } = await query;
+    const { data, error } = await applyReadAbortSignal(query, signal);
     if (error) throw error;
     const rows = Array.isArray(data) ? data : [];
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
@@ -186,16 +218,25 @@ export async function listEmployees(filters: any = {}) {
   });
 }
 
-export async function getEmployeeById(userId: any) {
-  const key = String(userId || '');
-  if (!key) return null;
-  const existing = employeeByIdInFlight.get(key);
+export async function getEmployeeById(
+  userId: any,
+  signal?: AbortSignal,
+  { allowSuperAdmin = false } = {},
+) {
+  const employeeId = String(userId || '');
+  if (!employeeId) return null;
+  const key = `${allowSuperAdmin ? 'admin' : 'regular'}:${employeeId}`;
+  const existing = signal ? null : employeeByIdInFlight.get(key);
   if (existing) return existing;
 
   const p = measureNetwork('employees.getById', async () => {
-    const { data: auth } = await supabase.auth.getUser();
+    const { data: auth, error: authError } = await supabase.auth.getUser();
+    throwIfReadAborted(signal);
     const uid = auth?.user?.id || null;
     const authEmail = auth?.user?.email || '';
+    if (allowSuperAdmin && (authError || !uid)) {
+      throw authError || new Error('SUPER_ADMIN_ACCESS_REQUIRED');
+    }
 
     let rpcRow = null;
     let iAmAdmin = false;
@@ -206,26 +247,38 @@ export async function getEmployeeById(userId: any) {
     let superAdminRoleContextLoaded = false;
 
     if (uid) {
-      const { data: me } = await selectProfileByLookup(uid, 'id, user_id, role, company_id');
+      const { data: me } = await selectProfileByLookup(
+        uid,
+        'id, user_id, role, company_id',
+        signal,
+      );
       iAmAdmin = String(me?.role || '').toLowerCase() === 'admin';
       myCompanyId = me?.company_id || null;
       myProfileId = me?.id || null;
 
-      try {
-        const { data: superAdminFlag } = await supabase.rpc('is_super_admin');
-        iAmSuperAdmin = superAdminFlag === true;
-      } catch {
-        iAmSuperAdmin = false;
+      if (allowSuperAdmin) {
+        try {
+          const { data: superAdminFlag } = await applyReadAbortSignal(
+            supabase.rpc('is_super_admin'),
+            signal,
+          );
+          iAmSuperAdmin = superAdminFlag === true;
+        } catch (error) {
+          throw error;
+        }
+        if (!iAmSuperAdmin) throw new Error('SUPER_ADMIN_ACCESS_REQUIRED');
       }
 
       if (iAmSuperAdmin) {
         try {
-          const { data: targetProfile } = await selectProfileByLookup(userId, 'id');
+          const { data: targetProfile } = await selectProfileByLookup(userId, 'id', signal);
           const targetProfileId = targetProfile?.id || userId;
           try {
-            const { data: roleContextRaw, error: roleContextError } = await supabase.rpc(
-              'admin_get_company_role_context_super',
-              { p_profile_id: targetProfileId },
+            const { data: roleContextRaw, error: roleContextError } = await applyReadAbortSignal(
+              supabase.rpc('admin_get_company_role_context_super', {
+                p_profile_id: targetProfileId,
+              }),
+              signal,
             );
             if (!roleContextError) {
               superAdminRoleContext = normalizeCompanyRoleContext(roleContextRaw);
@@ -236,15 +289,20 @@ export async function getEmployeeById(userId: any) {
             superAdminRoleContextLoaded = false;
           }
 
-          const { data: fullRows, error: fullErr } = await supabase.rpc('admin_get_user_profile_full', {
-            p_profile_id: targetProfileId,
-          });
+          const { data: fullRows, error: fullErr } = await applyReadAbortSignal(
+            supabase.rpc('admin_get_user_profile_full', {
+              p_profile_id: targetProfileId,
+            }),
+            signal,
+          );
+          if (fullErr) throw fullErr;
           if (!fullErr) {
             const full = Array.isArray(fullRows) ? fullRows[0] : null;
             if (full) {
               const { data: profileFlags } = await selectProfileByLookup(
                 targetProfileId,
                 'id, user_id, company_id, first_name, last_name, middle_name, full_name, email, is_admin_blocked, license_state, blocked_reason',
+                signal,
               );
               const isSuspended = !!(profileFlags?.is_admin_blocked || full?.is_suspended);
               const isAdminBlocked = !!(profileFlags?.is_admin_blocked);
@@ -290,29 +348,19 @@ export async function getEmployeeById(userId: any) {
                 isBlocked,
               };
             }
+            throw new Error('ADMIN_EMPLOYEE_NOT_FOUND');
           }
-        } catch {
-          // fallback to default path below
+        } catch (error) {
+          if (allowSuperAdmin) throw error;
         }
       }
 
-      if (iAmAdmin) {
-        try {
-          const { data: rpc, error: rpcError } = await supabase.rpc('admin_get_profile_with_email', {
-            target_user_id: userId,
-          });
-          if (!rpcError) {
-            rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
-          }
-        } catch {
-          rpcRow = null;
-        }
-      }
     }
 
     const { data: targetLookup, error: targetLookupError } = await selectProfileByLookup(
       userId,
       'id, user_id, company_id',
+      signal,
     );
     if (targetLookupError) throw targetLookupError;
 
@@ -330,9 +378,26 @@ export async function getEmployeeById(userId: any) {
       return null;
     }
 
+    if (iAmAdmin) {
+      try {
+        const { data: rpc, error: rpcError } = await applyReadAbortSignal(
+          supabase.rpc('admin_get_profile_with_email', {
+            target_user_id: targetProfileId,
+          }),
+          signal,
+        );
+        if (!rpcError) {
+          rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
+        }
+      } catch {
+        rpcRow = null;
+      }
+    }
+
     const { data: prof, error } = await selectProfileByLookup(
       targetProfileId,
       'id, user_id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at',
+      signal,
     );
 
     if (error) throw error;
@@ -349,21 +414,27 @@ export async function getEmployeeById(userId: any) {
 
     let departmentName = null;
     if (prof.department_id) {
-      const { data: departmentRow } = await supabase
-        .from('departments')
-        .select('name')
-        .eq('id', prof.department_id)
-        .maybeSingle();
+      const { data: departmentRow } = await applyReadAbortSignal(
+        supabase
+          .from('departments')
+          .select('name')
+          .eq('id', prof.department_id)
+          .maybeSingle(),
+        signal,
+      );
       departmentName = departmentRow?.name || null;
     }
     let companyName = null;
     if (safeProf?.company_id) {
       try {
-        const { data: companyRow } = await supabase
-          .from('companies')
-          .select('name')
-          .eq('id', safeProf.company_id)
-          .maybeSingle();
+        const { data: companyRow } = await applyReadAbortSignal(
+          supabase
+            .from('companies')
+            .select('name')
+            .eq('id', safeProf.company_id)
+            .maybeSingle(),
+          signal,
+        );
         companyName = companyRow?.name || null;
       } catch {
         companyName = null;
@@ -395,22 +466,28 @@ export async function getEmployeeById(userId: any) {
         safeProf?.license_state === 'blocked_by_license',
     };
   }).finally(() => {
-    employeeByIdInFlight.delete(key);
+    if (!signal) employeeByIdInFlight.delete(key);
   });
 
-  employeeByIdInFlight.set(key, p);
+  if (!signal) employeeByIdInFlight.set(key, p);
   return p;
 }
 
-export async function listDepartments({ companyId, onlyEnabled = true }: any = {}) {
+export async function listDepartments(
+  { companyId, onlyEnabled = true }: any = {},
+  signal?: AbortSignal,
+) {
   return measureNetwork('employees.departments', async () => {
     if (!companyId) return [];
 
-    const { data, error } = await supabase
-      .from('departments')
-      .select('id, name, is_enabled, company_id')
-      .eq('company_id', companyId)
-      .order('name');
+    const { data, error } = await applyReadAbortSignal(
+      supabase
+        .from('departments')
+        .select('id, name, is_enabled, company_id')
+        .eq('company_id', companyId)
+        .order('name'),
+      signal,
+    );
 
     if (error) throw error;
     const rows = Array.isArray(data) ? data : [];
@@ -418,10 +495,68 @@ export async function listDepartments({ companyId, onlyEnabled = true }: any = {
   });
 }
 
-export async function updateEmployeeProfile(userId: any, patch: any) {
+export async function updateEmployeeProfile(
+  userId: any,
+  patch: any,
+  signal?: AbortSignal,
+  {
+    allowSuperAdmin = false,
+    authorization = null,
+    companyId = null,
+  }: {
+    allowSuperAdmin?: boolean;
+    authorization?: OwnerBoundAuthorization | null;
+    companyId?: string | null;
+  } = {},
+) {
   return measureNetwork('employees.updateProfile', async () => {
-    const { error } = await supabase.from('profiles').update(patch).eq('id', userId);
+    if (authorization && !String(companyId || '').trim()) {
+      throw new Error('company_id is required for owner-bound employee updates');
+    }
+    let request: any = supabase.from('profiles').update(patch).eq('id', userId);
+    if (companyId) request = request.eq('company_id', companyId);
+    if (authorization) request = request.select('*').maybeSingle();
+    if (authorization) {
+      request = pinOwnerBoundPostgrestRequest(request, authorization);
+    }
+    const { data, error } = await applyReadAbortSignal(request, signal);
+    if (authorization) assertOwnerBoundAuthorization(authorization);
     if (error) throw error;
-    return getEmployeeById(userId);
+    if (authorization && companyId) {
+      return normalizeEmployee(data);
+    }
+    return getEmployeeById(userId, signal, { allowSuperAdmin });
   });
+}
+
+export async function getEmployeeByIdForOfflineSync(
+  userId: any,
+  {
+    authorization,
+    companyId,
+    signal,
+  }: {
+    authorization: OwnerBoundAuthorization;
+    companyId: string;
+    signal?: AbortSignal;
+  },
+) {
+  const normalizedUserId = String(userId || '').trim();
+  const normalizedCompanyId = String(companyId || '').trim();
+  if (!normalizedUserId || !normalizedCompanyId) return null;
+  assertOwnerBoundAuthorization(authorization);
+  let request: any = pinOwnerBoundPostgrestRequest(
+    supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', normalizedUserId)
+      .eq('company_id', normalizedCompanyId)
+      .maybeSingle(),
+    authorization,
+  );
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
+  assertOwnerBoundAuthorization(authorization);
+  if (error) throw error;
+  return normalizeEmployee(data);
 }

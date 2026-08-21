@@ -4,7 +4,17 @@ import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { usePermissions } from '../../lib/permissions';
-import { purgeTrashItem, restoreTrashItem } from '../../src/features/trash/api';
+import {
+  purgeTrashItem,
+  restoreTrashItem,
+} from '../../src/features/trash/api';
+import {
+  attachMutationAuthCarrier,
+  clearMutationAuthCarrier,
+  getMutationAuthCarrier,
+  isActiveMutationAuthCarrier,
+  requireMutationAuthCarrier,
+} from '../../src/shared/security/mutationAuthCarrier';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 import { ConfirmModal } from '../ui/modals';
@@ -44,22 +54,49 @@ export default function TrashReadOnlyNotice({ item, compact = false, itemTitle }
     await Promise.all(['trash', 'requests', 'clients', 'objects'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
   };
   const restoreMutation = useMutation({
-    mutationFn: restoreTrashItem,
-    onSuccess: async (result) => {
+    mutationFn: (variables) => restoreTrashItem(
+      variables.id,
+      requireMutationAuthCarrier(variables, { requireOfflineOwner: true }),
+    ),
+    onMutate: async (variables) => {
+      await attachMutationAuthCarrier(variables, { requireOfflineOwner: true });
+    },
+    onSuccess: async (result, variables) => {
+      const authCarrier = getMutationAuthCarrier(variables);
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       await invalidate();
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       toast.success(t(result?.queued ? 'trash_restore_queued' : 'trash_restored'));
       router.back();
     },
-    onError: () => toast.error(t('trash_action_error')),
+    onError: (_error, variables) => {
+      if (isActiveMutationAuthCarrier(getMutationAuthCarrier(variables), { requireOfflineOwner: true })) {
+        toast.error(t('trash_action_error'));
+      }
+    },
+    onSettled: (_data, _error, variables) => clearMutationAuthCarrier(variables),
   });
   const purgeMutation = useMutation({
-    mutationFn: purgeTrashItem,
-    onSuccess: async () => {
+    mutationFn: (variables) => purgeTrashItem(
+      variables.id,
+      requireMutationAuthCarrier(variables, { requireOfflineOwner: true }),
+    ),
+    onMutate: async (variables) => {
+      await attachMutationAuthCarrier(variables, { requireOfflineOwner: true });
+    },
+    onSuccess: async (_result, variables) => {
+      const authCarrier = getMutationAuthCarrier(variables);
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       await invalidate();
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       toast.success(t('trash_purged'));
       router.back();
     },
-    onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
+    onError: (error, variables) => {
+      if (!isActiveMutationAuthCarrier(getMutationAuthCarrier(variables), { requireOfflineOwner: true })) return;
+      toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error'));
+    },
+    onSettled: (_data, _error, variables) => clearMutationAuthCarrier(variables),
   });
 
   const confirmRestore = () => setConfirmation('restore');
@@ -99,7 +136,7 @@ export default function TrashReadOnlyNotice({ item, compact = false, itemTitle }
         cancelLabel={t('common_cancel')}
         loading={restoreMutation.isPending}
         onClose={() => setConfirmation(null)}
-        onConfirm={() => restoreMutation.mutate(id)}
+        onConfirm={() => restoreMutation.mutate({ id })}
       />
       <ConfirmModal
         visible={confirmation === 'purge'}
@@ -110,7 +147,7 @@ export default function TrashReadOnlyNotice({ item, compact = false, itemTitle }
         confirmVariant="destructive"
         loading={purgeMutation.isPending}
         onClose={() => setConfirmation(null)}
-        onConfirm={() => purgeMutation.mutate(id)}
+        onConfirm={() => purgeMutation.mutate({ id })}
       />
     </View>
   );

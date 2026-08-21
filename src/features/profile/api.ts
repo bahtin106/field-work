@@ -14,11 +14,20 @@ function isAuthSessionMissing(error: any) {
   return name.includes('authsessionmissingerror') || message.includes('auth session missing');
 }
 
-export async function getCurrentUser() {
+function throwIfReadAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Profile read was aborted');
+  error.name = 'AbortError';
+  throw error;
+}
+
+export async function getCurrentUser(signal?: AbortSignal) {
   return measureNetwork('profile.getCurrentUser', async () => {
     const cachedProfile: any = queryClient.getQueryData(queryKeys.profile.me());
     if (cachedProfile?.id) return { id: cachedProfile.id };
     const { data, error } = await supabase.auth.getUser();
+    throwIfReadAborted(signal);
     if (error) {
       if (isAuthSessionMissing(error)) return null;
       throw error;
@@ -27,16 +36,18 @@ export async function getCurrentUser() {
   });
 }
 
-export async function getMyProfile() {
+export async function getMyProfile(signal?: AbortSignal) {
   return measureNetwork('profile.getMyProfile', async () => {
-    const user = await getCurrentUser();
+    const user = await getCurrentUser(signal);
     if (!user?.id) return null;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('profiles')
       .select('*')
-      .eq('id', user.id)
-      .maybeSingle();
+      .eq('id', user.id);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query.maybeSingle();
+    throwIfReadAborted(signal);
 
     if (error) throw error;
     if (!data) return null;
@@ -83,7 +94,7 @@ export async function getMyProfile() {
   });
 }
 
-export async function getMyCompanyId() {
+export async function getMyCompanyId(signal?: AbortSignal) {
   return measureNetwork('profile.getMyCompanyId', async () => {
     const cachedCompanyId = String(queryClient.getQueryData(queryKeys.profile.companyId()) || '').trim();
     if (cachedCompanyId) return cachedCompanyId;
@@ -94,14 +105,16 @@ export async function getMyCompanyId() {
       return cachedProfileCompanyId;
     }
 
-    const user = await getCurrentUser();
+    const user = await getCurrentUser(signal);
     if (!user?.id) return null;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('profiles')
       .select('company_id')
-      .eq('id', user.id)
-      .maybeSingle();
+      .eq('id', user.id);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query.maybeSingle();
+    throwIfReadAborted(signal);
 
     if (error) throw error;
     return data?.company_id || null;

@@ -37,6 +37,11 @@ import { resolveAppLocale } from '../../../lib/localeFormatting';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matching';
 import { useTheme } from '../../../theme/ThemeProvider';
 
@@ -136,8 +141,10 @@ function serializeForm(form) {
   });
 }
 
-async function listPromoCodes() {
-  const { data, error } = await supabase.rpc('admin_list_billing_promo_codes_v2');
+async function listPromoCodes(signal) {
+  const { data, error } = await supabase
+    .rpc('admin_list_billing_promo_codes_v2')
+    .abortSignal(signal);
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
@@ -201,6 +208,8 @@ export default function AdminPromoCodesScreen() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const [search, setSearch] = React.useState('');
   const [createVisible, setCreateVisible] = React.useState(false);
   const [dateVisible, setDateVisible] = React.useState(false);
@@ -223,10 +232,19 @@ export default function AdminPromoCodesScreen() {
 
   const query = useQuery({
     queryKey: PROMO_QUERY_KEY,
-    queryFn: listPromoCodes,
-    enabled: isAllowed,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => listPromoCodes(readSignal),
+        { label: 'Admin promo codes', signal },
+      ),
+    enabled: isAllowed && canUseAdminNetwork,
+    placeholderData: (previousData) => previousData,
     staleTime: 30 * 1000,
   });
+  const refreshPromoCodes = React.useCallback(
+    () => (canUseAdminNetwork ? query.refetch() : Promise.resolve()),
+    [canUseAdminNetwork, query],
+  );
 
   const promoCodes = React.useMemo(
     () => (Array.isArray(query.data) ? query.data : []),
@@ -432,7 +450,7 @@ export default function AdminPromoCodesScreen() {
       <Button
         title={t('btn_retry')}
         size="sm"
-        onPress={() => query.refetch()}
+        onPress={refreshPromoCodes}
         containerStyle={styles.retryButton}
       />
     </Card>
@@ -468,7 +486,7 @@ export default function AdminPromoCodesScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           refreshControl={
-            <ThemedRefreshControl refreshing={refreshing} onRefresh={query.refetch} />
+            <ThemedRefreshControl refreshing={refreshing} onRefresh={refreshPromoCodes} />
           }
           ListHeaderComponent={query.error && promoCodes.length > 0 ? errorCard : null}
           ListEmptyComponent={

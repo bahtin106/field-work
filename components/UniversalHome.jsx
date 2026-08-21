@@ -21,7 +21,8 @@ import {
 } from '../src/features/profileMedia/api';
 import { listRequests } from '../src/features/requests/api';
 import { useTranslation } from '../src/i18n/useTranslation';
-import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
+import { getOfflineSnapshot, useOfflineSnapshot } from '../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../src/shared/network/readDeadline';
 import { markFirstContent, markScreenMount, measureNetwork } from '../src/shared/perf/devMetrics';
 import { scheduleUiIdleTask } from '../src/shared/perf/uiIdleTask';
 import { preloadRouteScreen } from '../src/shared/navigation/routePreload';
@@ -39,6 +40,10 @@ import {
 } from '../src/features/supportRequests/api';
 import Button from './ui/Button';
 import Card from './ui/Card';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+} from './ui/PullToRefreshFeedback';
 import { useToast } from './ui/ToastProvider';
 
 const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
@@ -118,18 +123,24 @@ function resolveProfileAvatarDisplay(profile) {
 
 // --- data fetchers ---
 async function fetchSession() {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await withReadDeadline(supabase.auth.getSession(), {
+    label: 'Home session',
+  });
   return data?.session || null;
 }
 
 async function fetchProfile(uid) {
   if (!uid) return null;
 
-  const { data: byId } = await supabase
-    .from('profiles')
-    .select('id, full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
-    .eq('id', uid)
-    .maybeSingle();
+  const { data: byId, error: profileError } = await withReadDeadline(
+    supabase
+      .from('profiles')
+      .select('id, full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
+      .eq('id', uid)
+      .maybeSingle(),
+    { label: 'Home profile' },
+  );
+  if (profileError) throw profileError;
   if (!byId) return null;
   const profile = resolveProfileAvatarDisplay(byId);
   const cached =
@@ -269,7 +280,17 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const router = useRouter();
   const { signOut } = useAuthContext();
   const { isSuperAdmin } = useSuperAdminAccess();
-  const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
+  const {
+    has,
+    loading: permsLoading,
+    role: roleFromPerms,
+    companyId: companyIdFromPerms,
+  } = usePermissions();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canPrefetchNetwork =
+    offlineSnapshot.isNetworkKnown &&
+    offlineSnapshot.isOnline &&
+    !offlineSnapshot.isPoorConnection;
   const toast = useToast();
   const qc = useQueryClient();
   const navigateTo = useCallback(
@@ -308,13 +329,21 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   const [secondaryNetworkEnabled, setSecondaryNetworkEnabled] = useState(false);
   const isFocused = useIsFocused();
-  const homeLiveEnabled = secondaryNetworkEnabled && isFocused;
+  const homeLiveEnabled = secondaryNetworkEnabled && isFocused && canPrefetchNetwork;
   const { data: unreadSupportCount = 0 } = useQuery({
     queryKey: SUPPORT_UNREAD_QUERY_KEY,
-    queryFn: countUnreadSupportRequests,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => countUnreadSupportRequests(readSignal),
+        { label: 'Home unread support count', signal },
+      ),
     enabled: homeLiveEnabled && isSuperAdmin,
     staleTime: 10 * 1000,
     refetchInterval: homeLiveEnabled ? SUPPORT_UNREAD_REFETCH_MS : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    placeholderData: (previous) => previous,
   });
 
   useEffect(() => {
@@ -345,6 +374,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     data: profileData,
     isLoading: profileLoading,
     isFetched: profileFetched,
+    refetch: refetchProfile,
   } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
@@ -361,30 +391,35 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         ? appQueryClient.getQueryState(['profile', uid])?.dataUpdatedAt ||
           appQueryClient.getQueryState(queryKeys.profile.me())?.dataUpdatedAt
         : undefined) ||
-      (providedProfile ? Date.now() : undefined),
+      (providedProfile && !String(providedProfile?.__source || '').includes('metadata')
+        ? Date.now()
+        : undefined),
     staleTime: HOME_PROFILE_STALE_MS,
     gcTime: HOME_DURABLE_GC_MS,
     refetchOnMount: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
     placeholderData: (prev) => prev,
   });
 
   const currentProfile = profileData || providedProfile || null;
-  const { data: profileFallback } = useQuery({
+  const { data: profileFallback, refetch: refetchProfileFallback } = useQuery({
     queryKey: ['homeProfileFallback', uid || 'anon'],
     queryFn: async () => {
-      const { data: p, error: pErr } = await supabase
-        .from('profiles')
-        .select('id, company_id, role')
-        .eq('id', uid)
-        .maybeSingle();
+      const { data: p, error: pErr } = await withReadDeadline(
+        supabase
+          .from('profiles')
+          .select('id, company_id, role')
+          .eq('id', uid)
+          .maybeSingle(),
+        { label: 'Home profile scope' },
+      );
       if (pErr) throw pErr;
       return p || null;
     },
     enabled: !!uid && !currentProfile?.company_id && profileFetched && !profileLoading,
     staleTime: HOME_PROFILE_STALE_MS,
     refetchOnMount: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
   });
 
   const fullName =
@@ -416,15 +451,20 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     // Otherwise the initials fallback briefly appears over the photo on navigation.
     if (!avatarUrl || !hasLoadedAvatarRef.current) setAvatarLoaded(false);
   }, [avatarUrl]);
-  const companyId = currentProfile?.company_id || profileFallback?.company_id || null;
+  const companyId =
+    currentProfile?.company_id || profileFallback?.company_id || companyIdFromPerms || null;
   const {
     settings: companySettings,
     useDepartments,
+    refetch: refetchCompanySettings,
   } = useCompanySettings(companyId || null, {
     enabled: homeLiveEnabled,
     subscribe: homeLiveEnabled,
   });
-  const subscriptionGuard = useSubscriptionGuard(companyId, { enabled: homeLiveEnabled });
+  const subscriptionGuard = useSubscriptionGuard(companyId, {
+    enabled: isFocused && canPrefetchNetwork,
+  });
+  const refreshSubscription = subscriptionGuard.refresh;
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
     subscriptionGuard.entitlements != null &&
@@ -444,7 +484,12 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [companyId, deptIdFromProfile, isFocused, qc]);
 
   // The profile query is the live source for the home screen; the prop is only a boot-time seed.
-  const resolvedRole = currentProfile?.role || role || roleFromPerms || 'worker';
+  const hasAuthoritativeProfileRole =
+    currentProfile?.role &&
+    !/metadata|user-metadata/i.test(String(currentProfile?.__source || ''));
+  const resolvedRole = hasAuthoritativeProfileRole
+    ? currentProfile.role
+    : roleFromPerms || currentProfile?.role || role || 'worker';
 
   const isAdmin = resolvedRole === 'admin';
   const accountType = String(
@@ -565,6 +610,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     isFetched: cloudStatusFetched,
     isFetching: cloudStatusFetching,
     isError: cloudStatusError,
+    refetch: refetchCloudIntegrationStatus,
   } = useQuery({
     queryKey: ['cloud-storage-status', companyId],
     queryFn: async () => {
@@ -714,11 +760,15 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [currentProfile?.id, qc, uid]);
 
   // Fetch company name if companyId is available
-  const { data: companyRow } = useQuery({
+  const { data: companyRow, refetch: refetchCompany } = useQuery({
     queryKey: ['company', companyId],
     queryFn: async () => {
       if (!companyId) return null;
-      const { data } = await supabase.from('companies').select('id, name').eq('id', companyId).maybeSingle();
+      const { data, error } = await withReadDeadline(
+        supabase.from('companies').select('id, name').eq('id', companyId).maybeSingle(),
+        { label: 'Home company' },
+      );
+      if (error) throw error;
       return data || null;
     },
     enabled: !!companyId,
@@ -730,18 +780,26 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     initialDataUpdatedAt: () => appQueryClient.getQueryState(['company', companyId])?.dataUpdatedAt,
     staleTime: HOME_COMPANY_STALE_MS,
     refetchOnMount: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
   });
 
   const companyName = companyRow?.name || cachedSelfProfileDetail?.companyName || null;
 
   // Fetch department name if department id available
   const departmentIdToUse = deptIdFromProfile;
-  const { data: departmentRow } = useQuery({
+  const { data: departmentRow, refetch: refetchDepartment } = useQuery({
     queryKey: ['department', departmentIdToUse],
     queryFn: async () => {
       if (!departmentIdToUse) return null;
-      const { data } = await supabase.from('departments').select('id, name').eq('id', departmentIdToUse).maybeSingle();
+      const { data, error } = await withReadDeadline(
+        supabase
+          .from('departments')
+          .select('id, name')
+          .eq('id', departmentIdToUse)
+          .maybeSingle(),
+        { label: 'Home department' },
+      );
+      if (error) throw error;
       return data || null;
     },
     enabled: useDepartments && !!departmentIdToUse,
@@ -753,10 +811,50 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     initialDataUpdatedAt: () => appQueryClient.getQueryState(['department', departmentIdToUse])?.dataUpdatedAt,
     staleTime: HOME_DEPARTMENT_STALE_MS,
     refetchOnMount: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
   });
 
   const departmentName = departmentRow?.name || cachedSelfProfileDetail?.departmentName || null;
+
+  const refreshHome = useCallback(async () => {
+    setSecondaryNetworkEnabled(true);
+
+    const refreshTasks = [];
+    if (uid) {
+      refreshTasks.push(refetchProfile({ throwOnError: true }));
+      if (!currentProfile?.company_id) {
+        refreshTasks.push(refetchProfileFallback({ throwOnError: true }));
+      }
+    }
+    if (companyId) {
+      refreshTasks.push(refreshSubscription({ throwOnError: true }));
+      refreshTasks.push(refetchCompany({ throwOnError: true }));
+      refreshTasks.push(refetchCompanySettings({ throwOnError: true }));
+    }
+    if (useDepartments && departmentIdToUse) {
+      refreshTasks.push(refetchDepartment({ throwOnError: true }));
+    }
+    if (shouldCheckCloudHealth) {
+      refreshTasks.push(refetchCloudIntegrationStatus({ throwOnError: true }));
+    }
+
+    await Promise.all(refreshTasks);
+  }, [
+    companyId,
+    currentProfile?.company_id,
+    departmentIdToUse,
+    refetchCloudIntegrationStatus,
+    refetchCompany,
+    refetchCompanySettings,
+    refetchDepartment,
+    refetchProfile,
+    refetchProfileFallback,
+    shouldCheckCloudHealth,
+    refreshSubscription,
+    uid,
+    useDepartments,
+  ]);
+  const { refreshing, onRefresh } = useManagedRefresh(refreshHome);
 
   const seedSelfProfileEmployeeDetail = useCallback(() => {
     const selfProfileId = String(currentProfile?.id || uid || '').trim();
@@ -881,34 +979,53 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [homeCriticalReady]);
 
   useEffect(() => {
-    if (!homeCriticalReady || !isFocused || !companyId || companySettings?.use_order_statuses !== true) return;
+    if (
+      !homeCriticalReady ||
+      !isFocused ||
+      !canPrefetchNetwork ||
+      !companyId ||
+      companySettings?.use_order_statuses !== true
+    ) return;
     qc.prefetchQuery({
       queryKey: getOrderStatusesQueryKey(companyId),
-      queryFn: () => fetchCompanyOrderStatuses(companyId),
+      queryFn: ({ signal }) =>
+        withReadDeadline(
+          (readSignal) => fetchCompanyOrderStatuses(companyId, readSignal),
+          { label: 'Home order statuses', signal },
+        ),
       staleTime: 5 * 60 * 1000,
     }).catch(() => {});
-  }, [companyId, companySettings?.use_order_statuses, homeCriticalReady, isFocused, qc]);
+  }, [canPrefetchNetwork, companyId, companySettings?.use_order_statuses, homeCriticalReady, isFocused, qc]);
 
   useEffect(() => {
-    if (!homeCriticalReady || !isFocused || !uid) return undefined;
+    if (!homeCriticalReady || !isFocused || !uid || !canPrefetchNetwork) return undefined;
     const scopeKey = `${uid}:${String(companyId || 'no-company')}`;
     if (homeMyOrdersPrefetchStartedByScope.has(scopeKey)) return undefined;
     homeMyOrdersPrefetchStartedByScope.add(scopeKey);
     let prefetchStarted = false;
+    const controller = new AbortController();
 
     const cancelPrefetch = scheduleUiIdleTask(() => {
       prefetchStarted = true;
-      if (!getOfflineSnapshot().isOnline) {
+      const network = getOfflineSnapshot();
+      if (!network.isOnline || network.isPoorConnection) {
         homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
         return;
       }
       measureNetwork('home.myOrders.prefetch', () =>
-        listRequests({
-          scope: 'my',
-          page: 1,
-          pageSize: HOME_MY_ORDERS_PREFETCH_PAGE_SIZE,
-          userId: uid,
-        }),
+        withReadDeadline(
+          (signal) =>
+            listRequests(
+              {
+                scope: 'my',
+                page: 1,
+                pageSize: HOME_MY_ORDERS_PREFETCH_PAGE_SIZE,
+                userId: uid,
+              },
+              signal,
+            ),
+          { label: 'Home requests prefetch', signal: controller.signal },
+        ),
       )
         .then((rows) => {
           const page = Array.isArray(rows) ? rows : [];
@@ -924,13 +1041,14 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     }, { delayMs: 900, idleTimeoutMs: 1800 });
 
     return () => {
+      controller.abort();
       cancelPrefetch();
       if (!prefetchStarted) homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
     };
-  }, [companyId, homeCriticalReady, isFocused, qc, uid]);
+  }, [canPrefetchNetwork, companyId, homeCriticalReady, isFocused, qc, uid]);
 
   useEffect(() => {
-    if (!homeCriticalReady || !isFocused || !uid) return;
+    if (!homeCriticalReady || !isFocused || !uid || !canPrefetchNetwork) return;
     let cancelPrefetch = null;
     const timer = setTimeout(() => {
       cancelPrefetch = scheduleSmartPrefetch(qc);
@@ -941,7 +1059,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         cancelPrefetch?.();
       } catch {}
     };
-  }, [homeCriticalReady, isFocused, qc, uid]);
+  }, [canPrefetchNetwork, homeCriticalReady, isFocused, qc, uid]);
 
   useEffect(() => {
     if (!homeCriticalReady || !isFocused) return undefined;
@@ -992,6 +1110,13 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         delaysContentTouches={false}
+        alwaysBounceVertical
+        refreshControl={(
+          <ThemedRefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+          />
+        )}
       >
       <Card style={styles.cardRounded} padded={false}>
         <Pressable

@@ -12,20 +12,29 @@ import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { normalizeCompanyName, validateCompanyName } from '../../../lib/companyName';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const EMPTY_DATE = '';
 
-async function fetchCompany(companyId) {
-  const { data, error } = await supabase.rpc('admin_get_company', { p_company_id: companyId });
+async function fetchCompany(companyId, signal) {
+  const { data, error } = await supabase
+    .rpc('admin_get_company', { p_company_id: companyId })
+    .abortSignal(signal);
   if (error) throw error;
   return Array.isArray(data) && data.length ? data[0] : null;
 }
 
-async function fetchSubscriptionMeta(companyId) {
-  const { data, error } = await supabase.rpc('admin_get_company_subscription_meta', {
-    p_company_id: companyId,
-  });
+async function fetchSubscriptionMeta(companyId, signal) {
+  const { data, error } = await supabase
+    .rpc('admin_get_company_subscription_meta', {
+      p_company_id: companyId,
+    })
+    .abortSignal(signal);
   if (error) throw error;
   return Array.isArray(data) && data.length ? data[0] : null;
 }
@@ -73,6 +82,8 @@ export default function AdminCompanyEditScreen() {
   const nav = useNavigation();
   const queryClient = useQueryClient();
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
 
   const [name, setName] = React.useState('');
   const [timezone, setTimezone] = React.useState('');
@@ -83,16 +94,27 @@ export default function AdminCompanyEditScreen() {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['adminCompany', companyId],
-    queryFn: () => fetchCompany(companyId),
-    enabled: isAllowed && Boolean(companyId),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchCompany(companyId, readSignal),
+        { label: 'Admin company edit', signal },
+      ),
+    enabled: isAllowed && Boolean(companyId) && canUseAdminNetwork,
   });
 
   const { data: meta } = useQuery({
     queryKey: ['adminCompanySubscriptionMeta', companyId],
-    queryFn: () => fetchSubscriptionMeta(companyId),
-    enabled: isAllowed && Boolean(companyId),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchSubscriptionMeta(companyId, readSignal),
+        { label: 'Admin company subscription edit', signal },
+      ),
+    enabled: isAllowed && Boolean(companyId) && canUseAdminNetwork,
   });
-  const accessState = useCompanyAccessState(companyId);
+  const accessState = useCompanyAccessState(companyId, {
+    adminScope: true,
+    enabled: isAllowed,
+  });
   const access = accessState.data;
 
   React.useEffect(() => {
@@ -154,7 +176,7 @@ export default function AdminCompanyEditScreen() {
         queryClient.invalidateQueries({ queryKey: ['adminCompany', companyId] }),
         queryClient.invalidateQueries({ queryKey: ['adminCompanySubscriptionMeta', companyId] }),
         queryClient.invalidateQueries({ queryKey: ['adminCompanies'] }),
-        queryClient.invalidateQueries({ queryKey: ['companyAccessState', companyId] }),
+        queryClient.invalidateQueries({ queryKey: ['adminCompanyAccessState', companyId] }),
       ]);
     },
   });

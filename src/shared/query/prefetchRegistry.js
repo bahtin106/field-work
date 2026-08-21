@@ -1,3 +1,8 @@
+import {
+  canRunDeferredNetworkWork,
+  getOfflineSnapshot,
+} from '../offline/offlineStatus';
+
 const DEFAULT_TTL_MS = 2 * 60 * 1000;
 const DEFAULT_MAX_ENTRIES = 200;
 
@@ -25,6 +30,7 @@ class PrefetchRegistry {
   }
 
   async run(key, runner, { force = false } = {}) {
+    if (!canRunDeferredNetworkWork(getOfflineSnapshot())) return undefined;
     const now = Date.now();
     this._cleanup(now);
     const current = this.entries.get(key);
@@ -47,7 +53,14 @@ class PrefetchRegistry {
     };
 
     entry.promise = Promise.resolve()
-      .then(runner)
+      .then(() => {
+        if (!canRunDeferredNetworkWork(getOfflineSnapshot())) {
+          const error = new Error('Deferred prefetch paused for network quality');
+          error.code = 'PREFETCH_NETWORK_PAUSED';
+          throw error;
+        }
+        return runner();
+      })
       .then((value) => {
         entry.status = 'fulfilled';
         entry.value = value;
@@ -71,4 +84,3 @@ export const prefetchRegistry = new PrefetchRegistry();
 export function getPrefetchRegistry() {
   return prefetchRegistry;
 }
-

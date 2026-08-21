@@ -25,7 +25,19 @@ import {
 } from '../../src/features/trash/api';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
 import { queryKeys } from '../../src/shared/query/queryKeys';
+import {
+  attachMutationAuthCarrier,
+  clearMutationAuthCarrier,
+  getMutationAuthCarrier,
+  isActiveMutationAuthCarrier,
+  requireMutationAuthCarrier,
+} from '../../src/shared/security/mutationAuthCarrier';
 import { useTheme } from '../../theme';
 
 const SORTS = ['purge_at', 'deleted_desc', 'title'];
@@ -119,6 +131,8 @@ export default function TrashScreen() {
   const router = useRouter();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseTrashNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const filters = useFilters({ screenKey: 'trash', defaults: TRASH_FILTER_DEFAULTS });
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -155,16 +169,25 @@ export default function TrashScreen() {
   );
   const optionsQuery = useQuery({
     queryKey: queryKeys.trash.filterOptions(),
-    queryFn: getTrashFilterOptions,
-    enabled: canViewTrash,
+    queryFn: ({ signal }) => withReadDeadline(
+      (readSignal) => getTrashFilterOptions(readSignal),
+      { label: 'Trash filter options', signal },
+    ),
+    enabled: canViewTrash && canUseTrashNetwork,
     staleTime: 30 * 1000,
   });
   const listQuery = useInfiniteQuery({
     queryKey: queryKeys.trash.list(params),
-    queryFn: ({ pageParam }) => listTrashItems({ ...params, limit: 50, offset: pageParam }),
+    queryFn: ({ pageParam, signal }) => withReadDeadline(
+      (readSignal) => listTrashItems(
+        { ...params, limit: 50, offset: pageParam },
+        readSignal,
+      ),
+      { label: 'Trash list', signal },
+    ),
     initialPageParam: 0,
     getNextPageParam: (lastPage, pages) => lastPage.length === 50 ? pages.length * 50 : undefined,
-    enabled: canViewTrash,
+    enabled: canViewTrash && canUseTrashNetwork,
   });
 
   const invalidate = async () => {
@@ -175,30 +198,69 @@ export default function TrashScreen() {
     setSelectedIds(new Set());
   };
   const restoreMutation = useMutation({
-    mutationFn: restoreTrashItems,
-    onSuccess: async (result) => {
+    mutationFn: (variables) => restoreTrashItems(
+      variables.ids,
+      requireMutationAuthCarrier(variables, { requireOfflineOwner: true }),
+    ),
+    onMutate: async (variables) => {
+      await attachMutationAuthCarrier(variables, { requireOfflineOwner: true });
+    },
+    onSuccess: async (result, variables) => {
+      const authCarrier = getMutationAuthCarrier(variables);
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       await invalidate();
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       finishSelection();
       toast.success(t(result?.queued ? 'trash_restore_queued' : 'trash_bulk_restored'));
     },
-    onError: () => toast.error(t('trash_action_error')),
+    onError: (_error, variables) => {
+      if (isActiveMutationAuthCarrier(getMutationAuthCarrier(variables), { requireOfflineOwner: true })) {
+        toast.error(t('trash_action_error'));
+      }
+    },
+    onSettled: (_data, _error, variables) => clearMutationAuthCarrier(variables),
   });
   const purgeMutation = useMutation({
-    mutationFn: purgeTrashItems,
-    onSuccess: async () => {
+    mutationFn: (variables) => purgeTrashItems(
+      variables.ids,
+      requireMutationAuthCarrier(variables, { requireOfflineOwner: true }),
+    ),
+    onMutate: async (variables) => {
+      await attachMutationAuthCarrier(variables, { requireOfflineOwner: true });
+    },
+    onSuccess: async (_result, variables) => {
+      const authCarrier = getMutationAuthCarrier(variables);
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       await invalidate();
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       finishSelection();
       toast.success(t('trash_bulk_purged'));
     },
-    onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
+    onError: (error, variables) => {
+      if (!isActiveMutationAuthCarrier(getMutationAuthCarrier(variables), { requireOfflineOwner: true })) return;
+      toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error'));
+    },
+    onSettled: (_data, _error, variables) => clearMutationAuthCarrier(variables),
   });
   const clearMutation = useMutation({
-    mutationFn: purgeAllTrashItems,
-    onSuccess: async (count) => {
+    mutationFn: (variables) => purgeAllTrashItems(
+      requireMutationAuthCarrier(variables, { requireOfflineOwner: true }),
+    ),
+    onMutate: async (variables) => {
+      await attachMutationAuthCarrier(variables, { requireOfflineOwner: true });
+    },
+    onSuccess: async (count, variables) => {
+      const authCarrier = getMutationAuthCarrier(variables);
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       await invalidate();
+      if (!isActiveMutationAuthCarrier(authCarrier, { requireOfflineOwner: true })) return;
       toast.success(formatMessage(t, 'trash_cleared', { count }));
     },
-    onError: (error) => toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error')),
+    onError: (error, variables) => {
+      if (!isActiveMutationAuthCarrier(getMutationAuthCarrier(variables), { requireOfflineOwner: true })) return;
+      toast.error(t(String(error?.message || '') === 'TRASH_PURGE_REQUIRES_ONLINE' ? 'trash_purge_online_only' : 'trash_action_error'));
+    },
+    onSettled: (_data, _error, variables) => clearMutationAuthCarrier(variables),
   });
 
   const listItems = listQuery.data?.pages?.flatMap((page) => page) || [];
@@ -301,9 +363,19 @@ export default function TrashScreen() {
       setSelectedIds(new Set());
       return;
     }
+    if (!canUseTrashNetwork) {
+      toast.error(t('trash_action_error'));
+      return;
+    }
     setSelectingAll(true);
     try {
-      const ids = await listTrashItemIds({ search: debouncedSearch, filters: apiFilters });
+      const ids = await withReadDeadline(
+        (signal) => listTrashItemIds(
+          { search: debouncedSearch, filters: apiFilters },
+          signal,
+        ),
+        { label: 'Trash select all', timeoutMs: 6_000 },
+      );
       setSelectedIds(new Set(ids));
     } catch {
       toast.error(t('trash_action_error'));
@@ -427,8 +499,19 @@ export default function TrashScreen() {
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             refreshing={listQuery.isRefetching}
-            onRefresh={listQuery.refetch}
-            onEndReached={() => { if (listQuery.hasNextPage && !listQuery.isFetchingNextPage) listQuery.fetchNextPage(); }}
+            onRefresh={() => {
+              if (!canUseTrashNetwork) return;
+              void Promise.all([listQuery.refetch(), optionsQuery.refetch()]);
+            }}
+            onEndReached={() => {
+              if (
+                canUseTrashNetwork &&
+                listQuery.hasNextPage &&
+                !listQuery.isFetchingNextPage
+              ) {
+                void listQuery.fetchNextPage();
+              }
+            }}
             onEndReachedThreshold={0.4}
             ListFooterComponent={listQuery.isFetchingNextPage ? <ActivityIndicator color={theme.colors.primary} /> : null}
             ListEmptyComponent={<View style={styles.empty}><Feather name="trash-2" size={32} color={theme.colors.textSecondary} /><Text style={styles.emptyTitle}>{t('trash_empty')}</Text><Text style={styles.muted}>{t('trash_empty_hint')}</Text></View>}
@@ -469,9 +552,9 @@ export default function TrashScreen() {
         onClose={() => setConfirmation(null)}
         onConfirm={() => {
           const ids = confirmation?.ids || [];
-          if (confirmation?.action === 'restore') restoreMutation.mutate(ids);
-          else if (confirmation?.action === 'purgeAll') clearMutation.mutate();
-          else purgeMutation.mutate(ids);
+          if (confirmation?.action === 'restore') restoreMutation.mutate({ ids });
+          else if (confirmation?.action === 'purgeAll') clearMutation.mutate({});
+          else purgeMutation.mutate({ ids });
         }}
       />
     </Screen>

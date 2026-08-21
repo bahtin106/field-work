@@ -20,6 +20,11 @@ import {
   updateSupportRequestStatus,
 } from '../../../../src/features/supportRequests/api';
 import { useTranslation } from '../../../../src/i18n/useTranslation';
+import { withReadDeadline } from '../../../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../../theme/ThemeProvider';
 import FullscreenImageViewer from '../../../orders/components/FullscreenImageViewer';
 import { withAlpha } from '../../../../theme/colors';
@@ -80,6 +85,25 @@ function formatVersion(version, build) {
   return normalizedBuild ? `${normalizedVersion} (${normalizedBuild})` : normalizedVersion;
 }
 
+function findCachedSupportRequest(queryClient, feedbackId) {
+  const targetId = String(feedbackId || '').trim();
+  if (!targetId) return undefined;
+
+  const exact = queryClient.getQueryData(['adminSupportRequest', targetId]);
+  if (exact && String(exact?.id || '').trim() === targetId) return exact;
+
+  let best = null;
+  const lists = queryClient.getQueriesData({ queryKey: ['adminSupportRequests'] }) || [];
+  for (const [key, value] of lists) {
+    if (!Array.isArray(value)) continue;
+    const row = value.find((item) => String(item?.id || '').trim() === targetId);
+    if (!row) continue;
+    const updatedAt = Number(queryClient.getQueryState(key)?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) best = { row, updatedAt };
+  }
+  return best?.row;
+}
+
 export default function AdminFeedbackDetailsScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -89,6 +113,8 @@ export default function AdminFeedbackDetailsScreen() {
   const queryClient = useQueryClient();
   const { profile } = useAuthContext();
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const params = useLocalSearchParams();
   const id = String(params?.id || '').trim();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
@@ -104,9 +130,20 @@ export default function AdminFeedbackDetailsScreen() {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['adminSupportRequest', id],
-    queryFn: () => getSupportRequestById(id),
-    enabled: isAllowed && !!id,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => getSupportRequestById(id, { signal: readSignal }),
+        { label: 'Admin support request details', signal },
+      ),
+    enabled: isAllowed && !!id && canUseAdminNetwork,
     staleTime: 10 * 1000,
+    refetchOnMount: 'stale',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    placeholderData: (previous) =>
+      String(previous?.id || '').trim() === id
+        ? previous
+        : findCachedSupportRequest(queryClient, id),
   });
 
   const statusItems = React.useMemo(
@@ -165,11 +202,17 @@ export default function AdminFeedbackDetailsScreen() {
 
   const handleRetryPhoto = React.useCallback(async (photoIndex) => {
     if (!id) return null;
-    const refreshed = await getSupportRequestById(id, { forcePhotoRefresh: true });
+    if (!canUseAdminNetwork) {
+      return Array.isArray(data?.photoUrls) ? data.photoUrls[photoIndex] || null : null;
+    }
+    const refreshed = await withReadDeadline(
+      (signal) => getSupportRequestById(id, { forcePhotoRefresh: true, signal }),
+      { label: 'Admin support photo refresh' },
+    );
     if (!refreshed) return null;
     queryClient.setQueryData(['adminSupportRequest', id], refreshed);
     return Array.isArray(refreshed.photoUrls) ? refreshed.photoUrls[photoIndex] || null : null;
-  }, [id, queryClient]);
+  }, [canUseAdminNetwork, data?.photoUrls, id, queryClient]);
 
   if (guardLoading || !isAllowed) {
     return <Screen background="background" />;
@@ -186,7 +229,13 @@ export default function AdminFeedbackDetailsScreen() {
           <Card style={styles(theme).card}>
             <Text style={styles(theme).title}>{t('admin_error_title')}</Text>
             <Text style={styles(theme).muted}>{String(error?.message || t('admin_unknown_error'))}</Text>
-            <Button title={t('btn_retry')} variant="primary" onPress={() => refetch()} />
+            <Button
+              title={t('btn_retry')}
+              variant="primary"
+              onPress={() => {
+                if (canUseAdminNetwork) refetch();
+              }}
+            />
           </Card>
         ) : null}
         {!isLoading && !error && !data ? (

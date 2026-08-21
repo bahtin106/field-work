@@ -10,6 +10,11 @@ import { fetchOrderActivityPage } from '../../src/features/requests/activity';
 import { buildOrderAddressDisplay } from '../../src/features/requests/addressing';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../theme';
 import Button from '../ui/Button';
 
@@ -258,18 +263,30 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
   const { theme } = useTheme();
   const { t, locale } = useTranslation();
   const { has } = usePermissions();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseActivityNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const [expandedEventIds, setExpandedEventIds] = React.useState(() => new Set());
   const canView = has('canViewOrderHistory');
   const query = useInfiniteQuery({
     queryKey: queryKeys.requests.activity(orderId),
-    queryFn: ({ pageParam }) => fetchOrderActivityPage({ orderId, limit: PAGE_SIZE, cursor: pageParam }),
+    queryFn: ({ pageParam, signal }) =>
+      withReadDeadline(
+        (deadlineSignal) => fetchOrderActivityPage({
+          orderId,
+          limit: PAGE_SIZE,
+          cursor: pageParam,
+          signal: deadlineSignal,
+        }),
+        { label: 'Order activity', signal },
+      ),
     initialPageParam: null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: Boolean(orderId && canView && active),
+    enabled: Boolean(orderId && canView && active && canUseActivityNetwork),
     staleTime: 30_000,
     networkMode: 'offlineFirst',
-    refetchInterval: active ? 30_000 : false,
+    refetchInterval: active && canUseActivityNetwork ? 30_000 : false,
+    refetchIntervalInBackground: false,
   });
   const previousVersion = React.useRef(version);
   React.useEffect(() => {
@@ -278,8 +295,8 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
       return;
     }
     previousVersion.current = version;
-    if (active) query.refetch();
-  }, [active, query, version]);
+    if (active && canUseActivityNetwork) query.refetch();
+  }, [active, canUseActivityNetwork, query, version]);
 
   if (!canView) return null;
   const events = query.data?.pages?.flatMap((page) => page.events) || [];
@@ -305,6 +322,9 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
     return <Pressable accessibilityRole={canOpenReference(ref) ? 'link' : undefined} disabled={!canOpenReference(ref)} onPress={() => openReference(ref)} hitSlop={6}><Text numberOfLines={compact ? 1 : undefined} style={[styles.valueText, canOpenReference(ref) && styles.linkText]}>{label}</Text></Pressable>;
   };
   const formatValueText = (field, value, valueType, currency = 'RUB') => {
+    if (field === 'object_id' && (value === null || value === undefined || value === '')) {
+      return t('order_object_without_address');
+    }
     if (value === null || value === undefined || value === '') return t('order_activity_value_empty');
     if (typeof value === 'boolean') return value ? t('order_activity_yes') : t('order_activity_no');
     if (Array.isArray(value)) return value.length ? value.map(String).join(', ') : t('order_activity_value_empty');
@@ -359,7 +379,7 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
       return renderReference(translatedRef, t('order_activity_value_empty'), compact);
     }
     const display = formatValueText(field, value, valueType, currency);
-    const empty = isEmptyValue(value, ref);
+    const empty = field === 'object_id' ? false : isEmptyValue(value, ref);
     return <Text numberOfLines={compact ? 1 : undefined} ellipsizeMode="tail" style={empty ? styles.emptyValue : styles.valueText}>{display}</Text>;
   };
 
@@ -626,8 +646,12 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
       if (valueLooksLong(primaryChange.before) || valueLooksLong(primaryChange.after)) {
         return <Text style={styles.summaryText}>{actorNode}{` ${verb('changed')} ${field}.`}</Text>;
       }
-      const beforeEmpty = isEmptyValue(primaryChange.before, primaryChange.beforeRef);
-      const afterEmpty = isEmptyValue(primaryChange.after, primaryChange.afterRef);
+      const beforeEmpty = primaryChange.field === 'object_id'
+        ? false
+        : isEmptyValue(primaryChange.before, primaryChange.beforeRef);
+      const afterEmpty = primaryChange.field === 'object_id'
+        ? false
+        : isEmptyValue(primaryChange.after, primaryChange.afterRef);
       if (beforeEmpty && !afterEmpty) {
         return <Text style={styles.summaryText}>{actorNode}{` ${verb('set')} ${field}: `}{inlineValue(primaryChange, 'after')}{'.'}</Text>;
       }
@@ -663,8 +687,10 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t('order_activity_refresh')}
-          disabled={query.isRefetching}
-          onPress={() => query.refetch()}
+          disabled={query.isRefetching || !canUseActivityNetwork}
+          onPress={() => {
+            if (canUseActivityNetwork) query.refetch();
+          }}
           hitSlop={8}
           style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
         >
@@ -676,8 +702,8 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
         </Pressable>
       </View>
 
-      {query.isPending ? <View style={styles.stateRow}><ActivityIndicator color={theme.colors.primary} /><Text style={styles.stateText}>{t('order_activity_loading')}</Text></View> : null}
-      {query.isError && events.length === 0 ? <View style={styles.stateRow}><Text style={styles.errorText}>{t('order_activity_load_failed')}</Text><Button title={t('order_activity_retry')} variant="secondary" onPress={() => query.refetch()} /></View> : null}
+      {query.isPending && canUseActivityNetwork ? <View style={styles.stateRow}><ActivityIndicator color={theme.colors.primary} /><Text style={styles.stateText}>{t('order_activity_loading')}</Text></View> : null}
+      {query.isError && events.length === 0 ? <View style={styles.stateRow}><Text style={styles.errorText}>{t('order_activity_load_failed')}</Text><Button title={t('order_activity_retry')} variant="secondary" disabled={!canUseActivityNetwork} onPress={() => query.refetch()} /></View> : null}
       {!query.isPending && !query.isError && events.length === 0 ? <View style={styles.stateRow}><Text style={styles.emptyTitle}>{t('order_activity_empty')}</Text><Text style={styles.stateText}>{t('order_activity_empty_hint')}</Text></View> : null}
 
       {events.map((event, eventIndex) => {
@@ -728,7 +754,7 @@ export default function OrderActivityTimeline({ orderId, version, active = true,
             </View>
         );
       })}
-      {query.hasNextPage ? <Button title={query.isFetchingNextPage ? t('order_activity_loading') : t('order_activity_load_more')} variant="secondary" loading={query.isFetchingNextPage} onPress={() => query.fetchNextPage()} style={styles.moreButton} /> : null}
+      {query.hasNextPage ? <Button title={query.isFetchingNextPage ? t('order_activity_loading') : t('order_activity_load_more')} variant="secondary" loading={query.isFetchingNextPage} disabled={!canUseActivityNetwork} onPress={() => query.fetchNextPage()} style={styles.moreButton} /> : null}
     </View>
   );
 }

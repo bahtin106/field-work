@@ -48,6 +48,11 @@ import { useDepartmentsQuery, useEmployees } from '../../src/features/employees/
 import { isNoDepartmentFilterId } from '../../src/features/employees/departments';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { TBL } from '../../lib/constants';
 import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
@@ -162,6 +167,8 @@ export default function BillingScreen() {
   const toast = useToast();
   const { t, locale } = useTranslation();
   const { profile, user } = useAuthContext();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseBillingNetwork = canRunDeferredNetworkWork(offlineSnapshot);
 
   const profileCompanyId = profile?.company_id || null;
   const profileRole = String(profile?.role || '').toLowerCase();
@@ -170,18 +177,25 @@ export default function BillingScreen() {
 
   const { data: profileFallback } = useQuery({
     queryKey: ['billingProfileFallback', user?.id || 'anon'],
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user?.id) return null;
-      const { data: p, error: pErr } = await supabase
-        .from('profiles')
-        .select('id, company_id, role')
-        .eq('id', user.id)
-        .maybeSingle();
-      if (pErr) throw pErr;
-      return p || null;
-    },
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        async (readSignal) => {
+          const { data: { user: liveUser } } = await supabase.auth.getUser();
+          if (!liveUser?.id) return null;
+          const { data: p, error: pErr } = await supabase
+            .from('profiles')
+            .select('id, company_id, role')
+            .eq('id', liveUser.id)
+            .maybeSingle()
+            .abortSignal(readSignal);
+          if (pErr) throw pErr;
+          return p || null;
+        },
+        { label: 'Billing profile fallback', signal },
+      ),
+    enabled: !profileCompanyId && canUseBillingNetwork,
     staleTime: BILLING_PROFILE_FALLBACK_STALE_MS,
+    refetchOnReconnect: false,
   });
   const profileFallbackRole = String(profileFallback?.role || '').toLowerCase();
 
@@ -208,17 +222,21 @@ export default function BillingScreen() {
   const access = accessState.data || null;
   const { data: paidSeatsRpc, refetch: refetchPaidSeatsRpc } = useQuery({
     queryKey: ['companyPaidSeatsTotal', companyId],
-    enabled: !!companyId,
-    queryFn: async () => {
-      const { data: rpcData, error: rpcError } = await supabase.rpc('company_paid_seats_total', {
-        p_company_id: companyId,
-      });
-      if (rpcError) throw rpcError;
-      return asIntOrNull(Array.isArray(rpcData) ? rpcData?.[0] : rpcData) ?? 0;
-    },
+    enabled: !!companyId && canUseBillingNetwork,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        async (readSignal) => {
+          const { data: rpcData, error: rpcError } = await supabase
+            .rpc('company_paid_seats_total', { p_company_id: companyId })
+            .abortSignal(readSignal);
+          if (rpcError) throw rpcError;
+          return asIntOrNull(Array.isArray(rpcData) ? rpcData?.[0] : rpcData) ?? 0;
+        },
+        { label: 'Company paid seats total', signal },
+      ),
     staleTime: 60 * 1000,
     refetchOnMount: 'stale',
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
   });
 
   const manageFilters = useFilters({

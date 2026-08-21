@@ -633,6 +633,8 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
   const text = await getEventText(event);
   const feedbackId = String((event.payload as any)?.feedback_id || event.order_id || '').trim();
   const isSupportFeedback = event.event_type === 'support_feedback_new';
+  const notificationEventId = String(event.id);
+  const notificationEventKey = `notification-event-${notificationEventId}`;
   const messages = valid.map((row) => ({
     to: row.token,
     title: text.title,
@@ -648,6 +650,7 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
           entity_type: 'support_feedback',
           entity_id: feedbackId,
           recipient_user_id: row.user_id,
+          notification_event_id: notificationEventId,
         }
       : {
           ...(event.payload || {}),
@@ -660,10 +663,16 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
           entity_type: 'order',
           entity_id: event.order_id,
           recipient_user_id: row.user_id,
+          notification_event_id: notificationEventId,
         },
     sound: 'default' as const,
     channelId: PUSH_ANDROID_CHANNEL_ID,
     priority: 'high' as const,
+    // Collapse duplicate deliveries of the same queue event without merging
+    // legitimate later events for the same order. On Android `tag` also
+    // replaces an already displayed duplicate; iOS uses `collapseId`.
+    collapseId: notificationEventKey,
+    tag: notificationEventKey,
     ...(isSupportFeedback
       ? { ttl: SUPPORT_PUSH_TTL_SECONDS }
       : {
@@ -674,7 +683,7 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
 
   const sentUserIds = new Set<string>();
   const errors: string[] = [];
-  const supportTickets: Array<{ recipientUserId: string; token: string; ticketId: string }> = [];
+  const pushTickets: Array<{ recipientUserId: string; token: string; ticketId: string }> = [];
   const chunkSize = 99;
 
   for (let i = 0; i < messages.length; i += chunkSize) {
@@ -688,8 +697,8 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
       if (ticket?.status === 'ok') {
         sentUserIds.add(source.user_id);
         const ticketId = String(ticket?.id || '').trim();
-        if (isSupportFeedback && ticketId) {
-          supportTickets.push({
+        if (ticketId) {
+          pushTickets.push({
             recipientUserId: source.user_id,
             token: source.token,
             ticketId,
@@ -707,8 +716,11 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
   }
 
   if (invalidTokens.length) await invalidateTokens(invalidTokens, 'DeviceNotRegistered');
-  if (isSupportFeedback && supportTickets.length) {
-    await saveSupportPushTickets(event.id, supportTickets);
+  if (pushTickets.length) {
+    // The table predates generic receipt tracking and retains its legacy name.
+    // Saving every ticket lets the existing receipt worker retire stale order
+    // tokens as well as support tokens, without affecting delivery success.
+    await saveSupportPushTickets(event.id, pushTickets);
   }
   return { sentUsers: sentUserIds.size, firstError: errors[0] ?? null };
 }

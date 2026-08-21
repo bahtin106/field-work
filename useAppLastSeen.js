@@ -2,6 +2,15 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { supabase } from './lib/supabase';
+import {
+  getOfflineSnapshot,
+  subscribeOfflineState,
+} from './src/shared/offline/offlineStatus';
+
+function canUseLastSeenNetwork() {
+  const network = getOfflineSnapshot();
+  return network.isNetworkKnown && network.isOnline && !network.isPoorConnection;
+}
 
 export function useAppLastSeen(minIntervalMs = 60_000, userId = null) {
   const lastSentAtRef = useRef(0);
@@ -10,6 +19,8 @@ export function useAppLastSeen(minIntervalMs = 60_000, userId = null) {
   const mountedRef = useRef(false);
 
   const updateLastSeen = useCallback(async () => {
+    if (!canUseLastSeenNetwork()) return false;
+
     // 1) RPC (предпочтительно)
     try {
       const { error } = await supabase.rpc('touch_last_seen');
@@ -27,6 +38,10 @@ export function useAppLastSeen(minIntervalMs = 60_000, userId = null) {
   const ping = useCallback(async (_src = 'unknown') => {
     // Не шевелимся, если приложение не активно — убираем сетевые ошибки в фоне
     if (appStateRef.current !== 'active') {
+      return;
+    }
+
+    if (!canUseLastSeenNetwork()) {
       return;
     }
 
@@ -85,6 +100,9 @@ export function useAppLastSeen(minIntervalMs = 60_000, userId = null) {
     const intervalId = setInterval(() => {
       ping('interval');
     }, minIntervalMs);
+    const unsubscribeNetwork = subscribeOfflineState(() => {
+      if (canUseLastSeenNetwork()) ping('network');
+    });
 
     return () => {
       try {
@@ -94,6 +112,7 @@ export function useAppLastSeen(minIntervalMs = 60_000, userId = null) {
         authSub?.subscription?.unsubscribe?.();
       } catch {}
       clearInterval(intervalId);
+      unsubscribeNetwork();
       mountedRef.current = false;
     };
   }, [minIntervalMs, ping]);

@@ -2380,7 +2380,12 @@ function EditOrderContent() {
         await refetchOrder();
       } else {
         const message = String(err?.message || '').trim();
-        showToast(message || T('order_save_error'), 'error');
+        if (message.includes('order_object_not_available')) {
+          showToast(T('order_object_unavailable'), 'warning');
+          await refetchOrder();
+        } else {
+          showToast(message || T('order_save_error'), 'error');
+        }
       }
     } finally {
       setSaving(false);

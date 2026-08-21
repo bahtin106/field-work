@@ -91,22 +91,55 @@ export const normalizeOrderActivityEvent = (value) => {
   };
 };
 
-export async function fetchOrderActivityPage({ orderId, limit = 30, cursor = null }) {
+function paymentStatusChange(event) {
+  if (event?.entityType !== 'orders' || event?.action !== 'update' || event?.changes?.length !== 1) {
+    return null;
+  }
+  const change = event.changes[0];
+  return change?.field === 'payment_status' && !change?.redacted ? change : null;
+}
+
+export function collapsePaymentStatusBounceEvents(events) {
+  const collapsed = [];
+  for (let index = 0; index < events.length; index += 1) {
+    const current = events[index];
+    const next = events[index + 1];
+    const currentChange = paymentStatusChange(current);
+    const nextChange = paymentStatusChange(next);
+    const isTechnicalBounce = Boolean(
+      currentChange &&
+      nextChange &&
+      current.occurredAt === next.occurredAt &&
+      current.actorUserId === next.actorUserId &&
+      current.context?.entityId === next.context?.entityId &&
+      currentChange.before === nextChange.after &&
+      currentChange.after === nextChange.before
+    );
+    collapsed.push(current);
+    if (isTechnicalBounce) index += 1;
+  }
+  return collapsed;
+}
+
+export async function fetchOrderActivityPage({ orderId, limit = 30, cursor = null, signal }) {
   const pageSize = Math.min(100, Math.max(1, Math.trunc(limit)));
-  const { data, error } = await supabase.rpc('get_order_activity', {
+  let request = supabase.rpc('get_order_activity', {
     p_order_id: orderId,
     p_limit: pageSize,
     p_before_created_at: cursor?.occurredAt || null,
     p_before_id: cursor?.eventId || null,
   });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
-  const events = (Array.isArray(data) ? data : [])
+  const normalizedEvents = (Array.isArray(data) ? data : [])
     .map(normalizeOrderActivityEvent)
     .filter(Boolean);
-  const last = events[events.length - 1];
+  const events = collapsePaymentStatusBounceEvents(normalizedEvents);
+  const last = normalizedEvents[normalizedEvents.length - 1];
   return {
     events,
-    nextCursor: events.length === pageSize && last
+    nextCursor: normalizedEvents.length === pageSize && last
       ? { occurredAt: last.occurredAt, eventId: last.eventId }
       : null,
   };

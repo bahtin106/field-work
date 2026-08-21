@@ -8,6 +8,11 @@ import {
 import { inspectProfileMedia } from '../profileMedia/api';
 import { getMyCompanyId } from '../profile/api';
 import { buildMediaAssetThumbMap, normalizeMediaAsset } from '../../shared/media/assets';
+import {
+  assertOwnerBoundAuthorization,
+  pinOwnerBoundPostgrestRequest,
+  type OwnerBoundAuthorization,
+} from '../../shared/security/ownerBoundAuthorization';
 
 const objectByIdInFlight = new Map<string, Promise<any>>();
 const OBJECT_MEDIA_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'] as const;
@@ -79,19 +84,24 @@ function normalizeMediaSections(value: unknown) {
   );
 }
 
-async function resolveScopedCompanyId(explicitCompanyId: string | null = null) {
+async function resolveScopedCompanyId(
+  explicitCompanyId: string | null = null,
+  signal?: AbortSignal,
+) {
   const provided = String(explicitCompanyId || '').trim();
   if (provided) return provided;
-  const mine = await getMyCompanyId();
+  const mine = await getMyCompanyId(signal);
   return String(mine || '').trim() || null;
 }
 
-async function canCurrentUserViewObjectPhones() {
+async function canCurrentUserViewObjectPhones(signal?: AbortSignal) {
   try {
-    const { data, error } = await supabase.rpc('current_user_has_app_permission', {
+    let query = supabase.rpc('current_user_has_app_permission', {
       p_key: 'canViewObjectPhones',
       p_default: true,
     });
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
     if (error) throw error;
     return data !== false;
   } catch {
@@ -112,7 +122,7 @@ function maskObjectPhones(row: any, canViewObjectPhones: boolean) {
   };
 }
 
-async function listObjectPhotoThumbUrls(rows: any[] = []) {
+async function listObjectPhotoThumbUrls(rows: any[] = [], signal?: AbortSignal) {
   const objectIds = Array.from(
     new Set(
       (Array.isArray(rows) ? rows : [])
@@ -123,13 +133,15 @@ async function listObjectPhotoThumbUrls(rows: any[] = []) {
   if (!objectIds.length) return {};
 
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('media_assets')
       .select('id, company_id, entity_type, entity_id, category, source_url, display_url, thumb_url, provider, storage_bucket, storage_path, status, sort_order')
       .eq('entity_type', 'object')
       .eq('category', 'profile_media')
       .neq('status', 'deleted')
       .in('entity_id', objectIds);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
     if (error) throw error;
     return buildMediaAssetThumbMap(
       (Array.isArray(data) ? data : []).map(normalizeMediaAsset).filter(Boolean),
@@ -140,12 +152,12 @@ async function listObjectPhotoThumbUrls(rows: any[] = []) {
   }
 }
 
-async function enrichObjectProfileMediaRows(rows: any[] = []) {
+async function enrichObjectProfileMediaRows(rows: any[] = [], signal?: AbortSignal) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const urls = safeRows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean);
   const [{ cleanedUrls, resolvedUrls }, thumbUrls] = await Promise.all([
     inspectProfileMedia(urls),
-    listObjectPhotoThumbUrls(safeRows),
+    listObjectPhotoThumbUrls(safeRows, signal),
   ]);
   const cleanedSet = new Set(cleanedUrls);
   return safeRows.map((row) => {
@@ -204,41 +216,45 @@ function mapOrderObjectSearchResult(row: any): OrderObjectSearchResult {
   };
 }
 
-export async function listClientObjects(clientId: string) {
+export async function listClientObjects(clientId: string, signal?: AbortSignal) {
   return measureNetwork('objects.listByClient', async () => {
     if (!clientId) return [];
-    const scopedCompanyId = await resolveScopedCompanyId();
+    const scopedCompanyId = await resolveScopedCompanyId(null, signal);
     if (!scopedCompanyId) return [];
-    const canViewObjectPhones = await canCurrentUserViewObjectPhones();
-    const { data, error } = await supabase
+    const canViewObjectPhones = await canCurrentUserViewObjectPhones(signal);
+    let query = supabase
       .from('client_objects_secure')
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .eq('client_id', clientId)
       .eq('company_id', scopedCompanyId)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
 
     if (error) throw error;
-    const rows = await enrichObjectProfileMediaRows(Array.isArray(data) ? data : []);
+    const rows = await enrichObjectProfileMediaRows(Array.isArray(data) ? data : [], signal);
     return rows
       .map((row) => normalizeClientObject(maskObjectPhones(row, canViewObjectPhones)))
       .filter(Boolean);
   });
 }
 
-export async function listClientObjectsByCompany(companyId: string) {
+export async function listClientObjectsByCompany(companyId: string, signal?: AbortSignal) {
   return measureNetwork('objects.listByCompany', async () => {
     if (!companyId) return [];
-    const canViewObjectPhones = await canCurrentUserViewObjectPhones();
-    const { data, error } = await supabase
+    const canViewObjectPhones = await canCurrentUserViewObjectPhones(signal);
+    let query = supabase
       .from('client_objects_secure')
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .eq('company_id', companyId)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
 
     if (error) throw error;
-    const rows = await enrichObjectProfileMediaRows(Array.isArray(data) ? data : []);
+    const rows = await enrichObjectProfileMediaRows(Array.isArray(data) ? data : [], signal);
     return rows
       .map((r) => {
         const normalized = normalizeClientObject(maskObjectPhones(r, canViewObjectPhones));
@@ -253,26 +269,27 @@ export async function listClientObjectsByCompany(companyId: string) {
   });
 }
 
-export async function getClientObjectById(objectId: string) {
+export async function getClientObjectById(objectId: string, signal?: AbortSignal) {
   const key = String(objectId || '').trim();
   if (!key) return null;
 
-  const existing = objectByIdInFlight.get(key);
+  const existing = signal ? null : objectByIdInFlight.get(key);
   if (existing) return existing;
 
   const p = measureNetwork('objects.getById', async () => {
-    const scopedCompanyId = await resolveScopedCompanyId();
+    const scopedCompanyId = await resolveScopedCompanyId(null, signal);
     if (!scopedCompanyId) return null;
-    const canViewObjectPhones = await canCurrentUserViewObjectPhones();
-    const { data, error } = await supabase
+    const canViewObjectPhones = await canCurrentUserViewObjectPhones(signal);
+    let query = supabase
         .from('client_objects_secure')
         .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
         .eq('id', key)
-        .eq('company_id', scopedCompanyId)
-        .maybeSingle();
+        .eq('company_id', scopedCompanyId);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query.maybeSingle();
 
     if (error) throw error;
-    const [safeData] = data ? await enrichObjectProfileMediaRows([data]) : [data];
+    const [safeData] = data ? await enrichObjectProfileMediaRows([data], signal) : [data];
     const normalized = normalizeClientObject(maskObjectPhones(safeData, canViewObjectPhones));
     if (!normalized) return null;
     return {
@@ -281,10 +298,10 @@ export async function getClientObjectById(objectId: string) {
       summary: normalized.summary || buildClientObjectLocationSummary(normalized) || null,
     };
   }).finally(() => {
-    objectByIdInFlight.delete(key);
+    if (!signal) objectByIdInFlight.delete(key);
   });
 
-  objectByIdInFlight.set(key, p);
+  if (!signal) objectByIdInFlight.set(key, p);
   return p;
 }
 
@@ -321,7 +338,7 @@ export async function searchCompanyObjectsForOrder({
   city?: string;
   clientId?: string | null;
   limit?: number;
-}): Promise<OrderObjectSearchResult[]> {
+}, signal?: AbortSignal): Promise<OrderObjectSearchResult[]> {
   return measureNetwork('objects.searchForOrder', async () => {
     const safeQuery = String(query || '').trim().slice(0, 160);
     const safeStreet = String(street || '').trim().slice(0, 120);
@@ -331,7 +348,7 @@ export async function searchCompanyObjectsForOrder({
 
     if (!hasEnoughObjectSearchInput({ query: safeQuery, street: safeStreet, house: safeHouse })) return [];
 
-    const { data, error } = await supabase.rpc('search_company_objects_for_order', {
+    let request = supabase.rpc('search_company_objects_for_order', {
       p_query: safeQuery,
       p_street: safeStreet,
       p_house: safeHouse,
@@ -339,6 +356,8 @@ export async function searchCompanyObjectsForOrder({
       p_client_id: clientId ? String(clientId) : null,
       p_limit: safeLimit,
     });
+    if (signal) request = request.abortSignal(signal);
+    const { data, error } = await request;
 
     if (error) throw error;
 
@@ -358,13 +377,13 @@ export async function findExactCompanyObjectForOrder({
   city?: string;
   apartment?: string;
   entrance?: string;
-}): Promise<OrderObjectSearchResult[]> {
+}, signal?: AbortSignal): Promise<OrderObjectSearchResult[]> {
   const safeStreet = String(street || '').trim().slice(0, 120);
   const safeHouse = String(house || '').trim().slice(0, 32);
   if (!safeStreet || !safeHouse) return [];
 
   return measureNetwork('objects.findExactForOrder', async () => {
-    const { data, error } = await supabase.rpc('find_exact_company_object_for_order', {
+    let request = supabase.rpc('find_exact_company_object_for_order', {
       p_street: safeStreet,
       p_house: safeHouse,
       p_city: String(city || '').trim().slice(0, 120),
@@ -372,6 +391,8 @@ export async function findExactCompanyObjectForOrder({
       p_entrance: String(entrance || '').trim().slice(0, 32),
       p_limit: 1,
     });
+    if (signal) request = request.abortSignal(signal);
+    const { data, error } = await request;
     if (error) throw error;
     return (Array.isArray(data) ? data : []).map(mapOrderObjectSearchResult);
   });
@@ -449,9 +470,21 @@ export async function createClientObject(payload: Record<string, any>) {
   });
 }
 
-export async function updateClientObject(objectId: string, patch: Record<string, any>) {
+export async function updateClientObject(
+  objectId: string,
+  patch: Record<string, any>,
+  signal?: AbortSignal,
+  options: {
+    authorization?: OwnerBoundAuthorization | null;
+    companyId?: string | null;
+  } = {},
+) {
   return measureNetwork('objects.update', async () => {
-    const scopedCompanyId = await resolveScopedCompanyId();
+    const explicitCompanyId = String(options.companyId || '').trim();
+    if (options.authorization && !explicitCompanyId) {
+      throw new Error('company_id is required for owner-bound object updates');
+    }
+    const scopedCompanyId = explicitCompanyId || await resolveScopedCompanyId(null, signal);
     if (!scopedCompanyId) throw new Error('company_id is required');
     const clean = sanitizeClientObjectPayload(patch, { nameRequired: false });
     const nextPatch: Record<string, any> = {};
@@ -489,51 +522,81 @@ export async function updateClientObject(objectId: string, patch: Record<string,
       nextPatch.media_sections = normalizeMediaSections(patch.media_sections);
     }
 
-    let query: any = supabase
-      .from('client_objects')
-      .update(nextPatch)
-      .eq('id', objectId)
-      .eq('company_id', scopedCompanyId)
-      .select('id')
-      .single();
+    const buildUpdateRequest = (updatePatch: Record<string, any>) => {
+      let request: any = supabase
+        .from('client_objects')
+        .update(updatePatch)
+        .eq('id', objectId)
+        .eq('company_id', scopedCompanyId)
+        .select(options.authorization ? '*' : 'id')
+        .single();
+      if (options.authorization) {
+        request = pinOwnerBoundPostgrestRequest(request, options.authorization);
+      }
+      if (signal) request = request.abortSignal(signal);
+      return request;
+    };
+
+    let query: any = buildUpdateRequest(nextPatch);
     let { data, error }: any = await query;
+    if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
     if (error && isMissingLocationModeColumnError(error) && Object.prototype.hasOwnProperty.call(nextPatch, 'location_mode')) {
       const fallbackPatch = { ...nextPatch };
       delete fallbackPatch.location_mode;
-      query = supabase
-        .from('client_objects')
-        .update(fallbackPatch)
-        .eq('id', objectId)
-        .eq('company_id', scopedCompanyId)
-        .select('id')
-        .single();
+      query = buildUpdateRequest(fallbackPatch);
       ({ data, error } = await query);
+      if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
     }
     if (error && isMissingObjectMediaLabelColumnError(error)) {
-      query = supabase
-        .from('client_objects')
-        .update(omitObjectMediaLabelColumns(nextPatch))
-        .eq('id', objectId)
-        .eq('company_id', scopedCompanyId)
-        .select('id')
-        .single();
+      query = buildUpdateRequest(omitObjectMediaLabelColumns(nextPatch));
       ({ data, error } = await query);
+      if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
     }
     if (error && isMissingObjectMediaSectionsColumnError(error)) {
       const fallbackPatch = { ...nextPatch };
       delete fallbackPatch.media_sections;
-      query = supabase
-        .from('client_objects')
-        .update(fallbackPatch)
-        .eq('id', objectId)
-        .eq('company_id', scopedCompanyId)
-        .select('id')
-        .single();
+      query = buildUpdateRequest(fallbackPatch);
       ({ data, error } = await query);
+      if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
     }
     if (error) throw error;
-    return getClientObjectById(String(data?.id || objectId));
+    if (options.authorization) {
+      return normalizeClientObject(data);
+    }
+    return getClientObjectById(String(data?.id || objectId), signal);
   });
+}
+
+export async function getClientObjectByIdForOfflineSync(
+  objectId: string,
+  {
+    authorization,
+    companyId,
+    signal,
+  }: {
+    authorization: OwnerBoundAuthorization;
+    companyId: string;
+    signal?: AbortSignal;
+  },
+) {
+  const normalizedObjectId = String(objectId || '').trim();
+  const normalizedCompanyId = String(companyId || '').trim();
+  if (!normalizedObjectId || !normalizedCompanyId) return null;
+  assertOwnerBoundAuthorization(authorization);
+  let request: any = pinOwnerBoundPostgrestRequest(
+    supabase
+      .from('client_objects')
+      .select('*')
+      .eq('id', normalizedObjectId)
+      .eq('company_id', normalizedCompanyId)
+      .maybeSingle(),
+    authorization,
+  );
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
+  assertOwnerBoundAuthorization(authorization);
+  if (error) throw error;
+  return normalizeClientObject(data);
 }
 
 export async function deleteClientObject(objectId: string) {

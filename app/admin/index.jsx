@@ -13,6 +13,11 @@ import {
 } from '../../src/features/supportRequests/api';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../theme/ThemeProvider';
 
 let unreadCounterChannelSequence = 0;
@@ -28,18 +33,28 @@ export default function AdminHomeScreen() {
   const nav = useNavigation();
   const router = useRouter();
   const { isAllowed, isLoading } = useRequireSuperAdmin();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const lastHeaderTitleRef = React.useRef('');
   const queryClient = useQueryClient();
   const { data: unreadCount = 0 } = useQuery({
     queryKey: SUPPORT_UNREAD_QUERY_KEY,
-    queryFn: countUnreadSupportRequests,
-    enabled: isAllowed,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => countUnreadSupportRequests(readSignal),
+        { label: 'Admin unread support count', signal },
+      ),
+    enabled: isAllowed && canUseAdminNetwork,
     staleTime: 10 * 1000,
-    refetchInterval: SUPPORT_UNREAD_REFETCH_MS,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: canUseAdminNetwork ? SUPPORT_UNREAD_REFETCH_MS : false,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
   });
 
   React.useEffect(() => {
-    if (!isAllowed) return undefined;
+    if (!isAllowed || !canUseAdminNetwork) return undefined;
     const channel = supabase
       .channel(createUnreadCounterChannelName())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feedbacks' }, () => {
@@ -51,7 +66,7 @@ export default function AdminHomeScreen() {
         void supabase.removeChannel(channel).catch(() => {});
       } catch {}
     };
-  }, [isAllowed, queryClient]);
+  }, [canUseAdminNetwork, isAllowed, queryClient]);
 
   const adminHeaderTitle = React.useMemo(
     () => t('routes.admin/index') || t('routes.admin'),

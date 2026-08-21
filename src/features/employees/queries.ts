@@ -3,12 +3,22 @@ import { useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { formatPersonNameParts } from '../../../lib/personName';
 import { queryKeys } from '../../shared/query/queryKeys';
-import { getEmployeeById, listDepartments, listEmployees, updateEmployeeProfile } from './api';
 import {
+  assertActiveQueryCacheOwnerContext,
+  captureActiveQueryCacheOwnerContext,
+  isActiveQueryCacheOwnerContext,
+} from '../../shared/query/queryClient';
+import { withReadDeadline } from '../../shared/network/readDeadline';
+import { getEmployeeById, listDepartments, listEmployees, updateEmployeeProfile } from './api';
+import { normalizeDepartmentFilterIds } from './departments';
+import {
+  canRunOutboxSync,
   enqueueEmployeeUpdate,
-  getOfflineSnapshot,
   syncOfflineOutbox,
+  useOfflineSnapshot,
 } from '../../shared/offline/offlineStatus';
+
+const EMPLOYEE_MUTATION_OWNER_CONTEXT = Symbol('employee-mutation-owner-context');
 
 function isOfflineLikeError(error: any) {
   const message = String(error?.message || error || '').toLowerCase();
@@ -22,17 +32,148 @@ function isOfflineLikeError(error: any) {
   );
 }
 
+function normalizeEmployeeListScope(value: any) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizedStringSet(values: any) {
+  return new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function employeeFiltersAreSuperset(source: any = {}, target: any = {}) {
+  if (
+    normalizeEmployeeListScope(source?.companyId) !==
+    normalizeEmployeeListScope(target?.companyId)
+  ) {
+    return false;
+  }
+
+  const sourceDepartments = normalizeDepartmentFilterIds(source?.departments);
+  const targetDepartments = normalizeDepartmentFilterIds(target?.departments);
+  const sourceHasDepartmentFilter =
+    sourceDepartments.includeNoDepartment || sourceDepartments.departmentIds.length > 0;
+  const targetHasDepartmentFilter =
+    targetDepartments.includeNoDepartment || targetDepartments.departmentIds.length > 0;
+  if (sourceHasDepartmentFilter) {
+    if (!targetHasDepartmentFilter) return false;
+    const allowedDepartments = normalizedStringSet(sourceDepartments.departmentIds);
+    if (
+      targetDepartments.departmentIds.some(
+        (id: any) => !allowedDepartments.has(normalizeEmployeeListScope(id)),
+      )
+    ) {
+      return false;
+    }
+    if (targetDepartments.includeNoDepartment && !sourceDepartments.includeNoDepartment) {
+      return false;
+    }
+  }
+
+  const sourceRoles = normalizedStringSet(source?.roles);
+  const targetRoles = normalizedStringSet(target?.roles);
+  if (sourceRoles.size > 0) {
+    if (targetRoles.size === 0) return false;
+    for (const role of targetRoles) {
+      if (!sourceRoles.has(role)) return false;
+    }
+  }
+
+  if (typeof source?.suspended === 'boolean' && source.suspended !== target?.suspended) {
+    return false;
+  }
+  return true;
+}
+
+function employeeMatchesFilters(employee: any, filters: any = {}) {
+  const departments = normalizeDepartmentFilterIds(filters?.departments);
+  if (departments.includeNoDepartment || departments.departmentIds.length > 0) {
+    const departmentId = normalizeEmployeeListScope(
+      employee?.department_id || employee?.departmentId,
+    );
+    const departmentMatches = departmentId
+      ? departments.departmentIds.some(
+          (id: any) => normalizeEmployeeListScope(id) === departmentId,
+        )
+      : departments.includeNoDepartment;
+    if (!departmentMatches) return false;
+  }
+
+  const roles = normalizedStringSet(filters?.roles);
+  if (roles.size > 0 && !roles.has(normalizeEmployeeListScope(employee?.role))) return false;
+
+  if (typeof filters?.suspended === 'boolean') {
+    const suspended = Boolean(
+      employee?.isSuspended ||
+        employee?.is_suspended ||
+        employee?.is_admin_blocked ||
+        employee?.admin_blocked ||
+        employee?.license_state === 'blocked_by_license' ||
+        employee?.licenseState === 'blocked_by_license',
+    );
+    if (suspended !== filters.suspended) return false;
+  }
+
+  return true;
+}
+
+function findEmployeesInCachedSuperset(queryClient: any, filters: any) {
+  let best: { rows: any[]; updatedAt: number } | null = null;
+  const entries = queryClient.getQueriesData({ queryKey: ['employees', 'list'] }) || [];
+  for (const [key, value] of entries) {
+    if (!Array.isArray(value) || !Array.isArray(key)) continue;
+    const sourceFilters = key[2] && typeof key[2] === 'object' ? key[2] : {};
+    if (!employeeFiltersAreSuperset(sourceFilters, filters)) continue;
+    const rows = value.filter((employee: any) => employeeMatchesFilters(employee, filters));
+    if (rows.length === 0) continue;
+    const updatedAt = Number(queryClient.getQueryState(key)?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) best = { rows, updatedAt };
+  }
+  return best?.rows || null;
+}
+
+function findDepartmentsInCachedSuperset(
+  queryClient: any,
+  companyId: any,
+  onlyEnabled: boolean,
+) {
+  if (!onlyEnabled) return null;
+  const companyScope = normalizeEmployeeListScope(companyId);
+  const entries = queryClient.getQueriesData({
+    queryKey: ['employees', 'departments', String(companyId || '')],
+  }) || [];
+  let best: { rows: any[]; updatedAt: number } | null = null;
+  for (const [key, value] of entries) {
+    if (!Array.isArray(value) || !Array.isArray(key)) continue;
+    if (normalizeEmployeeListScope(key[2]) !== companyScope || key[3] !== false) continue;
+    const rows = value.filter((department: any) => department?.is_enabled !== false);
+    if (rows.length === 0) continue;
+    const updatedAt = Number(queryClient.getQueryState(key)?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) best = { rows, updatedAt };
+  }
+  return best?.rows || null;
+}
+
 export function useEmployees(filters: any = {}, options: any = {}) {
   const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.employees.list(filters),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await listEmployees(filters);
+        return await withReadDeadline((readSignal) => listEmployees(filters, readSignal), {
+          label: 'Employees list',
+          signal,
+        });
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached = queryClient.getQueryData(queryKeys.employees.list(filters));
-        return Array.isArray(cached) ? cached : [];
+        if (Array.isArray(cached)) return cached;
+        const derived = findEmployeesInCachedSuperset(queryClient, filters);
+        if (derived) return derived;
+        throw error;
       }
     },
     staleTime: 60 * 1000,
@@ -43,19 +184,35 @@ export function useEmployees(filters: any = {}, options: any = {}) {
 
 export function useEmployee(id: any, options: any = {}) {
   const queryClient = useQueryClient();
+  const {
+    privilegedAdminAccess = false,
+    ...queryOptions
+  } = options || {};
+  const detailKey = privilegedAdminAccess
+    ? queryKeys.employees.adminDetail(id)
+    : queryKeys.employees.detail(id);
   return useQuery({
-    queryKey: queryKeys.employees.detail(id),
-    queryFn: async () => {
+    queryKey: detailKey,
+    queryFn: async ({ signal }) => {
       try {
-        return await getEmployeeById(id);
+        return await withReadDeadline((readSignal) => getEmployeeById(id, readSignal, {
+          allowSuperAdmin: privilegedAdminAccess,
+        }), {
+          label: 'Employee detail',
+          signal,
+        });
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
-        const fromDetail = queryClient.getQueryData(queryKeys.employees.detail(id));
+        const fromDetail = queryClient.getQueryData(detailKey);
         if (fromDetail) return fromDetail;
-        const lists = queryClient.getQueriesData({ queryKey: ['employees'] }) || [];
+        const lists = queryClient.getQueriesData({
+          queryKey: privilegedAdminAccess ? ['adminUsersV2'] : ['employees'],
+        }) || [];
         for (const [, value] of lists) {
           const arr = Array.isArray(value) ? value : [];
-          const found = arr.find((row: any) => String(row?.id || '') === String(id || ''));
+          const found = arr.find(
+            (row: any) => String(row?.id || row?.profile_id || '') === String(id || ''),
+          );
           if (found) return found;
         }
         throw error;
@@ -65,7 +222,7 @@ export function useEmployee(id: any, options: any = {}) {
     staleTime: 120 * 1000,
     refetchOnMount: false,
     retry: (count, error) => !isOfflineLikeError(error) && count < 1,
-    ...options,
+    ...queryOptions,
   });
 }
 
@@ -73,13 +230,26 @@ export function useDepartmentsQuery({ companyId, onlyEnabled = true, enabled = t
   const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.employees.departments(companyId, onlyEnabled),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await listDepartments({ companyId, onlyEnabled });
+        return await withReadDeadline(
+          (readSignal) => listDepartments({ companyId, onlyEnabled }, readSignal),
+          {
+            label: 'Departments list',
+            signal,
+          },
+        );
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached = queryClient.getQueryData(queryKeys.employees.departments(companyId, onlyEnabled));
-        return Array.isArray(cached) ? cached : [];
+        if (Array.isArray(cached)) return cached;
+        const derived = findDepartmentsInCachedSuperset(
+          queryClient,
+          companyId,
+          onlyEnabled,
+        );
+        if (derived) return derived;
+        throw error;
       }
     },
     enabled: enabled && !!companyId,
@@ -135,6 +305,8 @@ function hasEmployeeRealtimeCacheDifference(queryClient: any, employeeId: string
   const cachedRows: any[] = [];
   const detail = queryClient.getQueryData(queryKeys.employees.detail(employeeId));
   if (detail) cachedRows.push(detail);
+  const adminDetail = queryClient.getQueryData(queryKeys.employees.adminDetail(employeeId));
+  if (adminDetail) cachedRows.push(adminDetail);
 
   const lists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] }) || [];
   for (const [, value] of lists) {
@@ -171,11 +343,15 @@ function isLikelyEmployeePresenceHeartbeat(payload: any) {
 }
 
 function patchEmployeeLastSeenInExistingCaches(queryClient: any, employeeId: string, lastSeenAt: any) {
-  const detailKey = queryKeys.employees.detail(employeeId);
-  if (queryClient.getQueryData(detailKey)) {
-    queryClient.setQueryData(detailKey, (previous: any) =>
-      previous ? { ...previous, last_seen_at: lastSeenAt } : previous,
-    );
+  for (const detailKey of [
+    queryKeys.employees.detail(employeeId),
+    queryKeys.employees.adminDetail(employeeId),
+  ]) {
+    if (queryClient.getQueryData(detailKey)) {
+      queryClient.setQueryData(detailKey, (previous: any) =>
+        previous ? { ...previous, last_seen_at: lastSeenAt } : previous,
+      );
+    }
   }
 
   const lists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] }) || [];
@@ -250,17 +426,23 @@ function acquireEmployeesRealtimeSubscription(queryClient: any, companyId: any) 
           }
           if (changedKnownField || !presenceHeartbeat) {
             queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(rowId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.employees.adminDetail(rowId) });
             queryClient.invalidateQueries({ queryKey: ['employees'] });
           }
           return;
         }
         if (rowId) {
           queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(rowId) });
+          queryClient.invalidateQueries({ queryKey: queryKeys.employees.adminDetail(rowId) });
         }
         queryClient.invalidateQueries({ queryKey: ['employees'] });
       },
     )
-    .subscribe();
+    .subscribe((status: any) => {
+      if (status === 'SUBSCRIBED') {
+        queryClient.invalidateQueries({ queryKey: ['employees'] });
+      }
+    });
 
   subscriptions.set(scopeKey, { refs: 1, channel });
   return () => releaseEmployeesRealtimeSubscription(queryClient, scopeKey);
@@ -268,21 +450,33 @@ function acquireEmployeesRealtimeSubscription(queryClient: any, companyId: any) 
 
 export function useEmployeesRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
+  const network = useOfflineSnapshot();
+  const canUseRealtime =
+    network.isNetworkKnown && network.isOnline && !network.isPoorConnection;
 
   useEffect(() => {
-    if (!enabled) return undefined;
+    if (!enabled || !canUseRealtime) return undefined;
     return acquireEmployeesRealtimeSubscription(queryClient, companyId);
-  }, [companyId, enabled, queryClient]);
+  }, [canUseRealtime, companyId, enabled, queryClient]);
 }
 
-export function useUpdateEmployeeMutation() {
+export function useUpdateEmployeeMutation({ privilegedAdminAccess = false } = {}) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, patch }: any) => {
-      const base = queryClient.getQueryData(queryKeys.employees.detail(id)) as Record<string, any> | null;
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+    mutationFn: async (variables: any) => {
+      assertActiveQueryCacheOwnerContext(variables?.[EMPLOYEE_MUTATION_OWNER_CONTEXT]);
+      const { id, patch } = variables;
+      const detailKey = privilegedAdminAccess
+        ? queryKeys.employees.adminDetail(id)
+        : queryKeys.employees.detail(id);
+      const base = queryClient.getQueryData(detailKey) as Record<string, any> | null;
+      const online = onlineManager.isOnline() && canRunOutboxSync();
       if (!online) {
+        if (privilegedAdminAccess) {
+          throw new Error('PRIVILEGED_EMPLOYEE_EDIT_REQUIRES_ONLINE');
+        }
+        assertActiveQueryCacheOwnerContext(variables?.[EMPLOYEE_MUTATION_OWNER_CONTEXT]);
         const queued = await enqueueEmployeeUpdate({ id, patch, base });
         return {
           ...(base || {}),
@@ -293,9 +487,13 @@ export function useUpdateEmployeeMutation() {
         };
       }
       try {
-        return await updateEmployeeProfile(id, patch);
+        return await updateEmployeeProfile(id, patch, undefined, {
+          allowSuperAdmin: privilegedAdminAccess,
+        });
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
+        if (privilegedAdminAccess) throw error;
+        assertActiveQueryCacheOwnerContext(variables?.[EMPLOYEE_MUTATION_OWNER_CONTEXT]);
         const queued = await enqueueEmployeeUpdate({ id, patch, base });
         return {
           ...(base || {}),
@@ -306,19 +504,32 @@ export function useUpdateEmployeeMutation() {
         };
       }
     },
-    onMutate: async ({ id, patch }: any) => {
-      const detailKey = queryKeys.employees.detail(id);
+    onMutate: async (variables: any) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      variables[EMPLOYEE_MUTATION_OWNER_CONTEXT] = ownerContext;
+      const { id, patch } = variables;
+      const detailKey = privilegedAdminAccess
+        ? queryKeys.employees.adminDetail(id)
+        : queryKeys.employees.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
       await queryClient.cancelQueries({ queryKey: ['employees', 'list'] });
+      assertActiveQueryCacheOwnerContext(ownerContext);
       const previous = queryClient.getQueryData(detailKey);
       const previousLists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] });
-      updateEmployeeQueryCaches(queryClient, id, {
-        ...(patch || {}),
-        __offlinePending: !onlineManager.isOnline(),
-      });
-      return { previous, previousLists, detailKey };
+      updateEmployeeQueryCaches(
+        queryClient,
+        id,
+        {
+          ...(patch || {}),
+          __offlinePending: !(onlineManager.isOnline() && canRunOutboxSync()),
+        },
+        { privilegedAdminAccess },
+      );
+      return { previous, previousLists, detailKey, ownerContext };
     },
     onError: (_error, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (context?.previous) queryClient.setQueryData(context.detailKey, context.previous);
       if (Array.isArray(context?.previousLists)) {
         context.previousLists.forEach(([key, value]: any) => {
@@ -326,17 +537,39 @@ export function useUpdateEmployeeMutation() {
         });
       }
     },
-    onSuccess: (updated) => {
-      if (updated?.id) updateEmployeeQueryCaches(queryClient, updated.id, updated);
-      queryClient.invalidateQueries({ queryKey: ['employees'] });
+    onSuccess: (updated, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
+      if (updated?.id) {
+        updateEmployeeQueryCaches(
+          queryClient,
+          updated.id,
+          updated,
+          { privilegedAdminAccess },
+        );
+      }
+      if (privilegedAdminAccess) {
+        queryClient.invalidateQueries({ queryKey: ['adminUsersV2'] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['employees'] });
+      }
       if (updated?.__offlinePending) {
         syncOfflineOutbox(queryClient).catch(() => {});
+      }
+    },
+    onSettled: (_data, _error, variables: any) => {
+      if (variables && typeof variables === 'object') {
+        delete variables[EMPLOYEE_MUTATION_OWNER_CONTEXT];
       }
     },
   });
 }
 
-export function updateEmployeeQueryCaches(queryClient: any, employeeId: any, patchOrUpdater: any) {
+export function updateEmployeeQueryCaches(
+  queryClient: any,
+  employeeId: any,
+  patchOrUpdater: any,
+  { privilegedAdminAccess = false } = {},
+) {
   const id = String(employeeId || '').trim();
   if (!id || !queryClient) return null;
 
@@ -372,10 +605,15 @@ export function updateEmployeeQueryCaches(queryClient: any, employeeId: any, pat
   };
 
   let nextDetail: any = null;
-  queryClient.setQueryData(queryKeys.employees.detail(id), (prev: any) => {
+  const detailKey = privilegedAdminAccess
+    ? queryKeys.employees.adminDetail(id)
+    : queryKeys.employees.detail(id);
+  queryClient.setQueryData(detailKey, (prev: any) => {
     nextDetail = resolveNext(prev);
     return nextDetail;
   });
+
+  if (privilegedAdminAccess) return nextDetail;
 
   const lists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] }) || [];
   lists.forEach(([key, value]: any) => {
@@ -400,7 +638,11 @@ export async function ensureEmployeePrefetch(queryClient: any, id: any) {
   if (existing && !existing.__listSeed) return existing;
   return queryClient.fetchQuery({
     queryKey: queryKeys.employees.detail(id),
-    queryFn: () => getEmployeeById(id),
+    queryFn: ({ signal }) =>
+      withReadDeadline((readSignal) => getEmployeeById(id, readSignal), {
+        label: 'Employee detail prefetch',
+        signal,
+      }),
     staleTime: 0,
   });
 }

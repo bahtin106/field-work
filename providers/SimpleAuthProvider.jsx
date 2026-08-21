@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import NetInfo from '@react-native-community/netinfo';
+import { useIsRestoring } from '@tanstack/react-query';
 import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { createLogger } from '../lib/logger';
 import { formatPersonNameParts } from '../lib/personName';
@@ -10,9 +11,19 @@ import {
   supabase,
 } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
-import { queryClient } from '../src/shared/query/queryClient';
+import {
+  clearActiveQueryCacheOwner,
+  getActiveQueryCacheOwner,
+  queryClient,
+  setActiveQueryCacheOwner,
+} from '../src/shared/query/queryClient';
 import { queryKeys } from '../src/shared/query/queryKeys';
-import { getOfflineSnapshot, setOfflineNetState } from '../src/shared/offline/offlineStatus';
+import {
+  clearActiveOfflineOwner,
+  getOfflineSnapshot,
+  setActiveOfflineOwner,
+  setOfflineNetState,
+} from '../src/shared/offline/offlineStatus';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS =
@@ -21,6 +32,9 @@ const PROFILE_UI_WAIT_TIMEOUT_MS = 4000;
 const PROFILE_REQUEST_TIMEOUT_MS = 12000;
 const PROFILE_RECOVERY_ATTEMPTS = 4;
 const PROFILE_RECOVERY_BASE_DELAY_MS = 1200;
+const PROFILE_RECOVERY_NETWORK_POLL_MS = 5000;
+const LOCAL_SESSION_READ_WAIT_MS = 1500;
+const AUTH_SDK_SESSION_WAIT_MS = 8000;
 const SIGN_OUT_SESSION_TIMEOUT_MS = 1000;
 const SIGN_OUT_PUSH_TIMEOUT_MS = 1200;
 const SIGN_OUT_AUTH_TIMEOUT_MS = 2000;
@@ -51,8 +65,10 @@ const buildProfileFromUser = (user, source = 'user-metadata') => {
   const lastName = metadata.last_name ?? null;
   const fullNameFromMeta = formatPersonNameParts({ firstName, middleName, lastName }) || metadata.full_name;
   const fullName = fullNameFromMeta || user.email || '';
-  const rawRole = typeof metadata.role === 'string' ? metadata.role : null;
-  const safeRole = VALID_ROLES.has(rawRole) ? rawRole : 'worker';
+  // user_metadata is user-editable identity metadata, not an authorization
+  // source. Until the authoritative profiles row is available, fail closed to
+  // the least-privileged role while still allowing cached UI to paint.
+  const safeRole = 'worker';
 
   return {
     id: user.id,
@@ -149,7 +165,50 @@ const hasProfileScopeChanged = (previousProfile, nextProfile, nextUserId) => {
 
   const previousCompanyId = normalizeScopeId(previousProfile.company_id);
   const nextCompanyId = normalizeScopeId(nextProfile.company_id);
+  const companyChanged =
+    Boolean(previousCompanyId || nextCompanyId) && previousCompanyId !== nextCompanyId;
+  const previousRole = VALID_ROLES.has(previousProfile.role) ? previousProfile.role : '';
+  const nextRole = VALID_ROLES.has(nextProfile.role) ? nextProfile.role : '';
+  const roleChanged =
+    Boolean(previousRole || nextRole) && previousRole !== nextRole;
+  return companyChanged || roleChanged;
+};
+
+const hasQueryCacheOwnerScopeChanged = (cacheOwner, nextProfile, nextUserId) => {
+  if (!cacheOwner || !nextProfile) return false;
+  const resolvedNextUserId = normalizeScopeId(nextProfile.id || nextUserId);
+  if (normalizeScopeId(cacheOwner.userId) !== resolvedNextUserId) return true;
+
+  const previousCompanyId = normalizeScopeId(cacheOwner.companyId);
+  const nextCompanyId = normalizeScopeId(nextProfile.company_id);
   return Boolean(previousCompanyId || nextCompanyId) && previousCompanyId !== nextCompanyId;
+};
+
+const hasAuthMetadataCompanyScopeChanged = ({
+  cacheOwner,
+  cachedProfile,
+  currentProfile,
+  nextUserId,
+  metadataCompanyId,
+}) => {
+  const resolvedUserId = normalizeScopeId(nextUserId);
+  const resolvedMetadataCompanyId = normalizeScopeId(metadataCompanyId);
+  if (!resolvedUserId || !resolvedMetadataCompanyId) return false;
+
+  const previousCompanyScopes = [];
+  if (normalizeScopeId(cacheOwner?.userId) === resolvedUserId) {
+    previousCompanyScopes.push(normalizeScopeId(cacheOwner?.companyId));
+  }
+  if (normalizeScopeId(cachedProfile?.id) === resolvedUserId) {
+    previousCompanyScopes.push(normalizeScopeId(cachedProfile?.company_id));
+  }
+  if (normalizeScopeId(currentProfile?.id) === resolvedUserId) {
+    previousCompanyScopes.push(normalizeScopeId(currentProfile?.company_id));
+  }
+
+  return previousCompanyScopes.some(
+    (previousCompanyId) => previousCompanyId !== resolvedMetadataCompanyId,
+  );
 };
 
 const mergeProfileForCache = (previous, next) => {
@@ -174,16 +233,42 @@ const mergeProfileForCache = (previous, next) => {
   };
 };
 
-const tryBootstrapMyProfileFromAuth = async () => {
+const PROFILE_STATE_FIELDS = [
+  'id',
+  'first_name',
+  'middle_name',
+  'last_name',
+  'full_name',
+  'role',
+  'avatar_url',
+  'avatar_display_url',
+  'company_id',
+  'department_id',
+  '__source',
+];
+
+const areProfileSnapshotsEqual = (left, right) =>
+  Boolean(
+    left &&
+      right &&
+      PROFILE_STATE_FIELDS.every(
+        (key) => String(left?.[key] ?? '') === String(right?.[key] ?? ''),
+      ),
+  );
+
+const tryBootstrapMyProfileFromAuth = async (signal) => {
   try {
-    const { error } = await supabase.rpc('bootstrap_my_profile_from_auth');
+    const request = supabase.rpc('bootstrap_my_profile_from_auth');
+    const { error } = await (signal ? request.abortSignal(signal) : request);
     if (error) {
+      if (isAbortLikeError(error)) throw error;
       if (isAuthSessionMissingError(error)) return false;
       log.warn('bootstrap_my_profile_from_auth failed:', error);
       return false;
     }
     return true;
   } catch (error) {
+    if (isAbortLikeError(error)) throw error;
     if (isAuthSessionMissingError(error)) return false;
     log.warn('bootstrap_my_profile_from_auth exception:', error);
     return false;
@@ -201,6 +286,8 @@ const isSessionExpiredLikeError = (error) => {
 };
 
 export function SimpleAuthProvider({ children }) {
+  const isRestoringQueryCache = useIsRestoring();
+  const [queryCacheBootstrapReady, setQueryCacheBootstrapReady] = useState(false);
   const [state, setState] = useState({
     isInitializing: true,
     isSigningOut: false,
@@ -211,6 +298,7 @@ export function SimpleAuthProvider({ children }) {
   });
 
   const authRequestIdRef = useRef(0);
+  const authEventGenerationRef = useRef(0);
   const profileRef = useRef(null);
   const currentUserIdRef = useRef(null);
   const initialSessionHandledRef = useRef(false);
@@ -221,6 +309,22 @@ export function SimpleAuthProvider({ children }) {
   const recoveryJobIdRef = useRef(0);
   const profileLoadInFlightRef = useRef(new Map());
   const profileAbortControllersRef = useRef(new Map());
+
+  useEffect(() => {
+    const marker = '__MONITOR_AUTH_PROVIDER_MOUNT_COUNT__';
+    globalThis[marker] = Number(globalThis[marker] || 0) + 1;
+    return () => {
+      globalThis[marker] = Math.max(0, Number(globalThis[marker] || 1) - 1);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (queryCacheBootstrapReady) return undefined;
+    if (!isRestoringQueryCache) {
+      setQueryCacheBootstrapReady(true);
+    }
+    return undefined;
+  }, [isRestoringQueryCache, queryCacheBootstrapReady]);
 
   useEffect(() => {
     profileRef.current = state.profile;
@@ -247,6 +351,15 @@ export function SimpleAuthProvider({ children }) {
     const expectedScopeUserId = normalizeScopeId(expectedUserId || currentUserIdRef.current);
     if (expectedScopeUserId && normalizeScopeId(profile.id) !== expectedScopeUserId) {
       return;
+    }
+    setActiveQueryCacheOwner({
+      userId: profile.id,
+      companyId: profile.company_id || null,
+    });
+    if (profile.company_id) {
+      setActiveOfflineOwner({ userId: profile.id, companyId: profile.company_id });
+    } else {
+      clearActiveOfflineOwner();
     }
     queryClient.setQueryData(queryKeys.profile.me(), (previous) => mergeProfileForCache(previous, profile));
     queryClient.setQueryData(['profile', profile.id], (previous) => mergeProfileForCache(previous, profile));
@@ -275,23 +388,16 @@ export function SimpleAuthProvider({ children }) {
         debugLog('Loading profile for:', userId);
         const loadStartedAt = Date.now();
         const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), PROFILE_REQUEST_TIMEOUT_MS);
         profileAbortControllersRef.current.set(userId, controller);
 
         try {
-          const timeoutId = setTimeout(() => controller.abort(), PROFILE_REQUEST_TIMEOUT_MS);
-
-          let data;
-          let error;
-          try {
-            ({ data, error } = await supabase
-              .from('profiles')
-              .select(PROFILE_COLUMNS)
-              .eq('id', userId)
-              .abortSignal(controller.signal)
-              .maybeSingle());
-          } finally {
-            clearTimeout(timeoutId);
-          }
+          const { data, error } = await supabase
+            .from('profiles')
+            .select(PROFILE_COLUMNS)
+            .eq('id', userId)
+            .abortSignal(controller.signal)
+            .maybeSingle();
 
           if (error) {
             throw error;
@@ -300,7 +406,7 @@ export function SimpleAuthProvider({ children }) {
           if (!data) {
             if (logoutInProgressRef.current || currentUserIdRef.current !== userId) return null;
             debugLog('Profile missing, requesting server bootstrap...');
-            await tryBootstrapMyProfileFromAuth();
+            await tryBootstrapMyProfileFromAuth(controller.signal);
             if (logoutInProgressRef.current || currentUserIdRef.current !== userId) return null;
 
             const { data: retriedProfile, error: retryError } = await supabase
@@ -314,15 +420,11 @@ export function SimpleAuthProvider({ children }) {
             if (!retriedProfile) {
               throw new Error('profile-not-found-after-bootstrap');
             }
-            const profile = normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
-            rememberProfileSnapshot(profile, userId);
-            return profile;
+            return normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
           }
 
           debugLog('Profile loaded:', data.role);
-          const profile = normalizeProfileData(data, user, 'supabase');
-          rememberProfileSnapshot(profile, userId);
-          return profile;
+          return normalizeProfileData(data, user, 'supabase');
         } catch (error) {
           const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
           const isNetworkError = isNetworkRequestError(error);
@@ -342,6 +444,7 @@ export function SimpleAuthProvider({ children }) {
             throw error;
           }
         } finally {
+          clearTimeout(timeoutId);
           if (profileAbortControllersRef.current.get(userId) === controller) {
             profileLoadInFlightRef.current.delete(userId);
             profileAbortControllersRef.current.delete(userId);
@@ -352,7 +455,7 @@ export function SimpleAuthProvider({ children }) {
       profileLoadInFlightRef.current.set(userId, loadPromise);
       return loadPromise;
     },
-    [debugLog, rememberProfileSnapshot],
+    [debugLog],
   );
 
   const scheduleProfileRecovery = useCallback(
@@ -368,6 +471,16 @@ export function SimpleAuthProvider({ children }) {
         if (recoveryJobId !== recoveryJobIdRef.current) return;
         if (currentUserIdRef.current !== userId) return;
 
+        const networkSnapshot = getOfflineSnapshot();
+        const canRecoverFromNetwork =
+          networkSnapshot.isNetworkKnown &&
+          networkSnapshot.isOnline &&
+          !networkSnapshot.isPoorConnection;
+        if (!canRecoverFromNetwork) {
+          recoveryTimerRef.current = setTimeout(run, PROFILE_RECOVERY_NETWORK_POLL_MS);
+          return;
+        }
+
         attempt += 1;
         try {
           const profile = await loadProfile(user);
@@ -375,7 +488,10 @@ export function SimpleAuthProvider({ children }) {
           if (currentUserIdRef.current !== userId) return;
           if (!profile) return;
           const previousProfile = profileRef.current || getCachedProfileSnapshot();
-          if (hasProfileScopeChanged(previousProfile, profile, userId)) {
+          if (
+            hasProfileScopeChanged(previousProfile, profile, userId) ||
+            hasQueryCacheOwnerScopeChanged(getActiveQueryCacheOwner(), profile, userId)
+          ) {
             await cleanupSessionRuntime('profile-recovery-scope-changed');
             if (recoveryJobId !== recoveryJobIdRef.current) return;
             if (currentUserIdRef.current !== userId) return;
@@ -407,7 +523,60 @@ export function SimpleAuthProvider({ children }) {
     [clearProfileRecovery, loadProfile, rememberProfileSnapshot],
   );
 
+  const refreshProfile = useCallback(
+    async ({ reason = 'manual-profile-refresh' } = {}) => {
+      const user = state.user;
+      const userId = normalizeScopeId(user?.id || currentUserIdRef.current);
+      if (!user?.id || !userId || logoutInProgressRef.current) return null;
+      const authEventGeneration = authEventGenerationRef.current;
+
+      const profile = await loadProfile(user);
+      if (!profile) return null;
+      if (
+        logoutInProgressRef.current ||
+        authEventGeneration !== authEventGenerationRef.current ||
+        normalizeScopeId(currentUserIdRef.current) !== userId
+      ) {
+        return null;
+      }
+
+      const previousProfile = profileRef.current || getCachedProfileSnapshot();
+      if (
+        hasProfileScopeChanged(previousProfile, profile, userId) ||
+        hasQueryCacheOwnerScopeChanged(getActiveQueryCacheOwner(), profile, userId)
+      ) {
+        await cleanupSessionRuntime(`${reason}-scope-changed`);
+        if (
+          logoutInProgressRef.current ||
+          authEventGeneration !== authEventGenerationRef.current ||
+          normalizeScopeId(currentUserIdRef.current) !== userId
+        ) {
+          return null;
+        }
+      }
+
+      rememberProfileSnapshot(profile, userId);
+      const appliedProfile = mergeProfileForCache(profileRef.current, profile);
+      profileRef.current = appliedProfile;
+      setState((prev) => {
+        if (normalizeScopeId(prev.user?.id) !== userId) return prev;
+        if (areProfileSnapshotsEqual(prev.profile, appliedProfile) && !prev.profileError) {
+          return prev;
+        }
+        return {
+          ...prev,
+          isInitializing: false,
+          profile: appliedProfile,
+          profileError: null,
+        };
+      });
+      return appliedProfile;
+    },
+    [loadProfile, rememberProfileSnapshot, state.user],
+  );
+
   const setSignedOutState = useCallback((options = {}) => {
+    authEventGenerationRef.current += 1;
     const signedOutUserId = normalizeScopeId(options?.signedOutUserId);
     if (signedOutUserId) {
       explicitlySignedOutUserIdRef.current = signedOutUserId;
@@ -423,6 +592,8 @@ export function SimpleAuthProvider({ children }) {
     profileLoadInFlightRef.current.clear();
     authRequestIdRef.current += 1;
     currentUserIdRef.current = null;
+    clearActiveQueryCacheOwner();
+    clearActiveOfflineOwner();
     signedOutSettledRef.current = true;
     profileRef.current = null;
     setState((prev) => {
@@ -460,10 +631,12 @@ export function SimpleAuthProvider({ children }) {
 
   const handleAuthChange = useCallback(
     async (event, session) => {
+      const authEventGeneration = ++authEventGenerationRef.current;
       const user = session?.user ?? null;
       const nextUserId = user?.id ?? null;
       const hadUser = !!currentUserIdRef.current;
       const cachedProfileBeforeAuth = getCachedProfileSnapshot();
+      const cacheOwnerBeforeAuth = getActiveQueryCacheOwner();
       let cacheClearedForAuthScope = false;
       const explicitlySignedOutUserId = normalizeScopeId(explicitlySignedOutUserIdRef.current);
       const nextScopeUserId = normalizeScopeId(nextUserId);
@@ -484,6 +657,7 @@ export function SimpleAuthProvider({ children }) {
         event === 'SIGNED_IN'
       ) {
         const sessionResult = await supabase.auth.getSession().catch(() => null);
+        if (authEventGeneration !== authEventGenerationRef.current) return;
         const activeUserId = normalizeScopeId(sessionResult?.data?.session?.user?.id);
         if (activeUserId !== nextScopeUserId) return;
       }
@@ -526,18 +700,85 @@ export function SimpleAuthProvider({ children }) {
         signedOutSettledRef.current = false;
         if (hadUser || cachedUserChanged) {
           await cleanupSessionRuntime(cachedUserChanged ? 'cached-user-changed' : 'user-changed');
+          if (
+            authEventGeneration !== authEventGenerationRef.current ||
+            normalizeScopeId(currentUserIdRef.current) !== nextScopeUserId ||
+            logoutInProgressRef.current
+          ) {
+            return;
+          }
           cacheClearedForAuthScope = true;
         }
       }
 
+      const metadataCompanyId = normalizeScopeId(user?.user_metadata?.company_id);
+      const metadataScopeChanged =
+        !cacheClearedForAuthScope &&
+        hasAuthMetadataCompanyScopeChanged({
+          cacheOwner: cacheOwnerBeforeAuth,
+          cachedProfile: cachedProfileBeforeAuth,
+          currentProfile: profileRef.current,
+          nextUserId,
+          metadataCompanyId,
+        });
+
+      if (metadataScopeChanged) {
+        // Auth metadata can change company without changing the user id (for
+        // example on TOKEN_REFRESHED). Never relabel the previous company's
+        // cache. Role metadata is deliberately ignored for authorization.
+        clearProfileRecovery();
+        profileAbortControllersRef.current.forEach((controller) => {
+          try {
+            controller.abort();
+          } catch {}
+        });
+        profileAbortControllersRef.current.clear();
+        profileLoadInFlightRef.current.clear();
+        authRequestIdRef.current += 1;
+        profileRef.current = null;
+        setState((prev) => ({
+          ...prev,
+          isInitializing: true,
+          profile: null,
+          profileError: null,
+        }));
+        await cleanupSessionRuntime('auth-metadata-company-changed');
+        if (
+          authEventGeneration !== authEventGenerationRef.current ||
+          normalizeScopeId(currentUserIdRef.current) !== nextScopeUserId ||
+          logoutInProgressRef.current
+        ) {
+          return;
+        }
+        cacheClearedForAuthScope = true;
+      }
+
+      setActiveQueryCacheOwner(
+        metadataCompanyId
+          ? { userId: nextUserId, companyId: metadataCompanyId }
+          : { userId: nextUserId },
+      );
+
       const isNonBlockingSameUserEvent =
         !userChanged &&
         (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED' || event === 'SIGNED_IN');
-      const hasCurrentProfile = profileRef.current?.id === nextUserId;
-      const cachedProfileForCurrentUser = getCachedProfileForUser(nextUserId);
+      const hasCurrentProfile =
+        !metadataScopeChanged && profileRef.current?.id === nextUserId;
+      const cachedProfileForCurrentUser = metadataScopeChanged
+        ? null
+        : getCachedProfileForUser(nextUserId);
+      if (cachedProfileForCurrentUser?.company_id) {
+        setActiveOfflineOwner({
+          userId: nextUserId,
+          companyId: cachedProfileForCurrentUser.company_id,
+        });
+      }
       const metadataProfileForCurrentUser = buildProfileFromUser(user, 'metadata-bootstrap');
       const networkSnapshot = getOfflineSnapshot();
-      const isConfirmedOffline = networkSnapshot.isNetworkKnown && !networkSnapshot.isOnline;
+      const shouldPreferLocalBootstrap =
+        !networkSnapshot.isNetworkKnown ||
+        !networkSnapshot.isOnline ||
+        networkSnapshot.isPoorConnection;
       const isPersistedSessionRecovery = event === 'PERSISTED_SESSION';
       // A same-user cache may paint immediately only for a cold session restore,
       // when the device is confirmed offline, or when auth is being recovered
@@ -545,9 +786,10 @@ export function SimpleAuthProvider({ children }) {
       const canUseColdCachedProfile =
         (event === 'INITIAL_SESSION' || isPersistedSessionRecovery) &&
         !!cachedProfileForCurrentUser &&
-        (isConfirmedOffline || isPersistedSessionRecovery);
+        (shouldPreferLocalBootstrap || isPersistedSessionRecovery);
       const canUsePersistedMetadataProfile =
-        isPersistedSessionRecovery && !!metadataProfileForCurrentUser;
+        (isPersistedSessionRecovery || shouldPreferLocalBootstrap) &&
+        !!metadataProfileForCurrentUser;
       const shouldBlockUi =
         !hasCurrentProfile &&
         !canUseColdCachedProfile &&
@@ -560,7 +802,7 @@ export function SimpleAuthProvider({ children }) {
             (hasCurrentProfile ? profileRef.current : null) ||
             metadataProfileForCurrentUser;
 
-      if (isNonBlockingSameUserEvent && hasCurrentProfile) {
+      if (!metadataScopeChanged && isNonBlockingSameUserEvent && hasCurrentProfile) {
         setState((prev) => ({
           ...prev,
           isInitializing: false,
@@ -568,6 +810,10 @@ export function SimpleAuthProvider({ children }) {
           user,
           profileError: null,
         }));
+        // Role changes are authoritative in profiles and are not guaranteed to
+        // be mirrored into JWT metadata. Refresh without blocking the UI; the
+        // recovery path clears privileged caches before applying a new role.
+        scheduleProfileRecovery(user);
         return;
       }
 
@@ -577,9 +823,14 @@ export function SimpleAuthProvider({ children }) {
         isSigningOut: false,
         isAuthenticated: true,
         user,
-        profile: bootstrapProfile || prev.profile || null,
+        profile: bootstrapProfile || (metadataScopeChanged ? null : prev.profile) || null,
         profileError: null,
       }));
+
+      if (shouldPreferLocalBootstrap && bootstrapProfile) {
+        scheduleProfileRecovery(user);
+        return;
+      }
 
       try {
         const profileAttempt = await settleWithin(loadProfile(user), PROFILE_UI_WAIT_TIMEOUT_MS);
@@ -588,13 +839,28 @@ export function SimpleAuthProvider({ children }) {
           throw new Error('profile-load-wait-timeout');
         }
         const profile = profileAttempt.value;
-        if (requestId !== authRequestIdRef.current) return;
+        if (
+          requestId !== authRequestIdRef.current ||
+          authEventGeneration !== authEventGenerationRef.current
+        ) return;
 
-        if (!cacheClearedForAuthScope && hasProfileScopeChanged(cachedProfileBeforeAuth, profile, nextUserId)) {
+        if (
+          !cacheClearedForAuthScope &&
+          (hasProfileScopeChanged(cachedProfileBeforeAuth, profile, nextUserId) ||
+            hasQueryCacheOwnerScopeChanged(cacheOwnerBeforeAuth, profile, nextUserId))
+        ) {
           await cleanupSessionRuntime('profile-scope-changed');
-          rememberProfileSnapshot(profile, nextUserId);
+          if (
+            requestId !== authRequestIdRef.current ||
+            authEventGeneration !== authEventGenerationRef.current ||
+            normalizeScopeId(currentUserIdRef.current) !== nextScopeUserId ||
+            logoutInProgressRef.current
+          ) {
+            return;
+          }
           cacheClearedForAuthScope = true;
         }
+        rememberProfileSnapshot(profile, nextUserId);
 
         debugLog('Setting profile state:', {
           hasProfile: !!profile,
@@ -609,7 +875,10 @@ export function SimpleAuthProvider({ children }) {
           profileError: profile ? null : 'load-failed',
         }));
       } catch (error) {
-        if (requestId !== authRequestIdRef.current) return;
+        if (
+          requestId !== authRequestIdRef.current ||
+          authEventGeneration !== authEventGenerationRef.current
+        ) return;
         const isTimeout =
           error?.message === 'profile-load-timeout' ||
           error?.message === 'profile-load-wait-timeout';
@@ -657,6 +926,8 @@ export function SimpleAuthProvider({ children }) {
   );
 
   useEffect(() => {
+    if (!queryCacheBootstrapReady) return undefined;
+
     let mounted = true;
     const initialNetworkStatePromise = Promise.race([
       NetInfo.fetch()
@@ -668,14 +939,47 @@ export function SimpleAuthProvider({ children }) {
     ]);
 
     const commitInitialSession = async (candidateSession, { allowSignedOut = false } = {}) => {
-      if (!mounted || initialSessionHandledRef.current) return true;
+      if (!mounted) return true;
+      if (initialSessionHandledRef.current) {
+        if (
+          candidateSession?.user?.id &&
+          !currentUserIdRef.current &&
+          !logoutInProgressRef.current
+        ) {
+          await handleAuthChange('SIGNED_IN', candidateSession);
+        }
+        return true;
+      }
 
       let session = candidateSession;
       let recoveredFromStorage = false;
       if (!session?.user?.id) {
         try {
-          session = await readPersistedAuthSession();
-          recoveredFromStorage = !!session?.user?.id;
+          const persistedSessionPromise = readPersistedAuthSession();
+          const persistedAttempt = await settleWithin(
+            persistedSessionPromise,
+            LOCAL_SESSION_READ_WAIT_MS,
+          );
+          if (persistedAttempt.timedOut) {
+            // Keep listening to the original local read. A slow Android
+            // keystore migration must not become either a false logout or a
+            // permanent startup gate.
+            persistedSessionPromise
+              .then((lateSession) => {
+                if (lateSession?.user?.id) {
+                  commitInitialSession(lateSession).catch(() => {});
+                }
+              })
+              .catch(() => {});
+            if (!allowSignedOut) return false;
+            // Reveal the signed-out recovery shell without deleting either
+            // the session or cached data. A later SDK SIGNED_IN event can
+            // still recover this account.
+            session = null;
+          } else {
+            session = persistedAttempt.value;
+            recoveredFromStorage = !!session?.user?.id;
+          }
         } catch (error) {
           log.warn('persisted session read failed during startup', error);
         }
@@ -703,10 +1007,17 @@ export function SimpleAuthProvider({ children }) {
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         try {
+          const sessionAttempt = await settleWithin(
+            supabase.auth.getSession(),
+            AUTH_SDK_SESSION_WAIT_MS,
+          );
+          if (sessionAttempt.timedOut) {
+            throw new Error('auth-session-load-timeout');
+          }
           const {
             data: { session },
             error,
-          } = await supabase.auth.getSession();
+          } = sessionAttempt.value;
 
           if (!mounted) return;
 
@@ -781,6 +1092,7 @@ export function SimpleAuthProvider({ children }) {
   }, [
     clearProfileRecovery,
     handleAuthChange,
+    queryCacheBootstrapReady,
     recoverFromInvalidRefreshToken,
     setSignedOutState,
   ]);
@@ -891,6 +1203,7 @@ export function SimpleAuthProvider({ children }) {
   const value = {
     ...state,
     mergeAuthUserMetadata,
+    refreshProfile,
     signOut,
   };
 

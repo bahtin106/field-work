@@ -41,6 +41,7 @@ import { usePersistedOrderStatusUsage } from '../../lib/orderStatusUsage';
 import { getOrderStatusLabel, useCompanyOrderStatuses } from '../../lib/orderStatuses';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { formatPersonName } from '../../lib/personName';
+import { usePermissions } from '../../lib/permissions';
 import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
 import {
   getOrderIdsByWorkTypes,
@@ -104,6 +105,11 @@ import {
 import { matchesSearch } from '../../src/shared/search/matching';
 import { buildRequestSearchIndex } from '../../src/features/requests/search';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import {
+  getOfflineSnapshot,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
 import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
@@ -292,6 +298,11 @@ function MyOrdersContent() {
   const { t } = useTranslation();
   const { width: windowWidth } = useWindowDimensions();
   const queryClient = useQueryClient();
+  const offlineSnapshot = useOfflineSnapshot();
+  const networkRefreshable =
+    offlineSnapshot.isNetworkKnown &&
+    offlineSnapshot.isOnline &&
+    !offlineSnapshot.isPoorConnection;
   trackRender(MY_ORDERS_SCREEN_KEY, MY_ORDERS_RENDER_WARN_THRESHOLD);
 
   useEffect(() => {
@@ -452,9 +463,11 @@ function MyOrdersContent() {
   const navigation = useNavigation();
   const isFocused = useIsFocused();
   const auth = useAuth();
+  const { companyId: permissionsCompanyId } = usePermissions();
   const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin = String(auth.profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
-  const { companyId } = useMyCompanyId();
+  const { companyId: resolvedCompanyId } = useMyCompanyId();
+  const companyId = resolvedCompanyId || permissionsCompanyId || null;
   const statusSystem = useCompanyOrderStatuses(companyId);
 
   useFocusEffect(
@@ -1574,7 +1587,7 @@ function MyOrdersContent() {
     setRefreshNonce((value) => value + 1);
   }, []);
   useRequestRealtimeSync({
-    enabled: isFocused && !!companyId,
+    enabled: isFocused && networkRefreshable && !!companyId,
     companyId,
     onRequestsChanged: handleRealtimeRequestsChanged,
   });
@@ -1724,7 +1737,9 @@ function MyOrdersContent() {
     if (!isFeedFeatureEnabled) return undefined;
     if (!isFocused) return;
     if (loading && orders.length === 0) return;
+    const controller = new AbortController();
     const prefetchFeed = async () => {
+      if (!networkRefreshable) return;
       const cached = listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY];
       if (Array.isArray(cached)) {
         updateFeedMeta(cached, cached.length);
@@ -1732,7 +1747,10 @@ function MyOrdersContent() {
 
       let uid = String(auth.user?.id || auth.profile?.id || '').trim();
       if (!uid) {
-        const { data: sessionData } = await supabase.auth.getSession();
+        const { data: sessionData } = await withReadDeadline(
+          supabase.auth.getSession(),
+          { label: 'Feed session', signal: controller.signal },
+        );
         uid = String(sessionData?.session?.user?.id || '').trim();
       }
       if (!uid) return;
@@ -1741,14 +1759,24 @@ function MyOrdersContent() {
       feedMetaRequestSeqRef.current = requestSeq;
       try {
         const [data, countResult] = await Promise.all([
-          listRequests({
-            scope: 'all',
-            status: 'feed',
-            userId: uid,
-            page: 1,
-            pageSize: MY_ORDERS_FEED_PREVIEW_SIZE,
-          }),
-          fetchAccessibleFeedCount().catch(() => null),
+          withReadDeadline(
+            (signal) =>
+              listRequests(
+                {
+                  scope: 'all',
+                  status: 'feed',
+                  userId: uid,
+                  page: 1,
+                  pageSize: MY_ORDERS_FEED_PREVIEW_SIZE,
+                },
+                signal,
+              ),
+            { label: 'Feed preview', signal: controller.signal },
+          ),
+          withReadDeadline(
+            (signal) => fetchAccessibleFeedCount(signal),
+            { label: 'Feed count', signal: controller.signal },
+          ).catch(() => null),
         ]);
         if (feedMetaRequestSeqRef.current !== requestSeq) return;
         setListCacheEntry(MY_ORDERS_FEED_INDICATOR_CACHE_KEY, data, { fetchedAt: Date.now() });
@@ -1767,12 +1795,13 @@ function MyOrdersContent() {
       });
     }, MY_ORDERS_FEED_PREFETCH_DELAY_MS);
     return () => {
+      controller.abort();
       clearTimeout(timer);
       try {
         task?.cancel?.();
       } catch {}
     };
-  }, [auth.profile?.id, auth.user?.id, isFeedFeatureEnabled, isFocused, loading, orders.length, setListCacheEntry, updateFeedMeta, listCacheMy]);
+  }, [auth.profile?.id, auth.user?.id, isFeedFeatureEnabled, isFocused, listCacheMy, loading, networkRefreshable, orders.length, setListCacheEntry, updateFeedMeta]);
 
   // Mark feed as seen after opening the feed tab
   useEffect(() => {
@@ -1834,6 +1863,7 @@ function MyOrdersContent() {
     if (!isFocused) return;
     let alive = true;
     let backgroundTimer = null;
+    const controller = new AbortController();
 
     const fetchUserAndOrders = async (isBackground = false, options = {}) => {
       const forceNetwork = !!options?.forceNetwork;
@@ -1862,9 +1892,27 @@ function MyOrdersContent() {
         return;
       }
 
+      const network = getOfflineSnapshot();
+      const networkUnknown = !network.isNetworkKnown;
+      const networkOffline = network.isNetworkKnown && !network.isOnline;
+      const shouldUseCacheOnly =
+        hasVisibleSnapshot &&
+        !forceNetwork &&
+        (networkUnknown || networkOffline || network.isPoorConnection);
+      if (shouldUseCacheOnly || networkUnknown || networkOffline) {
+        setLoadingMore(false);
+        setLoadError('');
+        setLoading(false);
+        resolveRefreshWaiters();
+        return;
+      }
+
       let uid = String(auth.user?.id || auth.profile?.id || '').trim();
       if (!uid) {
-        const { data: sessionData } = await supabase.auth.getSession();
+        const { data: sessionData } = await withReadDeadline(
+          supabase.auth.getSession(),
+          { label: 'Orders session', signal: controller.signal },
+        );
         if (!alive) return;
         uid = String(sessionData?.session?.user?.id || '').trim();
       }
@@ -1918,7 +1966,19 @@ function MyOrdersContent() {
       const selectedWorkTypes = Array.isArray(filterValues.workTypes) ? filterValues.workTypes : [];
       let workTypeOrderIds = null;
       if (useWorkTypesFlag && selectedWorkTypes.length) {
-        workTypeOrderIds = await getOrderIdsByWorkTypes(selectedWorkTypes);
+        try {
+          workTypeOrderIds = await withReadDeadline(
+            (signal) => getOrderIdsByWorkTypes(selectedWorkTypes, signal),
+            { label: 'Orders work-type filter', signal: controller.signal },
+          );
+        } catch {
+          if (!alive) return;
+          setLoadingMore(false);
+          setLoadError(t('refresh_failed'));
+          setLoading(false);
+          resolveRefreshWaiters();
+          return;
+        }
         if (!alive) return;
         if (!workTypeOrderIds.length) {
           const emptyResult = [];
@@ -1974,50 +2034,61 @@ function MyOrdersContent() {
         });
       };
       const canUseRequestsApi = !(key === 'all' && hasLinkedRelationFilter);
-      const fetchOrdersPage = async (pageNumber) => {
+      const fetchOrdersPage = async (pageNumber, signal) => {
         if (canUseRequestsApi) {
-          return listRequests({
-            scope: key === 'feed' ? 'all' : 'my',
-            status: key === 'feed' ? 'feed' : key === 'all' ? 'all' : normalizeOrderStatusFilterKey(key),
-            page: pageNumber,
-            pageSize: PAGE_SIZE,
-            userId: uid,
-            sortKey: normalizedSortKey,
-            statuses: selectedStatusKeys,
-            clientIds,
-            objectIds,
-            clientTags,
-            objectTags,
-            orderIds: Array.isArray(workTypeOrderIds) ? workTypeOrderIds : [],
-            relationClientId,
-            relationObjectIds,
-            dateFrom,
-            dateTo,
-            createdFrom,
-            createdTo,
-            sumMin: Number.isNaN(sumMin) ? null : sumMin,
-            sumMax: Number.isNaN(sumMax) ? null : sumMax,
-            excludeFeedWhenAll: isFeedFeatureEnabled,
-          });
+          return listRequests(
+            {
+              scope: key === 'feed' ? 'all' : 'my',
+              status: key === 'feed' ? 'feed' : key === 'all' ? 'all' : normalizeOrderStatusFilterKey(key),
+              page: pageNumber,
+              pageSize: PAGE_SIZE,
+              userId: uid,
+              sortKey: normalizedSortKey,
+              statuses: selectedStatusKeys,
+              clientIds,
+              objectIds,
+              clientTags,
+              objectTags,
+              orderIds: Array.isArray(workTypeOrderIds) ? workTypeOrderIds : [],
+              relationClientId,
+              relationObjectIds,
+              dateFrom,
+              dateTo,
+              createdFrom,
+              createdTo,
+              sumMin: Number.isNaN(sumMin) ? null : sumMin,
+              sumMax: Number.isNaN(sumMax) ? null : sumMax,
+              excludeFeedWhenAll: isFeedFeatureEnabled,
+            },
+            signal,
+          );
         }
 
         const from = Math.max(0, (Number(pageNumber) - 1) * PAGE_SIZE);
         const to = from + PAGE_SIZE - 1;
-        const { data: rows, error: pageError } = await applyOrderSortToQuery(
+        let pageQuery = applyOrderSortToQuery(
           buildOrdersQuery(),
           normalizedSortKey,
         ).range(from, to);
+        if (signal) pageQuery = pageQuery.abortSignal(signal);
+        const { data: rows, error: pageError } = await pageQuery;
         if (pageError) throw pageError;
         const hydratedRows = await hydrateRequestObjectLocations(
           Array.isArray(rows) ? rows : [],
+          signal,
         );
-        return enrichOrdersWithExecutorNames(hydratedRows);
+        return enrichOrdersWithExecutorNames(hydratedRows, { signal });
       };
 
       let data = null;
       let error = null;
       try {
-        data = await measureNetwork(`myOrders.${key}.firstPage`, () => fetchOrdersPage(1));
+        data = await measureNetwork(`myOrders.${key}.firstPage`, () =>
+          withReadDeadline(
+            (signal) => fetchOrdersPage(1, signal),
+            { label: 'Orders first page', signal: controller.signal },
+          ),
+        );
       } catch (nextError) {
         error = nextError;
       }
@@ -2057,7 +2128,11 @@ function MyOrdersContent() {
           let chunkError = null;
           try {
             chunkData = await measureNetwork(`myOrders.${key}.nextPage`, () =>
-              fetchOrdersPage(Math.floor(aggregated.length / PAGE_SIZE) + 1),
+              withReadDeadline(
+                (signal) =>
+                  fetchOrdersPage(Math.floor(aggregated.length / PAGE_SIZE) + 1, signal),
+                { label: 'Orders next page', signal: controller.signal },
+              ),
             );
           } catch (nextError) {
             chunkError = nextError;
@@ -2110,6 +2185,7 @@ function MyOrdersContent() {
 
     return () => {
       alive = false;
+      controller.abort();
       fetchNextOrdersPageRef.current = null;
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
@@ -2125,6 +2201,10 @@ function MyOrdersContent() {
     isFocused,
     makeCacheKey,
     normalizedSortKey,
+    networkRefreshable,
+    offlineSnapshot.isNetworkKnown,
+    offlineSnapshot.isOnline,
+    offlineSnapshot.isPoorConnection,
     PAGE_SIZE,
     queryClient,
     recentOrdersQueryKey,
@@ -2206,7 +2286,11 @@ function MyOrdersContent() {
     [feedTotalCount],
   );
   const ordersFacetCounts = useOrderFacetCounts(filteredOrders, panelStatusOptions, {
-    enabled: isFocused && !statusSystem.isLoading && !!(auth.user?.id || auth.profile?.id),
+    enabled:
+      isFocused &&
+      networkRefreshable &&
+      !statusSystem.isLoading &&
+      !!(auth.user?.id || auth.profile?.id),
     scope: 'my',
     scopeKey: cacheScopeKey,
     statusOverrides: feedFacetOverride,
@@ -2643,6 +2727,11 @@ function MyOrdersContent() {
 
   const handleRegisteredRefresh = useCallback(
     (context = {}) => {
+      // This screen's network-dependent loader already performs one
+      // cache-preserving refresh when a poor/offline connection becomes good.
+      // RouteFreshness emits the same transition, so handling it here would
+      // clear the visible cache and start a duplicate request.
+      if (context?.reason === 'network-recovered') return undefined;
       if (context?.reason !== 'request-cache-patch' || !context?.request?.id) {
         return refreshCurrentList(context);
       }

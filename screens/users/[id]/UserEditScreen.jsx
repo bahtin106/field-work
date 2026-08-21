@@ -73,9 +73,13 @@ import { useEntityFieldSettings } from '../../../src/features/fieldSettings/quer
 import { cleanupProfileMediaEntity, uploadProfileMedia } from '../../../src/features/profileMedia/api';
 import { useMyCompanyIdQuery } from '../../../src/features/profile/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
-import { getOfflineSnapshot } from '../../../src/shared/offline/offlineStatus';
+import {
+  canRunOutboxSync,
+  getOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
+import { useSuperAdminAccess } from '../../../hooks/useSuperAdminAccess';
 
 const TABLES = {
   profiles: TBL.PROFILES || 'profiles',
@@ -619,13 +623,17 @@ function RoleSelectModal({
 }
 
 // === end wrappers ===
-export default function EditUser() {
+export default function EditUser({ privilegedAdminAccess = false }) {
   const toast = useToast();
   const { theme } = useTheme();
   const { t, locale } = useTranslation();
   const _ver = useI18nVersion();
   const queryClient = useQueryClient();
   const router = useRouter();
+  const {
+    isSuperAdmin: hasSuperAdminAccess,
+    isLoading: superAdminAccessLoading,
+  } = useSuperAdminAccess();
   const navigation = useNavigation();
   const formStyles = useEditFormStyles();
 
@@ -832,13 +840,13 @@ export default function EditUser() {
     userId,
     {
       enabled: !!userId,
+      privilegedAdminAccess,
       placeholderData: (prev) => prev,
       // Role/account context is an authorization-sensitive part of this form.
       // Always refresh it instead of trusting a possibly partial list/view cache.
       refetchOnMount: 'always',
     },
   );
-  const updateEmployeeMutation = useUpdateEmployeeMutation();
   const meIsAdmin = !!employeeData?.meIsAdmin;
   const meIsSuperAdmin = !!employeeData?.meIsSuperAdmin;
   const meId = employeeData?.myUid || null;
@@ -909,6 +917,35 @@ export default function EditUser() {
   const [birthdate, setBirthdate] = useState(null);
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
+  const authCompanyId = String(companyId || '').trim();
+  const targetCompanyId = String(
+    employeeData?.companyId || employeeData?.company_id || '',
+  ).trim();
+  const legacyCrossCompanyAdminData = Boolean(
+    !privilegedAdminAccess &&
+      employeeData?.meIsSuperAdmin === true &&
+      isEditingOtherUser &&
+      (!authCompanyId || !targetCompanyId || authCompanyId !== targetCompanyId),
+  );
+  const requiresSuperAdminAccess = privilegedAdminAccess || legacyCrossCompanyAdminData;
+  const privilegedAccessBlocked =
+    requiresSuperAdminAccess && (superAdminAccessLoading || !hasSuperAdminAccess);
+  const usePrivilegedEmployeeCache = privilegedAdminAccess || legacyCrossCompanyAdminData;
+  const employeeDetailKey = usePrivilegedEmployeeCache
+    ? queryKeys.employees.adminDetail(userId)
+    : queryKeys.employees.detail(userId);
+  const updateEmployeeMutation = useUpdateEmployeeMutation({
+    privilegedAdminAccess: usePrivilegedEmployeeCache,
+  });
+  useEffect(() => {
+    if (!requiresSuperAdminAccess || superAdminAccessLoading || hasSuperAdminAccess) return;
+    router.replace('/orders');
+  }, [
+    hasSuperAdminAccess,
+    requiresSuperAdminAccess,
+    router,
+    superAdminAccessLoading,
+  ]);
   const settingsCompanyId = employeeData?.companyId || companyId || null;
   const { useDepartments } = useCompanySettings(settingsCompanyId, {
     // The department field is controlled by this setting, so a persisted stale
@@ -1458,16 +1495,21 @@ export default function EditUser() {
     const blockedNow = !!prof.is_admin_blocked
       || prof.license_state === 'blocked_by_license';
 
-    updateEmployeeQueryCaches(queryClient, userId, (prev) => ({
-      ...(prev || {}),
-      ...prof,
-      companyId: prof.company_id || prev?.companyId || null,
-      isSuspended: !!prof.is_admin_blocked,
-      isBlocked: blockedNow,
-    }));
+    updateEmployeeQueryCaches(
+      queryClient,
+      userId,
+      (prev) => ({
+        ...(prev || {}),
+        ...prof,
+        companyId: prof.company_id || prev?.companyId || null,
+        isSuspended: !!prof.is_admin_blocked,
+        isBlocked: blockedNow,
+      }),
+      { privilegedAdminAccess: usePrivilegedEmployeeCache },
+    );
 
     return { prof, blockedNow };
-  }, [queryClient, userId]);
+  }, [queryClient, usePrivilegedEmployeeCache, userId]);
 
   const isDirty = useMemo(() => {
     if (!initialSnap) return false;
@@ -1612,7 +1654,7 @@ export default function EditUser() {
         !String(pendingAvatarUrl).startsWith('http');
 
       const offlineSnapshot = getOfflineSnapshot();
-      if (offlineSnapshot.isNetworkKnown && !offlineSnapshot.isOnline) {
+      if (!canRunOutboxSync(offlineSnapshot)) {
         if (hasEmailValueChanged || (newPassword && newPassword.length) || isSuperAdminEditingOther || hasLocalAvatarUpload) {
           throw new Error(
             t(
@@ -1885,23 +1927,40 @@ export default function EditUser() {
         meIsAdmin,
         myUid: meId,
       };
-      updateEmployeeQueryCaches(queryClient, userId, nextEmployeeSnapshot);
-      queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
+      updateEmployeeQueryCaches(
+        queryClient,
+        userId,
+        nextEmployeeSnapshot,
+        { privilegedAdminAccess: usePrivilegedEmployeeCache },
+      );
+      queryClient.invalidateQueries({ queryKey: employeeDetailKey });
       if (persistedRole !== nextRole) {
         if (adminRoleSuccessor?.id) {
-          updateEmployeeQueryCaches(queryClient, adminRoleSuccessor.id, { role: ROLE.ADMIN });
+          updateEmployeeQueryCaches(
+            queryClient,
+            adminRoleSuccessor.id,
+            { role: ROLE.ADMIN },
+            { privilegedAdminAccess: usePrivilegedEmployeeCache },
+          );
           queryClient.invalidateQueries({
-            queryKey: queryKeys.employees.detail(adminRoleSuccessor.id),
+            queryKey: usePrivilegedEmployeeCache
+              ? queryKeys.employees.adminDetail(adminRoleSuccessor.id)
+              : queryKeys.employees.detail(adminRoleSuccessor.id),
           });
         }
         if (displacedAdminRole) {
           companyAdminItems.forEach((adminItem) => {
             if (!adminItem?.id || String(adminItem.id) === String(userId)) return;
-            updateEmployeeQueryCaches(queryClient, adminItem.id, {
-              role: displacedAdminRole,
-            });
+            updateEmployeeQueryCaches(
+              queryClient,
+              adminItem.id,
+              { role: displacedAdminRole },
+              { privilegedAdminAccess: usePrivilegedEmployeeCache },
+            );
             queryClient.invalidateQueries({
-              queryKey: queryKeys.employees.detail(adminItem.id),
+              queryKey: usePrivilegedEmployeeCache
+                ? queryKeys.employees.adminDetail(adminItem.id)
+                : queryKeys.employees.detail(adminItem.id),
             });
           });
         }
@@ -2505,7 +2564,7 @@ export default function EditUser() {
       await syncEmployeeBlockState();
 
       // Инвалидируем кеш и разрешаем выход, затем сразу назад
-      await queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
+      await queryClient.invalidateQueries({ queryKey: employeeDetailKey });
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       showSuccessToast(t('toast_suspended'));
       setSuspendVisible(false);
@@ -2551,7 +2610,7 @@ export default function EditUser() {
       await syncEmployeeBlockState();
 
       // Инвалидируем кеш и разрешаем выход, затем сразу назад
-      await queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
+      await queryClient.invalidateQueries({ queryKey: employeeDetailKey });
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       showSuccessToast(t('toast_unsuspended'));
       setUnsuspendVisible(false);
@@ -2864,7 +2923,7 @@ export default function EditUser() {
     setDisplacedAdminRole(null);
     setAdminReplacementRoleVisible(false);
   };
-  if (employeeLoading && !employeeData) {
+  if (privilegedAccessBlocked || (employeeLoading && !employeeData)) {
     return (
       <EditScreenTemplate scrollEnabled={false}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>

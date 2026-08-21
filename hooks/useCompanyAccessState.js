@@ -4,12 +4,16 @@ import { AppState } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
+import { useOfflineSnapshot } from '../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../src/shared/network/readDeadline';
 
-async function fetchCompanyAccessState(companyId) {
+async function fetchCompanyAccessState(companyId, signal = undefined) {
   if (!companyId) return null;
-  const { data, error } = await supabase.rpc('get_company_access_state', {
+  let request = supabase.rpc('get_company_access_state', {
     p_company_id: companyId,
   });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   const rows = Array.isArray(data) ? data : [];
   if (!rows.length) return null;
@@ -39,37 +43,54 @@ async function fetchCompanyAccessState(companyId) {
   };
 }
 
-export function useCompanyAccessState(companyId) {
+export function useCompanyAccessState(
+  companyId,
+  { adminScope = false, enabled = true } = {},
+) {
   const queryClient = useQueryClient();
   const isFocused = useIsFocused();
+  const offlineSnapshot = useOfflineSnapshot();
+  const networkRefreshable =
+    offlineSnapshot.isNetworkKnown &&
+    offlineSnapshot.isOnline &&
+    !offlineSnapshot.isPoorConnection;
+  const queryKey = React.useMemo(
+    () => [adminScope ? 'adminCompanyAccessState' : 'companyAccessState', companyId],
+    [adminScope, companyId],
+  );
+  const canRefresh = enabled && !!companyId && networkRefreshable;
   const query = useQuery({
-    queryKey: ['companyAccessState', companyId],
-    enabled: !!companyId,
-    queryFn: () => fetchCompanyAccessState(companyId),
+    queryKey,
+    enabled: canRefresh,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchCompanyAccessState(companyId, readSignal),
+        { label: 'Company access state', signal },
+      ),
     staleTime: 30 * 1000,
-    refetchInterval: companyId && isFocused ? 30 * 1000 : false,
+    refetchInterval: canRefresh && isFocused ? 30 * 1000 : false,
     refetchIntervalInBackground: false,
     refetchOnMount: 'stale',
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
   });
   const { refetch, dataUpdatedAt } = query;
 
   useFocusEffect(
     React.useCallback(() => {
-      if (!companyId) return undefined;
+      if (!canRefresh) return undefined;
       if (!dataUpdatedAt || Date.now() - dataUpdatedAt >= 30 * 1000) refetch();
       return undefined;
-    }, [companyId, dataUpdatedAt, refetch]),
+    }, [canRefresh, dataUpdatedAt, refetch]),
   );
 
   React.useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && companyId) {
-        queryClient.invalidateQueries({ queryKey: ['companyAccessState', companyId] });
+      if (state === 'active' && canRefresh) {
+        queryClient.invalidateQueries({ queryKey });
       }
     });
     return () => sub.remove();
-  }, [companyId, queryClient]);
+  }, [canRefresh, queryClient, queryKey]);
 
   return {
     ...query,

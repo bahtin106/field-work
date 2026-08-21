@@ -15,6 +15,11 @@ import {
   SUPPORT_UNREAD_REFETCH_MS,
 } from '../../../src/features/supportRequests/api';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { withAlpha } from '../../../theme/colors';
 
@@ -51,6 +56,8 @@ export default function AdminFeedbacksScreen() {
   const nav = useNavigation();
   const router = useRouter();
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const [includeCompleted, setIncludeCompleted] = React.useState(false);
   const [statusFilter, setStatusFilter] = React.useState('active');
 
@@ -60,18 +67,23 @@ export default function AdminFeedbacksScreen() {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['adminSupportRequests', { includeCompleted }],
-    queryFn: () => listSupportRequests({ limit: 300, includeCompleted }),
-    enabled: isAllowed,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => listSupportRequests({ limit: 300, includeCompleted }, readSignal),
+        { label: 'Admin support requests', signal },
+      ),
+    enabled: isAllowed && canUseAdminNetwork,
     staleTime: 10 * 1000,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    refetchInterval: SUPPORT_UNREAD_REFETCH_MS,
-    refetchIntervalInBackground: true,
+    refetchOnMount: 'stale',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: canUseAdminNetwork ? SUPPORT_UNREAD_REFETCH_MS : false,
+    refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
   });
 
   React.useEffect(() => {
-    if (!isAllowed) return undefined;
+    if (!isAllowed || !canUseAdminNetwork) return undefined;
     const channel = supabase
       .channel('admin-feedbacks-list')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feedbacks' }, () => {
@@ -84,7 +96,7 @@ export default function AdminFeedbacksScreen() {
         supabase.removeChannel(channel);
       } catch {}
     };
-  }, [isAllowed, refetch]);
+  }, [canUseAdminNetwork, isAllowed, refetch]);
 
   if (guardLoading || !isAllowed) {
     return <Screen background="background" />;
@@ -160,7 +172,9 @@ export default function AdminFeedbacksScreen() {
             <Button
               title={t('btn_retry')}
               size="sm"
-              onPress={() => refetch()}
+              onPress={() => {
+                if (canUseAdminNetwork) refetch();
+              }}
               containerStyle={styles(theme).retryButtonContainer}
             />
           </Card>

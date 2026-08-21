@@ -3,14 +3,21 @@ import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/
 import { supabase } from '../../../lib/supabase';
 import { formatPersonNameParts } from '../../../lib/personName';
 import { queryKeys } from '../../shared/query/queryKeys';
+import {
+  assertActiveQueryCacheOwnerContext,
+  captureActiveQueryCacheOwnerContext,
+  isActiveQueryCacheOwnerContext,
+} from '../../shared/query/queryClient';
+import { withReadDeadline } from '../../shared/network/readDeadline';
 import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
 import {
+  canRunOutboxSync,
   enqueueClientUpdate,
   enqueueTrashDelete,
-  getOfflineSnapshot,
   hasPendingOfflineUpdate,
   isOfflineLikeError,
   syncOfflineOutbox,
+  useOfflineSnapshot,
 } from '../../shared/offline/offlineStatus';
 import {
   createClient,
@@ -22,17 +29,80 @@ import {
   updateClient,
 } from './api';
 
+const CLIENT_MUTATION_OWNER_CONTEXT = '__fieldWorkClientMutationOwnerContext';
+
+function normalizeClientListScope(value: any) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function clientMatchesCachedSearch(client: any, search: any) {
+  const needle = String(search || '').trim().toLowerCase();
+  if (!needle) return true;
+  const values = [
+    client?.full_name,
+    client?.fullName,
+    client?.first_name,
+    client?.firstName,
+    client?.middle_name,
+    client?.middleName,
+    client?.last_name,
+    client?.lastName,
+    client?.email,
+    client?.phone,
+    client?.additional_phone_1,
+    client?.additionalPhone1,
+    client?.additional_phone_2,
+    client?.additionalPhone2,
+    client?.additional_phone_3,
+    client?.additionalPhone3,
+  ];
+  return values.some((value) => String(value || '').toLowerCase().includes(needle));
+}
+
+function findClientsInCachedSuperset(queryClient: any, params: any) {
+  const targetCompanyId = normalizeClientListScope(params?.companyId);
+  let best: { rows: any[]; updatedAt: number } | null = null;
+  const entries = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+
+  for (const [key, value] of entries) {
+    if (!Array.isArray(value) || !Array.isArray(key)) continue;
+    const sourceParams = key[2] && typeof key[2] === 'object' ? key[2] : {};
+    if (normalizeClientListScope(sourceParams?.companyId) !== targetCompanyId) continue;
+    // Only an unsearched company list is a safe superset of another search.
+    if (String(sourceParams?.search || '').trim()) continue;
+
+    const rows = value
+      .filter((client: any) => {
+        const rowCompanyId = normalizeClientListScope(client?.company_id || client?.companyId);
+        return !targetCompanyId || !rowCompanyId || rowCompanyId === targetCompanyId;
+      })
+      .filter((client: any) => clientMatchesCachedSearch(client, params?.search));
+    if (rows.length === 0) continue;
+
+    const updatedAt = Number(queryClient.getQueryState(key)?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) best = { rows, updatedAt };
+  }
+
+  return best?.rows || null;
+}
+
 export function useClients(params: any = {}, options: any = {}) {
   const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.clients.list(params),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await listClients(params);
+        return await withReadDeadline((readSignal) => listClients(params, readSignal), {
+          label: 'Clients list',
+          signal,
+        });
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached = queryClient.getQueryData(queryKeys.clients.list(params));
-        return Array.isArray(cached) ? cached : [];
+        if (Array.isArray(cached)) return cached;
+        const derived = findClientsInCachedSuperset(queryClient, params);
+        if (derived) return derived;
+        throw error;
       }
     },
     staleTime: 30 * 1000,
@@ -66,9 +136,15 @@ export function useClient(id: any, options: any = {}) {
 
   return useQuery({
     queryKey: queryKeys.clients.detail(id),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await getClientById(String(id || ''));
+        return await withReadDeadline(
+          (readSignal) => getClientById(String(id || ''), readSignal),
+          {
+            label: 'Client detail',
+            signal,
+          },
+        );
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const fromDetail = queryClient.getQueryData(queryKeys.clients.detail(id));
@@ -101,7 +177,8 @@ export function useClientOrderCount(id: any, options: any = {}) {
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached = queryClient.getQueryData(queryKeys.clients.orderCount(id));
-        return Number(cached || 0);
+        if (typeof cached === 'number' && Number.isFinite(cached)) return cached;
+        throw error;
       }
     },
     enabled: !!id,
@@ -121,16 +198,8 @@ export function useClientDeleteBlockers(id: any, options: any = {}) {
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached = queryClient.getQueryData(['clients', 'delete-blockers', String(id || '')]);
-        return cached || {
-          clientId: String(id || ''),
-          blockingOrdersCount: 0,
-          blockingObjectsCount: 0,
-          blockingObjectIds: [],
-          myOrdersCount: 0,
-          feedOrdersCount: 0,
-          otherOrdersCount: 0,
-          isPartial: true,
-        };
+        if (cached) return cached;
+        throw error;
       }
     },
     enabled: !!id,
@@ -262,11 +331,14 @@ function acquireClientsRealtimeSubscription(queryClient: any, companyId: any) {
 
 export function useClientsRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
+  const network = useOfflineSnapshot();
+  const canUseRealtime =
+    network.isNetworkKnown && network.isOnline && !network.isPoorConnection;
 
   useEffect(() => {
-    if (!enabled || !companyId) return undefined;
+    if (!enabled || !companyId || !canUseRealtime) return undefined;
     return acquireClientsRealtimeSubscription(queryClient, companyId);
-  }, [companyId, enabled, queryClient]);
+  }, [canUseRealtime, companyId, enabled, queryClient]);
 }
 
 export function updateClientQueryCaches(queryClient: any, clientId: any, patchOrUpdater: any) {
@@ -341,12 +413,29 @@ export function useCreateClientMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (payload: Record<string, any>) => createClient(payload),
-    onSuccess: (created: any) => {
+    mutationFn: (payload: Record<string, any>) => {
+      assertActiveQueryCacheOwnerContext(payload?.[CLIENT_MUTATION_OWNER_CONTEXT]);
+      return createClient(payload);
+    },
+    onMutate: (payload: Record<string, any>) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      Object.defineProperty(payload, CLIENT_MUTATION_OWNER_CONTEXT, {
+        value: ownerContext,
+        configurable: true,
+        enumerable: false,
+      });
+      return { ownerContext };
+    },
+    onSuccess: (created: any, _payload, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (created?.id) {
         updateClientQueryCaches(queryClient, created.id, created);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+    onSettled: (_data, _error, payload: Record<string, any>) => {
+      if (payload && typeof payload === 'object') delete payload[CLIENT_MUTATION_OWNER_CONTEXT];
     },
   });
 }
@@ -355,10 +444,13 @@ export function useUpdateClientMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Record<string, any> }) => {
+    mutationFn: async (variables: { id: string; patch: Record<string, any> } & Record<any, any>) => {
+      assertActiveQueryCacheOwnerContext(variables?.[CLIENT_MUTATION_OWNER_CONTEXT]);
+      const { id, patch } = variables;
       const base = queryClient.getQueryData(queryKeys.clients.detail(id)) as Record<string, any> | null;
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      const online = onlineManager.isOnline() && canRunOutboxSync();
       if (!online) {
+        assertActiveQueryCacheOwnerContext(variables?.[CLIENT_MUTATION_OWNER_CONTEXT]);
         const queued = await enqueueClientUpdate({ id, patch, base });
         return {
           ...(base || {}),
@@ -372,6 +464,7 @@ export function useUpdateClientMutation() {
         return await updateClient(id, patch);
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
+        assertActiveQueryCacheOwnerContext(variables?.[CLIENT_MUTATION_OWNER_CONTEXT]);
         const queued = await enqueueClientUpdate({ id, patch, base });
         return {
           ...(base || {}),
@@ -382,21 +475,31 @@ export function useUpdateClientMutation() {
         };
       }
     },
-    onMutate: async ({ id, patch }) => {
+    onMutate: async (variables: any) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      Object.defineProperty(variables, CLIENT_MUTATION_OWNER_CONTEXT, {
+        value: ownerContext,
+        configurable: true,
+        enumerable: false,
+      });
+      const { id, patch } = variables;
       const detailKey = queryKeys.clients.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
       await queryClient.cancelQueries({ queryKey: ['clients', 'list'] });
+      assertActiveQueryCacheOwnerContext(ownerContext);
       const previous = queryClient.getQueryData(detailKey);
       const previousLists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] });
       updateClientQueryCaches(queryClient, id, (prev: any) => ({
         ...(prev || {}),
         ...(patch || {}),
         id,
-        __offlinePending: !onlineManager.isOnline(),
+        __offlinePending: !(onlineManager.isOnline() && canRunOutboxSync()),
       }));
-      return { previous, previousLists, detailKey };
+      return { previous, previousLists, detailKey, ownerContext };
     },
     onError: (_error, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (context?.previous) {
         queryClient.setQueryData(context.detailKey, context.previous);
       }
@@ -406,13 +509,19 @@ export function useUpdateClientMutation() {
         });
       }
     },
-    onSuccess: (updated: any) => {
+    onSuccess: (updated: any, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (updated?.id) {
         updateClientQueryCaches(queryClient, updated.id, updated);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       if (updated?.__offlinePending) {
         syncOfflineOutbox(queryClient).catch(() => {});
+      }
+    },
+    onSettled: (_data, _error, variables: any) => {
+      if (variables && typeof variables === 'object') {
+        delete variables[CLIENT_MUTATION_OWNER_CONTEXT];
       }
     },
   });
@@ -422,12 +531,17 @@ export function useDeleteClientMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (id: string) => {
-      const entityId = String(id || '');
+    mutationFn: async (variables: any) => {
+      const ownerContext = variables?.[CLIENT_MUTATION_OWNER_CONTEXT];
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      const entityId = String(variables?.id || '');
       const base = queryClient.getQueryData(queryKeys.clients.detail(entityId)) as Record<string, any> | null;
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
-      if (!online || await hasPendingOfflineUpdate('client', entityId)) {
+      const online = onlineManager.isOnline() && canRunOutboxSync();
+      const hasPendingUpdate = await hasPendingOfflineUpdate('client', entityId);
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      if (!online || hasPendingUpdate) {
         await enqueueTrashDelete({ entity: 'client', id: entityId, base });
+        assertActiveQueryCacheOwnerContext(ownerContext);
         syncOfflineOutbox(queryClient).catch(() => {});
         return { queued: true };
       }
@@ -436,15 +550,33 @@ export function useDeleteClientMutation() {
         return { queued: false };
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
+        assertActiveQueryCacheOwnerContext(ownerContext);
         await enqueueTrashDelete({ entity: 'client', id: entityId, base });
         return { queued: true };
       }
     },
-    onSuccess: (_result, deletedId: string) => {
+    onMutate: (variables: any) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      Object.defineProperty(variables, CLIENT_MUTATION_OWNER_CONTEXT, {
+        value: ownerContext,
+        configurable: true,
+        enumerable: false,
+      });
+      return { ownerContext };
+    },
+    onSuccess: (_result, variables: any, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
+      const deletedId = String(variables?.id || '');
       if (deletedId) {
         removeClientFromQueryCaches(queryClient, deletedId);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+    onSettled: (_data, _error, variables: any) => {
+      if (variables && typeof variables === 'object') {
+        delete variables[CLIENT_MUTATION_OWNER_CONTEXT];
+      }
     },
   });
 }
@@ -453,7 +585,11 @@ export async function ensureClientPrefetch(queryClient: any, id: any) {
   if (!id) return null;
   return queryClient.ensureQueryData({
     queryKey: queryKeys.clients.detail(id),
-    queryFn: () => getClientById(String(id || '')),
+    queryFn: ({ signal }) =>
+      withReadDeadline((readSignal) => getClientById(String(id || ''), readSignal), {
+        label: 'Client detail prefetch',
+        signal,
+      }),
     staleTime: 60 * 1000,
   });
 }

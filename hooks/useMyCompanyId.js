@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { cacheCompanyIdForUser, loadCompanyIdForUser, readCompanyIdCache } from '../lib/myCompanyIdCache';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
+import { useOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 
 export const useMyCompanyId = () => {
   const { user, profile } = useAuthContext();
   const authUserId = String(user?.id || profile?.id || '').trim();
   const authCompanyId = String(profile?.company_id || '').trim();
+  const network = useOfflineSnapshot();
   const [companyId, setCompanyId] = useState(() => authCompanyId || null);
   const [loading, setLoading] = useState(() => !authCompanyId);
   const [error, setError] = useState(null);
@@ -48,8 +50,8 @@ export const useMyCompanyId = () => {
         return;
       }
 
-      if (cached.status === 'error') {
-        safeSet({ companyId: null, loading: false, error: cached.error });
+      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) {
+        safeSet({ companyId: null, loading: false, error: null });
         return;
       }
 
@@ -66,7 +68,7 @@ export const useMyCompanyId = () => {
     return () => {
       cancelled = true;
     };
-  }, [authCompanyId, authUserId]);
+  }, [authCompanyId, authUserId, network.isNetworkKnown, network.isOnline, network.isPoorConnection]);
 
   return { companyId, loading, error };
 };

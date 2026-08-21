@@ -27,6 +27,7 @@ export const queryKeys = {
   employees: {
     list: (params = {}) => ['employees', 'list', params],
     detail: (id) => ['employees', 'detail', String(id || '')],
+    adminDetail: (id) => ['adminEmployeeDetail', String(id || '')],
     departments: (companyId, onlyEnabled = true) => ['employees', 'departments', String(companyId || ''), !!onlyEnabled],
   },
   clients: {

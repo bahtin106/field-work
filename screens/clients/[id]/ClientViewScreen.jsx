@@ -26,6 +26,11 @@ import { normalizeClient } from '../../../src/features/clients/api';
 import { useRelatedRequestCount } from '../../../src/features/requests/queries';
 import { buildOrdersEntityFilterRoute } from '../../../src/features/requests/relationFilters';
 import { getTrashItem } from '../../../src/features/trash/api';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
 import {
   ENTITY_FIELD_TYPES,
@@ -71,6 +76,8 @@ export default function ClientViewScreen() {
   }, [rawReturnParams]);
   const { has, loading: permissionsLoading } = usePermissions();
   const { user: authUser, profile: authProfile } = useAuthContext();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseTrashNetwork = canRunDeferredNetworkWork(offlineSnapshot);
 
   const canViewClients = isTrashMode ? has('canViewTrash') : has('canViewClients');
   const canEditClients = !isTrashMode && has('canEditClients');
@@ -86,8 +93,11 @@ export default function ClientViewScreen() {
   const activeClientQuery = useClient(clientId, { enabled: !!clientId && canViewClients && !isTrashMode });
   const trashQuery = useQuery({
     queryKey: [...queryKeys.trash.detail(trashId), 'client-screen'],
-    queryFn: () => getTrashItem(trashId),
-    enabled: isTrashMode && canViewClients,
+    queryFn: ({ signal }) => withReadDeadline(
+      (readSignal) => getTrashItem(trashId, readSignal),
+      { label: 'Deleted client detail', signal },
+    ),
+    enabled: isTrashMode && canViewClients && canUseTrashNetwork,
   });
   const trashItem = trashQuery.data;
   const client = React.useMemo(

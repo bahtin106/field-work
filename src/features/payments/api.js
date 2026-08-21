@@ -1,4 +1,8 @@
 import { supabase } from '../../../lib/supabase';
+import {
+  assertMutationAuthCarrier,
+  pinMutationAuthorization,
+} from '../../shared/security/mutationAuthCarrier';
 
 const ORDER_CUSTOMER_PAYMENT_SELECT = `
   id,
@@ -27,20 +31,23 @@ function requireUuid(value, fieldName) {
   return normalized;
 }
 
-export async function listOrderCustomerPayments(orderId) {
+export async function listOrderCustomerPayments(orderId, signal = undefined) {
   const normalizedOrderId = requireUuid(orderId, 'Order id');
-  const { data, error } = await supabase
+  let request = supabase
     .from('order_customer_payments')
     .select(ORDER_CUSTOMER_PAYMENT_SELECT)
     .eq('order_id', normalizedOrderId)
     .order('paid_at', { ascending: false })
     .order('created_at', { ascending: false });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
 
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
 
-export async function upsertOrderCustomerPayment(payload) {
+export async function upsertOrderCustomerPayment(payload, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
   const orderId = requireUuid(payload?.order_id, 'Order id');
   const body = {
     ...(payload?.id ? { id: requireUuid(payload.id, 'Payment id') } : null),
@@ -51,19 +58,30 @@ export async function upsertOrderCustomerPayment(payload) {
     paid_at: payload?.paid_at || new Date().toISOString(),
     note: String(payload?.note || '').trim() || null,
   };
-  const { data, error } = await supabase.rpc('upsert_order_customer_payment_v1', {
-    p_payload: body,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('upsert_order_customer_payment_v1', {
+      p_payload: body,
+    }),
+    authCarrier,
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier);
 
   if (error) throw error;
   return data || null;
 }
 
-export async function deleteOrderCustomerPayment(paymentId) {
+export async function deleteOrderCustomerPayment(paymentId, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
   const normalizedPaymentId = requireUuid(paymentId, 'Payment id');
-  const { data, error } = await supabase.rpc('delete_order_customer_payment_v1', {
-    p_payment_id: normalizedPaymentId,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('delete_order_customer_payment_v1', {
+      p_payment_id: normalizedPaymentId,
+    }),
+    authCarrier,
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier);
 
   if (error) throw error;
   return data !== false;

@@ -11,6 +11,11 @@ import { getMyCompanyId } from '../profile/api';
 import { normalizeOptionalMobilePhone } from '../../shared/validation/phone';
 import { applyOrderRelationFilters } from '../requests/relationFilters';
 import { formatPersonName, formatPersonNameParts } from '../../../lib/personName';
+import {
+  assertOwnerBoundAuthorization,
+  pinOwnerBoundPostgrestRequest,
+  type OwnerBoundAuthorization,
+} from '../../shared/security/ownerBoundAuthorization';
 
 const clientByIdInFlight = new Map<string, Promise<any>>();
 const CLIENT_COLUMNS_BASE =
@@ -30,10 +35,13 @@ function shouldFallbackWithoutAdditionalFields(error: any) {
   );
 }
 
-async function resolveScopedCompanyId(explicitCompanyId: string | null = null) {
+async function resolveScopedCompanyId(
+  explicitCompanyId: string | null = null,
+  signal?: AbortSignal,
+) {
   const provided = String(explicitCompanyId || '').trim();
   if (provided) return provided;
-  const mine = await getMyCompanyId();
+  const mine = await getMyCompanyId(signal);
   return String(mine || '').trim() || null;
 }
 
@@ -143,12 +151,14 @@ async function canCurrentUserViewAllOrders() {
   }
 }
 
-async function canCurrentUserViewPhonePermission(permissionKey: string) {
+async function canCurrentUserViewPhonePermission(permissionKey: string, signal?: AbortSignal) {
   try {
-    const { data, error } = await supabase.rpc('current_user_has_app_permission', {
+    let query = supabase.rpc('current_user_has_app_permission', {
       p_key: permissionKey,
       p_default: true,
     });
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
     if (error) throw error;
     return data !== false;
   } catch {
@@ -182,11 +192,17 @@ function maskClientPhones(row: any, canViewClientPhones: boolean, canViewObjectP
   return next;
 }
 
-export async function listClients({ companyId = null, search = '' }: any = {}) {
+export async function listClients(
+  { companyId = null, search = '' }: any = {},
+  signal?: AbortSignal,
+) {
   return measureNetwork('clients.list', async () => {
-    const scopedCompanyId = await resolveScopedCompanyId(companyId);
+    const scopedCompanyId = await resolveScopedCompanyId(companyId, signal);
     if (!scopedCompanyId) return [];
-    const canViewClientPhones = await canCurrentUserViewPhonePermission('canViewClientPhones');
+    const canViewClientPhones = await canCurrentUserViewPhonePermission(
+      'canViewClientPhones',
+      signal,
+    );
 
     const buildListQuery = (useAdditional = true) => {
       const clientColumns = useAdditional ? CLIENT_COLUMNS_WITH_ADDITIONAL : CLIENT_COLUMNS_BASE;
@@ -217,6 +233,8 @@ export async function listClients({ companyId = null, search = '' }: any = {}) {
         }
         query = query.or(searchFilters.join(','));
       }
+
+      if (signal) query = query.abortSignal(signal);
 
       return query;
     };
@@ -254,28 +272,29 @@ export async function listClients({ companyId = null, search = '' }: any = {}) {
   });
 }
 
-export async function getClientById(clientId: string) {
+export async function getClientById(clientId: string, signal?: AbortSignal) {
   const key = String(clientId || '').trim();
   if (!key) return null;
 
-  const existing = clientByIdInFlight.get(key);
+  const existing = signal ? null : clientByIdInFlight.get(key);
   if (existing) return existing;
 
   const p = measureNetwork('clients.getById', async () => {
-    const scopedCompanyId = await resolveScopedCompanyId();
+    const scopedCompanyId = await resolveScopedCompanyId(null, signal);
     if (!scopedCompanyId) return null;
     const [canViewClientPhones, canViewObjectPhones] = await Promise.all([
-      canCurrentUserViewPhonePermission('canViewClientPhones'),
-      canCurrentUserViewPhonePermission('canViewObjectPhones'),
+      canCurrentUserViewPhonePermission('canViewClientPhones', signal),
+      canCurrentUserViewPhonePermission('canViewObjectPhones', signal),
     ]);
 
     try {
-      const { data, error }: any = await supabase
+      let query = supabase
         .from('clients_secure')
         .select(`${CLIENT_COLUMNS_WITH_ADDITIONAL}, ${CLIENT_LIST_OBJECTS_RELATION}, ${CLIENT_TAGS_RELATION}`)
         .eq('id', key)
-        .eq('company_id', scopedCompanyId)
-        .maybeSingle();
+        .eq('company_id', scopedCompanyId);
+      if (signal) query = query.abortSignal(signal);
+      const { data, error }: any = await query.maybeSingle();
 
       if (error) throw error;
       const { cleanedUrls, resolvedUrls } = await inspectProfileMedia([
@@ -301,12 +320,13 @@ export async function getClientById(clientId: string) {
       if (!shouldFallbackWithoutAdditionalFields(firstFailure)) {
         throw firstFailure;
       }
-      const { data, error }: any = await supabase
+      let query = supabase
         .from('clients_secure')
         .select(CLIENT_COLUMNS_BASE)
         .eq('id', key)
-        .eq('company_id', scopedCompanyId)
-        .maybeSingle();
+        .eq('company_id', scopedCompanyId);
+      if (signal) query = query.abortSignal(signal);
+      const { data, error }: any = await query.maybeSingle();
 
       if (error) throw error;
       const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
@@ -319,10 +339,10 @@ export async function getClientById(clientId: string) {
       });
     }
   }).finally(() => {
-    clientByIdInFlight.delete(key);
+    if (!signal) clientByIdInFlight.delete(key);
   });
 
-  clientByIdInFlight.set(key, p);
+  if (!signal) clientByIdInFlight.set(key, p);
   return p;
 }
 
@@ -397,9 +417,21 @@ export function extractConflictingClientId(error: any) {
   return null;
 }
 
-export async function updateClient(clientId: string, patch: Record<string, any>) {
+export async function updateClient(
+  clientId: string,
+  patch: Record<string, any>,
+  signal?: AbortSignal,
+  options: {
+    authorization?: OwnerBoundAuthorization | null;
+    companyId?: string | null;
+  } = {},
+) {
   return measureNetwork('clients.update', async () => {
-    const scopedCompanyId = await resolveScopedCompanyId();
+    const explicitCompanyId = String(options.companyId || '').trim();
+    if (options.authorization && !explicitCompanyId) {
+      throw new Error('company_id is required for owner-bound client updates');
+    }
+    const scopedCompanyId = explicitCompanyId || await resolveScopedCompanyId(null, signal);
     if (!scopedCompanyId) throw new Error('company_id is required');
 
     const nextPatch: Record<string, any> = { ...(patch || {}) };
@@ -408,15 +440,57 @@ export async function updateClient(clientId: string, patch: Record<string, any>)
       delete nextPatch.secondary_phone;
     }
 
-    const { error } = await supabase
+    let request: any = supabase
       .from('clients')
       .update(nextPatch)
       .eq('id', clientId)
       .eq('company_id', scopedCompanyId);
+    if (options.authorization) request = request.select('*').maybeSingle();
+    if (options.authorization) {
+      request = pinOwnerBoundPostgrestRequest(request, options.authorization);
+    }
+    if (signal) request = request.abortSignal(signal);
+    const { data, error } = await request;
+    if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
 
     if (error) throw error;
-    return getClientById(clientId);
+    if (options.authorization) {
+      return normalizeClient(data);
+    }
+    return getClientById(clientId, signal);
   });
+}
+
+export async function getClientByIdForOfflineSync(
+  clientId: string,
+  {
+    authorization,
+    companyId,
+    signal,
+  }: {
+    authorization: OwnerBoundAuthorization;
+    companyId: string;
+    signal?: AbortSignal;
+  },
+) {
+  const normalizedClientId = String(clientId || '').trim();
+  const normalizedCompanyId = String(companyId || '').trim();
+  if (!normalizedClientId || !normalizedCompanyId) return null;
+  assertOwnerBoundAuthorization(authorization);
+  let request: any = pinOwnerBoundPostgrestRequest(
+    supabase
+      .from('clients')
+      .select('*')
+      .eq('id', normalizedClientId)
+      .eq('company_id', normalizedCompanyId)
+      .maybeSingle(),
+    authorization,
+  );
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
+  assertOwnerBoundAuthorization(authorization);
+  if (error) throw error;
+  return normalizeClient(data);
 }
 
 export async function deleteClient(clientId: string) {

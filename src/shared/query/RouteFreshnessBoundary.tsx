@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { AppState, InteractionManager } from 'react-native';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
 import { financeQueryKeys } from '../../features/finance/queries';
+import { getOfflineSnapshot, useOfflineSnapshot } from '../offline/offlineStatus';
 import { queryKeys } from './queryKeys';
 import { requestScreenRefresh } from './screenRefreshRegistry';
 
@@ -267,7 +268,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     return {
       intervalKey: 'admin-company-details',
       minIntervalMs: 60_000,
-      queryKeys: [['adminCompany'], ['adminCompanySubscriptionMeta'], ['companyAccessState'], ['adminCompanies']],
+      queryKeys: [['adminCompany'], ['adminCompanySubscriptionMeta'], ['adminCompanyAccessState'], ['adminCompanies']],
     };
   }
 
@@ -275,7 +276,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     return {
       intervalKey: 'admin-company-edit',
       minIntervalMs: 60_000,
-      queryKeys: [['adminCompany'], ['adminCompanySubscriptionMeta'], ['companyAccessState'], ['adminCompanies']],
+      queryKeys: [['adminCompany'], ['adminCompanySubscriptionMeta'], ['adminCompanyAccessState'], ['adminCompanies']],
     };
   }
 
@@ -283,7 +284,53 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     return {
       intervalKey: 'admin-users',
       minIntervalMs: 60_000,
-      queryKeys: [['adminUsers']],
+      queryKeys: [['adminUsersV2']],
+    };
+  }
+
+  const adminUserDetailMatch = path.match(/^\/admin\/users\/([^/]+)$/);
+  if (adminUserDetailMatch?.[1]) {
+    const userId = String(adminUserDetailMatch[1]).trim();
+    if (!UUID_RE.test(userId)) return null;
+    return {
+      intervalKey: `admin-users-detail:${userId}`,
+      minIntervalMs: 30_000,
+      queryKeys: [queryKeys.employees.adminDetail(userId)],
+    };
+  }
+
+  const adminUserEditMatch = path.match(/^\/admin\/users\/([^/]+)\/edit$/);
+  if (adminUserEditMatch?.[1]) {
+    const userId = String(adminUserEditMatch[1]).trim();
+    if (!UUID_RE.test(userId)) return null;
+    return {
+      intervalKey: `admin-users-edit:${userId}`,
+      minIntervalMs: 30_000,
+      queryKeys: [queryKeys.employees.adminDetail(userId)],
+    };
+  }
+
+  if (path === '/admin/promocodes') {
+    return {
+      intervalKey: 'admin-promocodes',
+      minIntervalMs: 60_000,
+      queryKeys: [['adminPromoCodesV2']],
+    };
+  }
+
+  if (path === '/admin/feedbacks') {
+    return {
+      intervalKey: 'admin-feedbacks',
+      minIntervalMs: 60_000,
+      queryKeys: [['adminSupportRequests']],
+    };
+  }
+
+  if (path === '/admin/storage') {
+    return {
+      intervalKey: 'admin-storage',
+      minIntervalMs: 10 * 60_000,
+      queryKeys: [['adminStorageOverview']],
     };
   }
 
@@ -294,12 +341,17 @@ export function RouteFreshnessBoundary() {
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const lastRunRef = useRef(new Map<string, number>());
+  const network = useOfflineSnapshot();
+  const networkRecoveryArmedRef = useRef(false);
+  const networkWasKnownRef = useRef(network.isNetworkKnown);
 
   const plan = useMemo(() => buildRouteRefreshPlan(pathname), [pathname]);
 
   const runPlan = useCallback((reason: string) => {
     if (!plan) return;
     if (!onlineManager.isOnline()) return;
+    const network = getOfflineSnapshot();
+    if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
 
     const now = Date.now();
     const lastRunAt = lastRunRef.current.get(plan.intervalKey) || 0;
@@ -357,6 +409,26 @@ export function RouteFreshnessBoundary() {
     });
     return () => sub.remove();
   }, [runPlan]);
+
+  useEffect(() => {
+    if (!network.isNetworkKnown) return;
+    const wasKnown = networkWasKnownRef.current;
+    networkWasKnownRef.current = true;
+    const isRefreshable =
+      network.isOnline && !network.isPoorConnection;
+    if (!isRefreshable) {
+      networkRecoveryArmedRef.current = true;
+      return;
+    }
+    if (!wasKnown) {
+      runPlan('route-focus');
+      return;
+    }
+    if (networkRecoveryArmedRef.current) {
+      networkRecoveryArmedRef.current = false;
+      runPlan('network-recovered');
+    }
+  }, [network.isNetworkKnown, network.isOnline, network.isPoorConnection, runPlan]);
 
   return null;
 }

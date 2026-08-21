@@ -70,6 +70,11 @@ import {
   prepareImageForUpload,
   runMediaUploadQueue,
 } from '../../../src/shared/media/imagePipeline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
 const SAFE_AREA_EDGES = ['left', 'right'];
@@ -119,6 +124,8 @@ export default function ObjectViewScreen() {
   const { user: authUser, profile: authProfile } = useAuthContext();
   const router = useRouter();
   const toast = useToast();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseMediaNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const params = useLocalSearchParams();
   const id = params?.id;
   const rawReturnTo = params?.returnTo;
@@ -158,8 +165,11 @@ export default function ObjectViewScreen() {
   });
   const trashQuery = useQuery({
     queryKey: [...queryKeys.trash.detail(trashId), 'object-screen'],
-    queryFn: () => getTrashItem(trashId),
-    enabled: isTrashMode && canViewObjects,
+    queryFn: ({ signal }) => withReadDeadline(
+      (readSignal) => getTrashItem(trashId, readSignal),
+      { label: 'Deleted object detail', signal },
+    ),
+    enabled: isTrashMode && canViewObjects && canUseMediaNetwork,
   });
   const trashItem = trashQuery.data;
   const objectItem = React.useMemo(
@@ -241,6 +251,9 @@ export default function ObjectViewScreen() {
         cancelled = true;
       };
     }
+    if (!canUseMediaNetwork) return () => {
+      cancelled = true;
+    };
 
     const run = async () => {
       const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
@@ -264,7 +277,7 @@ export default function ObjectViewScreen() {
     return () => {
       cancelled = true;
     };
-  }, [objectId, objectMediaByCategory]);
+  }, [canUseMediaNetwork, objectId, objectMediaByCategory]);
 
   const getObjectMediaDisplayUrl = React.useCallback(
     (url) => {
@@ -306,6 +319,10 @@ export default function ObjectViewScreen() {
   const uploadObjectMediaFile = React.useCallback(
     async (category, uri) => {
       if (!objectId || !canManageObjectMedia) return null;
+      if (!canUseMediaNetwork) {
+        toast.info(t('errors_network'));
+        return null;
+      }
       const prepared = await prepareImageForUpload(uri, {
         maxWidth: PHOTO_MAX_WIDTH,
         quality: PHOTO_COMPRESS_QUALITY,
@@ -334,12 +351,16 @@ export default function ObjectViewScreen() {
       }
       return sourceUrl || null;
     },
-    [applyObjectMediaUrls, canManageObjectMedia, objectId],
+    [applyObjectMediaUrls, canManageObjectMedia, canUseMediaNetwork, objectId, t, toast],
   );
 
   const handleUploadUri = React.useCallback(
     async (category, uri) => {
       if (!canManageObjectMedia) return;
+      if (!canUseMediaNetwork) {
+        toast.info(t('errors_network'));
+        return;
+      }
       const pendingId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setLocalPendingMap((prev) => ({
         ...prev,
@@ -358,12 +379,16 @@ export default function ObjectViewScreen() {
         }));
       }
     },
-    [canManageObjectMedia, t, toast, uploadObjectMediaFile],
+    [canManageObjectMedia, canUseMediaNetwork, t, toast, uploadObjectMediaFile],
   );
 
   const handleUploadMultiple = React.useCallback(
     async (category, uris = []) => {
       if (!canManageObjectMedia) return;
+      if (!canUseMediaNetwork) {
+        toast.info(t('errors_network'));
+        return;
+      }
       const queue = Array.isArray(uris) ? uris.filter(Boolean) : [];
       if (!queue.length) return;
       const pendingItems = queue.map((uri, index) => ({
@@ -403,12 +428,16 @@ export default function ObjectViewScreen() {
         toast.error(t('order_toast_upload_error'));
       }
     },
-    [canManageObjectMedia, t, toast, uploadObjectMediaFile],
+    [canManageObjectMedia, canUseMediaNetwork, t, toast, uploadObjectMediaFile],
   );
 
   const removePhoto = React.useCallback(
     async (category, index) => {
       if (!objectId || !canManageObjectMedia) return;
+      if (!canUseMediaNetwork) {
+        toast.info(t('errors_network'));
+        return;
+      }
       const photos = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
       const removedUrl = String(photos[index] || '').trim();
       if (!removedUrl) return;
@@ -423,12 +452,16 @@ export default function ObjectViewScreen() {
         toast.error(t('order_toast_delete_error'));
       }
     },
-    [applyObjectMediaUrls, canManageObjectMedia, objectId, t, toast],
+    [applyObjectMediaUrls, canManageObjectMedia, canUseMediaNetwork, objectId, t, toast],
   );
 
   const removePhotosBatch = React.useCallback(
     async (category, urls = []) => {
       if (!objectId || !canManageObjectMedia) return;
+      if (!canUseMediaNetwork) {
+        toast.info(t('errors_network'));
+        return;
+      }
       const selected = new Set((urls || []).map((value) => String(value || '').trim()).filter(Boolean));
       if (!selected.size) return;
       const photos = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
@@ -454,7 +487,7 @@ export default function ObjectViewScreen() {
       }
       if (failed) toast.error(t('order_toast_delete_partial_error'));
     },
-    [applyObjectMediaUrls, canManageObjectMedia, objectId, t, toast],
+    [applyObjectMediaUrls, canManageObjectMedia, canUseMediaNetwork, objectId, t, toast],
   );
 
   // Allow viewing object even if user cannot view clients. Client details (name/link)
@@ -604,7 +637,7 @@ export default function ObjectViewScreen() {
     let mediaInfoMap = objectMediaInfoBySource;
     const hasMissingDisplay = rawPhotos.some((raw) => !getObjectMediaDisplayUrl(raw));
     const hasMissingInfo = rawPhotos.some((raw) => !mediaInfoMap[raw]);
-    if ((hasMissingDisplay || hasMissingInfo) && objectId && category) {
+    if ((hasMissingDisplay || hasMissingInfo) && objectId && category && canUseMediaNetwork) {
       const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
         objectId,
         categories: [category],
@@ -643,7 +676,7 @@ export default function ObjectViewScreen() {
     setViewerPhotoMetadata(pairs.map((item) => item.metadata));
     setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setViewerVisible(true);
-  }, [getObjectMediaDisplayUrl, objectId, objectMediaInfoBySource, resolvedObjectMediaUrls]);
+  }, [canUseMediaNetwork, getObjectMediaDisplayUrl, objectId, objectMediaInfoBySource, resolvedObjectMediaUrls]);
 
   const closeViewer = React.useCallback(() => {
     setViewerVisible(false);
@@ -653,6 +686,9 @@ export default function ObjectViewScreen() {
     const category = String(viewerCategoryRef.current || '').trim();
     const sourceUrl = String(viewerRawPhotosRef.current?.[photoIndex] || '').trim();
     if (!objectId || !category || !sourceUrl) return '';
+    if (!canUseMediaNetwork) {
+      return isRenderableObjectMediaUrl(sourceUrl) ? sourceUrl : '';
+    }
     const { displayUrls, thumbnailUrls, mediaInfoBySource } = await resolveObjectMediaUrls({
       objectId,
       categories: [category],
@@ -673,7 +709,7 @@ export default function ObjectViewScreen() {
     }
     return String(displayUrls[sourceUrl] || '').trim() ||
       (isRenderableObjectMediaUrl(sourceUrl) ? sourceUrl : '');
-  }, [objectId]);
+  }, [canUseMediaNetwork, objectId]);
 
   if (!canViewObjects) {
     return (

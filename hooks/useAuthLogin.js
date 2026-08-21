@@ -18,6 +18,31 @@ import {
   mapSupabaseAuthError,
 } from '../lib/supabaseAuthErrors';
 import { t } from '../src/i18n';
+import { withReadDeadline } from '../src/shared/network/readDeadline';
+
+const LOGIN_UI_WATCHDOG_MS = 15_000;
+
+async function signInWithUiWatchdog(credentials) {
+  let watchdogId;
+  const timeoutError = Object.assign(new Error('Network request timed out'), {
+    code: 'AUTH_UI_TIMEOUT',
+    status: 0,
+  });
+
+  try {
+    return await Promise.race([
+      supabase.auth.signInWithPassword(credentials),
+      new Promise((resolve) => {
+        watchdogId = setTimeout(
+          () => resolve({ data: null, error: timeoutError }),
+          LOGIN_UI_WATCHDOG_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (watchdogId) clearTimeout(watchdogId);
+  }
+}
 
 function buildBlockedByAdminMessage() {
   return `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`;
@@ -78,7 +103,7 @@ export function useAuthLogin() {
 
     try {
       // Выполняем запрос на авторизацию
-      const { data, error: authErr } = await supabase.auth.signInWithPassword({
+      const { data, error: authErr } = await signInWithUiWatchdog({
         email: emailTrim,
         password: passwordValue,
       }); // Проверяем, смонтирован ли компонент и не был ли отменён запрос
@@ -92,6 +117,11 @@ export function useAuthLogin() {
       }
 
       if (authErr) {
+        if (authErr?.code === 'AUTH_UI_TIMEOUT') {
+          if (attemptId === loginAttemptIdRef.current) loginAttemptIdRef.current += 1;
+          abortControllerRef.current?.abort();
+          logger.warn('Login UI watchdog expired; auth state may still settle asynchronously');
+        }
         // Логируем ошибку для аналитики
         logAuthError('login', authErr, { email: emailTrim });
 
@@ -114,7 +144,13 @@ export function useAuthLogin() {
 
       // Access gate: blocked users must not enter the app for any reason.
       try {
-        const { data: accessData, error: accessError } = await supabase.rpc('get_my_access_state');
+        const { data: accessData, error: accessError } = await withReadDeadline(
+          supabase.rpc('get_my_access_state'),
+          {
+            label: 'Login access check',
+            signal: abortControllerRef.current?.signal,
+          },
+        );
         if (!accessError) {
           const accessRow = Array.isArray(accessData) ? accessData[0] : accessData;
           if (accessRow && accessRow.can_login === false) {
@@ -132,24 +168,42 @@ export function useAuthLogin() {
             return true;
           }
         } else {
-          const { data: userRes } = await supabase.auth.getUser();
+          const { data: userRes } = await withReadDeadline(
+            supabase.auth.getUser(),
+            {
+              label: 'Login user check',
+              signal: abortControllerRef.current?.signal,
+            },
+          );
           const uid = userRes?.user?.id || null;
           if (uid) {
             let profile = null;
 
-            const { data: byId } = await supabase
-              .from('profiles')
-              .select('is_admin_blocked, license_state, blocked_reason')
-              .eq('id', uid)
-              .maybeSingle();
+            const { data: byId } = await withReadDeadline(
+              supabase
+                .from('profiles')
+                .select('is_admin_blocked, license_state, blocked_reason')
+                .eq('id', uid)
+                .maybeSingle(),
+              {
+                label: 'Login profile check',
+                signal: abortControllerRef.current?.signal,
+              },
+            );
             if (byId) {
               profile = byId;
             } else {
-              const { data: byUserId } = await supabase
-                .from('profiles')
-                .select('is_admin_blocked, license_state, blocked_reason')
-                .eq('user_id', uid)
-                .maybeSingle();
+              const { data: byUserId } = await withReadDeadline(
+                supabase
+                  .from('profiles')
+                  .select('is_admin_blocked, license_state, blocked_reason')
+                  .eq('user_id', uid)
+                  .maybeSingle(),
+                {
+                  label: 'Login legacy profile check',
+                  signal: abortControllerRef.current?.signal,
+                },
+              );
               profile = byUserId || null;
             }
 

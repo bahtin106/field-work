@@ -22,7 +22,11 @@ function trackedFiles() {
 }
 
 function readText(relativePath) {
-  const source = fs.readFileSync(path.join(root, relativePath));
+  const absolutePath = path.join(root, relativePath);
+  // `git ls-files --cached` also returns tracked files that are intentionally
+  // deleted in the working tree. They have no bytes to inspect.
+  if (!fs.existsSync(absolutePath)) return null;
+  const source = fs.readFileSync(absolutePath);
   if (source.includes(0)) return null;
   return source.toString('utf8');
 }

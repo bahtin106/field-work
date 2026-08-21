@@ -12,6 +12,10 @@ import { Image as ExpoImage } from 'expo-image';
 
 import CachedImage from '../../../components/ui/CachedImage';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const NUM_COLUMNS = 3;
@@ -235,6 +239,8 @@ function PhotoGrid({
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canPrefetchMedia = canRunDeferredNetworkWork(offlineSnapshot);
   const s = useMemo(() => buildStyles(theme), [theme]);
   const selectedUrlsSet = useMemo(() => new Set((selectedUris || []).map((value) => String(value))), [selectedUris]);
   const stableDisplayBySourceRef = useRef(new Map());
@@ -322,6 +328,7 @@ function PhotoGrid({
   }, [pending, photos]);
 
   useEffect(() => {
+    if (!canPrefetchMedia) return;
     const displayUrls = data
       .filter((item) => !item.isPending && !item.issueMessage)
       .slice(0, 12)
@@ -330,7 +337,7 @@ function PhotoGrid({
     if (displayUrls.length) {
       ExpoImage.prefetch(displayUrls, 'memory-disk').catch(() => {});
     }
-  }, [data]);
+  }, [canPrefetchMedia, data]);
 
   const handleOpenViewer = useCallback(
     (actualIndex) => {

@@ -23,6 +23,11 @@ import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useToast } from '../../../components/ui/ToastProvider';
 
@@ -106,16 +111,20 @@ function toFiniteInt(value, fallback = 0) {
   return Number.isFinite(n) ? Math.floor(n) : fallback;
 }
 
-async function fetchCompany(companyId) {
-  const { data, error } = await supabase.rpc('admin_get_company', { p_company_id: companyId });
+async function fetchCompany(companyId, signal) {
+  const { data, error } = await supabase
+    .rpc('admin_get_company', { p_company_id: companyId })
+    .abortSignal(signal);
   if (error) throw error;
   return Array.isArray(data) && data.length ? data[0] : null;
 }
 
-async function fetchSubscriptionMeta(companyId) {
-  const { data, error } = await supabase.rpc('admin_get_company_subscription_meta', {
-    p_company_id: companyId,
-  });
+async function fetchSubscriptionMeta(companyId, signal) {
+  const { data, error } = await supabase
+    .rpc('admin_get_company_subscription_meta', {
+      p_company_id: companyId,
+    })
+    .abortSignal(signal);
   if (error) throw error;
   return Array.isArray(data) && data.length ? data[0] : null;
 }
@@ -184,11 +193,13 @@ export default function AdminCompanyDetailsScreen() {
   const nav = useNavigation();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const companyKey = React.useMemo(() => ['adminCompany', companyId], [companyId]);
   const metaKey = React.useMemo(() => ['adminCompanySubscriptionMeta', companyId], [companyId]);
-  const accessKey = React.useMemo(() => ['companyAccessState', companyId], [companyId]);
+  const accessKey = React.useMemo(() => ['adminCompanyAccessState', companyId], [companyId]);
 
   const [datePickerVisible, setDatePickerVisible] = React.useState(false);
   const [addDaysVisible, setAddDaysVisible] = React.useState(false);
@@ -204,21 +215,34 @@ export default function AdminCompanyDetailsScreen() {
 
   const { data, isLoading, error, refetch: refetchCompany } = useQuery({
     queryKey: companyKey,
-    queryFn: () => fetchCompany(companyId),
-    enabled: isAllowed && Boolean(companyId),
-    refetchOnMount: 'always',
-    refetchOnReconnect: true,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchCompany(companyId, readSignal),
+        { label: 'Admin company details', signal },
+      ),
+    enabled: isAllowed && Boolean(companyId) && canUseAdminNetwork,
+    placeholderData: (previous) => previous,
+    refetchOnMount: 'stale',
+    refetchOnReconnect: false,
   });
 
   const { data: meta, refetch: refetchMeta } = useQuery({
     queryKey: metaKey,
-    queryFn: () => fetchSubscriptionMeta(companyId),
-    enabled: isAllowed && Boolean(companyId),
-    refetchOnMount: 'always',
-    refetchOnReconnect: true,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchSubscriptionMeta(companyId, readSignal),
+        { label: 'Admin company subscription details', signal },
+      ),
+    enabled: isAllowed && Boolean(companyId) && canUseAdminNetwork,
+    placeholderData: (previous) => previous,
+    refetchOnMount: 'stale',
+    refetchOnReconnect: false,
   });
 
-  const accessState = useCompanyAccessState(companyId);
+  const accessState = useCompanyAccessState(companyId, {
+    adminScope: true,
+    enabled: isAllowed,
+  });
   const access = accessState.data;
 
   React.useLayoutEffect(() => {
@@ -228,6 +252,7 @@ export default function AdminCompanyDetailsScreen() {
   }, [nav, t]);
 
   const refreshAll = React.useCallback(async () => {
+    if (!canUseAdminNetwork) return;
     await Promise.all([
       refetchCompany(),
       refetchMeta(),
@@ -237,7 +262,7 @@ export default function AdminCompanyDetailsScreen() {
       queryClient.refetchQueries({ queryKey: accessKey, exact: true, type: 'active' }),
       queryClient.refetchQueries({ queryKey: ['adminCompanies'], type: 'active' }),
     ]);
-  }, [accessState, accessKey, companyKey, metaKey, queryClient, refetchCompany, refetchMeta]);
+  }, [accessState, accessKey, canUseAdminNetwork, companyKey, metaKey, queryClient, refetchCompany, refetchMeta]);
 
   const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });

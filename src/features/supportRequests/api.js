@@ -35,6 +35,14 @@ function isMissingWorkflowSchema(error) {
   );
 }
 
+function throwIfSupportReadAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Support request read was aborted');
+  error.name = 'AbortError';
+  throw error;
+}
+
 function toIso(value) {
   const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return null;
@@ -112,16 +120,18 @@ async function saveSupportClientContext(feedbackId) {
   if (error) throw error;
 }
 
-async function loadSupportClientContext(feedbackId) {
+async function loadSupportClientContext(feedbackId, signal = undefined) {
   const id = String(feedbackId || '').trim();
   if (!id) return null;
-  const { data, error } = await supabase
+  let request = supabase
     .from('feedback_client_context')
     .select(
       'platform, device_name, manufacturer, model, os_name, os_version, app_version, app_build, app_id, runtime_version, execution_environment, created_at, metadata',
     )
     .eq('feedback_id', id)
     .maybeSingle();
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) {
     const message = String(error?.message || '').toLowerCase();
     if (message.includes('feedback_client_context')) return null;
@@ -208,16 +218,18 @@ function mapFeedbackRow(row, profilesById, companiesById) {
   };
 }
 
-async function loadAttachmentsByFeedbackIds(feedbackIds) {
+async function loadAttachmentsByFeedbackIds(feedbackIds, signal = undefined) {
   const ids = Array.from(new Set((feedbackIds || []).map((value) => String(value || '').trim()).filter(Boolean)));
   if (!ids.length) return new Map();
 
-  const { data, error } = await supabase
+  let request = supabase
     .from('feedback_attachments')
     .select('id, feedback_id, photo_url, sort_order, created_at')
     .in('feedback_id', ids)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) {
     const msg = String(error?.message || '').toLowerCase();
     if (msg.includes('feedback_attachments')) return new Map();
@@ -235,7 +247,10 @@ async function loadAttachmentsByFeedbackIds(feedbackIds) {
   return map;
 }
 
-async function resolveSupportPhotoUrls(rows, { forceRefresh = false } = {}) {
+async function resolveSupportPhotoUrls(
+  rows,
+  { forceRefresh = false, signal = undefined } = {},
+) {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const urls = Array.from(
     new Set(
@@ -252,8 +267,10 @@ async function resolveSupportPhotoUrls(rows, { forceRefresh = false } = {}) {
 
   if (!urls.length) return sourceRows;
 
+  throwIfSupportReadAborted(signal);
   try {
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(urls, { forceRefresh });
+    throwIfSupportReadAborted(signal);
     const cleanedSet = new Set((cleanedUrls || []).map((url) => String(url || '').trim()).filter(Boolean));
     const resolveUrl = (url) => {
       const raw = String(url || '').trim();
@@ -269,11 +286,15 @@ async function resolveSupportPhotoUrls(rows, { forceRefresh = false } = {}) {
         : [],
     }));
   } catch {
+    // Media inspection is optional, but cancellation of the parent foreground
+    // read must still propagate instead of turning an aborted request into a
+    // successful stale result.
+    throwIfSupportReadAborted(signal);
     return sourceRows;
   }
 }
 
-async function loadProfilesAndCompanies(rows) {
+async function loadProfilesAndCompanies(rows, signal = undefined) {
   const profileIds = Array.from(
     new Set(
       (rows || [])
@@ -290,15 +311,25 @@ async function loadProfilesAndCompanies(rows) {
     ),
   );
 
+  let profilesQuery = profileIds.length
+    ? supabase
+        .from('profiles')
+        .select('id, first_name, middle_name, last_name, full_name, email, phone')
+        .in('id', profileIds)
+    : null;
+  let companiesQuery = companyIds.length
+    ? supabase.from('companies').select('id, name').in('id', companyIds)
+    : null;
+  if (signal) {
+    if (profilesQuery) profilesQuery = profilesQuery.abortSignal(signal);
+    if (companiesQuery) companiesQuery = companiesQuery.abortSignal(signal);
+  }
   const [profilesResult, companiesResult] = await Promise.all([
     profileIds.length
-      ? supabase
-          .from('profiles')
-          .select('id, first_name, middle_name, last_name, full_name, email, phone')
-          .in('id', profileIds)
+      ? profilesQuery
       : Promise.resolve({ data: [], error: null }),
     companyIds.length
-      ? supabase.from('companies').select('id, name').in('id', companyIds)
+      ? companiesQuery
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -482,7 +513,10 @@ export async function createSupportRequest({
   };
 }
 
-export async function listSupportRequests({ limit = 200, includeCompleted = false } = {}) {
+export async function listSupportRequests(
+  { limit = 200, includeCompleted = false } = {},
+  signal = undefined,
+) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
   const buildQuery = (select, workflowEnabled) => {
     let query = supabase
@@ -493,7 +527,7 @@ export async function listSupportRequests({ limit = 200, includeCompleted = fals
     .order('created_at', { ascending: false })
     .limit(safeLimit);
     if (workflowEnabled && !includeCompleted) query = query.neq('status', SUPPORT_STATUS.COMPLETED);
-    return query;
+    return signal ? query.abortSignal(signal) : query;
   };
   let { data, error } = await buildQuery(FEEDBACK_WORKFLOW_SELECT, true);
   if (error && isMissingWorkflowSchema(error)) {
@@ -504,13 +538,20 @@ export async function listSupportRequests({ limit = 200, includeCompleted = fals
 
   if (error) throw error;
   const rows = Array.isArray(data) ? data : [];
-  const attachmentsByFeedbackId = await loadAttachmentsByFeedbackIds(rows.map((row) => row?.id));
+  throwIfSupportReadAborted(signal);
+  const attachmentsByFeedbackId = await loadAttachmentsByFeedbackIds(
+    rows.map((row) => row?.id),
+    signal,
+  );
+  throwIfSupportReadAborted(signal);
   const rowsWithPhotos = rows.map((row) => ({
     ...row,
     photo_urls: attachmentsByFeedbackId.get(String(row?.id || '').trim()) || [],
   }));
-  const rowsWithResolvedPhotos = await resolveSupportPhotoUrls(rowsWithPhotos);
-  const { profilesById, companiesById } = await loadProfilesAndCompanies(rows);
+  const rowsWithResolvedPhotos = await resolveSupportPhotoUrls(rowsWithPhotos, { signal });
+  throwIfSupportReadAborted(signal);
+  const { profilesById, companiesById } = await loadProfilesAndCompanies(rows, signal);
+  throwIfSupportReadAborted(signal);
   return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, profilesById, companiesById));
 }
 
@@ -551,41 +592,51 @@ export async function listMySupportRequests({ userId, limit = 100, forcePhotoRef
   return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, new Map(), new Map()));
 }
 
-export async function getSupportRequestById(feedbackId, { forcePhotoRefresh = false } = {}) {
+export async function getSupportRequestById(
+  feedbackId,
+  { forcePhotoRefresh = false, signal = undefined } = {},
+) {
   const id = String(feedbackId || '').trim();
   if (!id) throw new Error('feedback id is required');
 
-  let { data, error } = await supabase
-    .from('feedbacks')
-    .select(FEEDBACK_WORKFLOW_SELECT)
-    .eq('id', id)
-    .maybeSingle();
-  if (error && isMissingWorkflowSchema(error)) {
-    const legacyResult = await supabase
+  const buildFeedbackQuery = (select) => {
+    let request = supabase
       .from('feedbacks')
-      .select(FEEDBACK_LEGACY_SELECT)
+      .select(select)
       .eq('id', id)
       .maybeSingle();
+    if (signal) request = request.abortSignal(signal);
+    return request;
+  };
+
+  let { data, error } = await buildFeedbackQuery(FEEDBACK_WORKFLOW_SELECT);
+  if (error && isMissingWorkflowSchema(error)) {
+    throwIfSupportReadAborted(signal);
+    const legacyResult = await buildFeedbackQuery(FEEDBACK_LEGACY_SELECT);
     data = legacyResult.data;
     error = legacyResult.error;
   }
 
   if (error) throw error;
   if (!data) return null;
-  const attachmentsByFeedbackId = await loadAttachmentsByFeedbackIds([data.id]);
+  throwIfSupportReadAborted(signal);
+  const attachmentsByFeedbackId = await loadAttachmentsByFeedbackIds([data.id], signal);
+  throwIfSupportReadAborted(signal);
   const dataWithPhotos = {
     ...data,
     photo_urls: attachmentsByFeedbackId.get(String(data?.id || '').trim()) || [],
   };
   const [dataWithResolvedPhotos] = await resolveSupportPhotoUrls(
     [dataWithPhotos],
-    { forceRefresh: forcePhotoRefresh },
+    { forceRefresh: forcePhotoRefresh, signal },
   );
+  throwIfSupportReadAborted(signal);
 
   const [{ profilesById, companiesById }, clientContext] = await Promise.all([
-    loadProfilesAndCompanies([dataWithPhotos]),
-    loadSupportClientContext(data.id),
+    loadProfilesAndCompanies([dataWithPhotos], signal),
+    loadSupportClientContext(data.id, signal),
   ]);
+  throwIfSupportReadAborted(signal);
   return {
     ...mapFeedbackRow(dataWithResolvedPhotos || dataWithPhotos, profilesById, companiesById),
     clientContext,
@@ -699,22 +750,26 @@ export async function deleteSupportRequest(feedbackId) {
   return { status: 'queued' };
 }
 
-export async function countUnreadSupportRequests() {
-  let { count, error } = await supabase
-    .from('feedbacks')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', SUPPORT_STATUS.NEW)
-    .eq('deletion_state', FEEDBACK_DELETION_STATE.ACTIVE);
-  if (error && isMissingWorkflowSchema(error)) {
-    const legacyResult = await supabase
+export async function countUnreadSupportRequests(signal = undefined) {
+  const buildCountQuery = (column, value) => {
+    let request = supabase
       .from('feedbacks')
       .select('id', { count: 'exact', head: true })
-      .eq('is_read', false)
+      .eq(column, value)
       .eq('deletion_state', FEEDBACK_DELETION_STATE.ACTIVE);
+    if (signal) request = request.abortSignal(signal);
+    return request;
+  };
+
+  let { count, error } = await buildCountQuery('status', SUPPORT_STATUS.NEW);
+  if (error && isMissingWorkflowSchema(error)) {
+    throwIfSupportReadAborted(signal);
+    const legacyResult = await buildCountQuery('is_read', false);
     count = legacyResult.count;
     error = legacyResult.error;
   }
   if (error) throw error;
+  throwIfSupportReadAborted(signal);
   return Number(count) || 0;
 }
 

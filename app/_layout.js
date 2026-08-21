@@ -65,6 +65,7 @@ import {
   recoverInterruptedOrderPhotoQueue,
   runBackgroundSync,
 } from '../src/shared/offline/backgroundSync';
+import { withReadDeadline } from '../src/shared/network/readDeadline';
 import QueryProvider from '../src/shared/query/QueryProvider';
 import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
@@ -115,6 +116,7 @@ const ACCESS_REVALIDATE_INTERVAL_MS = 5 * 60 * 1000;
 const ACCESS_CHECK_MIN_GAP_MS = 1200;
 const ACCESS_BOOTSTRAP_DELAY_MS = 1800;
 const PUSH_BOOTSTRAP_DELAY_MS = 4500;
+const NATIVE_SPLASH_WATCHDOG_MS = 2500;
 
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
@@ -146,7 +148,7 @@ function _BrandedLoadingScreen({ theme, label }) {
 }
 
 function RootLayoutInner() {
-  const { isInitializing, isSigningOut, isAuthenticated, user } = useAuthContext();
+  const { isInitializing, isSigningOut, isAuthenticated, user, refreshProfile } = useAuthContext();
   const { t } = useTranslation();
   const { theme } = useTheme();
   const router = useRouter();
@@ -163,6 +165,7 @@ function RootLayoutInner() {
   const notificationIdsByOrderRef = useRef(new Map());
   const previousAuthStateRef = useRef(isAuthenticated);
   const returnToHomeAfterLogoutRef = useRef(false);
+  const localeHydrationPromiseRef = useRef(null);
   const authSnapshotRef = useRef({ isAuthenticated, userId: String(user?.id || '') });
   authSnapshotRef.current = { isAuthenticated, userId: String(user?.id || '') };
   globalThis.__activeNotificationUserId = isAuthenticated ? String(user?.id || '') : '';
@@ -225,7 +228,7 @@ function RootLayoutInner() {
     const prev = payload.old && typeof payload.old === 'object' ? payload.old : null;
     if (!next || !prev) return true;
 
-    const watchedColumns = ['is_admin_blocked', 'license_state', 'blocked_reason', 'company_id'];
+    const watchedColumns = ['is_admin_blocked', 'license_state', 'blocked_reason', 'company_id', 'role'];
     return watchedColumns.some((column) => String(next?.[column] ?? '') !== String(prev?.[column] ?? ''));
   }, []);
 
@@ -262,20 +265,64 @@ function RootLayoutInner() {
   }, []);
 
   useEffect(() => {
-    initI18n().catch(() => {});
+    localeHydrationPromiseRef.current = initI18n().catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
-    (async () => {
+    if (!isAuthenticated || !user?.id) return undefined;
+
+    const expectedUserId = String(user.id);
+    let active = true;
+    let inFlight = false;
+    let controller = null;
+
+    const refreshServerLocale = async () => {
+      if (!active || inFlight) return;
+      const network = getOfflineSnapshot();
+      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
+
+      inFlight = true;
+      controller = new AbortController();
       try {
-        const code = await loadUserLocale();
-        if (code) await setLocale(code);
+        await localeHydrationPromiseRef.current;
+        if (!active || !isAuthenticatedUserCurrent(expectedUserId)) return;
+
+        const latestNetwork = getOfflineSnapshot();
+        if (!latestNetwork.isNetworkKnown || !latestNetwork.isOnline || latestNetwork.isPoorConnection) return;
+
+        const code = await loadUserLocale({
+          userId: expectedUserId,
+          signal: controller.signal,
+        });
+        if (active && code && isAuthenticatedUserCurrent(expectedUserId)) {
+          await setLocale(code);
+        }
       } catch {
         // noop
+      } finally {
+        inFlight = false;
+        controller = null;
       }
-    })();
-  }, [isAuthenticated]);
+    };
+
+    const handleLocaleNetworkChange = () => {
+      const network = getOfflineSnapshot();
+      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) {
+        controller?.abort?.();
+        return;
+      }
+      refreshServerLocale().catch(() => {});
+    };
+
+    handleLocaleNetworkChange();
+    const unsubscribeNetwork = subscribeOfflineState(handleLocaleNetworkChange);
+
+    return () => {
+      active = false;
+      controller?.abort?.();
+      unsubscribeNetwork();
+    };
+  }, [isAuthenticated, isAuthenticatedUserCurrent, user?.id]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -353,13 +400,22 @@ function RootLayoutInner() {
     if (!uid) return null;
     const columns = 'is_admin_blocked, license_state, blocked_reason';
 
-    const { data: byId } = await supabase
-      .from('profiles')
-      .select(columns)
-      .eq('id', uid)
-      .maybeSingle();
+    const { data: byId } = await withReadDeadline(
+      supabase.from('profiles').select(columns).eq('id', uid).maybeSingle(),
+      { label: 'Account access profile' },
+    );
     return byId || null;
   }, []);
+
+  useEffect(() => {
+    // Local auth/cache hydration should normally finish before this deadline.
+    // If device storage or an SDK lock stalls, reveal the React recovery shell
+    // instead of leaving Android's static launch screen visible indefinitely.
+    const timer = setTimeout(() => {
+      hideSplash();
+    }, NATIVE_SPLASH_WATCHDOG_MS);
+    return () => clearTimeout(timer);
+  }, [hideSplash]);
 
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return undefined;
@@ -370,7 +426,7 @@ function RootLayoutInner() {
     const run = async () => {
       if (!active || !initialized || running) return;
       const network = getOfflineSnapshot();
-      if (network.isNetworkKnown && !network.isOnline) return;
+      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
       running = true;
       try {
         await runBackgroundSync();
@@ -407,6 +463,8 @@ function RootLayoutInner() {
   const enforceAccess = useCallback(async () => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
     const expectedUserId = String(user.id);
+    const network = getOfflineSnapshot();
+    if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
     if (accessCheckInFlightRef.current) return;
     const now = Date.now();
     if (now - lastAccessCheckAtRef.current < ACCESS_CHECK_MIN_GAP_MS) return;
@@ -418,7 +476,10 @@ function RootLayoutInner() {
       const inAuthGroup = seg[0] === '(auth)';
       const isBlockedScreen = inAuthGroup && seg[1] === 'blocked';
 
-      const { data: accessData, error: accessError } = await supabase.rpc('get_my_access_state');
+      const { data: accessData, error: accessError } = await withReadDeadline(
+        supabase.rpc('get_my_access_state'),
+        { label: 'Account access state' },
+      );
       if (!isAuthenticatedUserCurrent(expectedUserId)) return;
 
       if (!accessError) {
@@ -512,6 +573,12 @@ function RootLayoutInner() {
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') enforceAccess();
     });
+    const unsubscribeNetwork = subscribeOfflineState(() => {
+      const network = getOfflineSnapshot();
+      if (network.isNetworkKnown && network.isOnline && !network.isPoorConnection) {
+        enforceAccess();
+      }
+    });
 
     return () => {
       clearTimeout(bootstrapTimer);
@@ -519,6 +586,7 @@ function RootLayoutInner() {
         bootstrapTask?.cancel?.();
       } catch {}
       clearInterval(intervalId);
+      unsubscribeNetwork();
       appStateSub?.remove?.();
     };
   }, [enforceAccess, isAuthenticated, isInitializing, user?.id]);
@@ -533,35 +601,65 @@ function RootLayoutInner() {
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return undefined;
 
-    const channelById = supabase
-      .channel(`self-access-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'profiles',
-          filter: `id=eq.${user.id}`,
-        },
-        (payload) => {
-          if (!hasAccessRelevantProfileChange(payload)) return;
-          enforceAccess();
-        },
-      )
-      .subscribe();
+    let active = true;
+    let channelById = null;
 
-    return () => {
+    const stopChannel = () => {
+      const channel = channelById;
+      channelById = null;
+      if (!channel) return;
       try {
-        supabase.removeChannel(channelById);
+        Promise.resolve(supabase.removeChannel(channel)).catch(() => {});
       } catch {}
     };
-  }, [enforceAccess, hasAccessRelevantProfileChange, isAuthenticated, isInitializing, user?.id]);
+
+    const reconcileChannel = () => {
+      if (!active) return;
+      const network = getOfflineSnapshot();
+      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) {
+        stopChannel();
+        return;
+      }
+      if (channelById) return;
+
+      channelById = supabase
+        .channel(`self-access-${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'profiles',
+            filter: `id=eq.${user.id}`,
+          },
+          (payload) => {
+            if (!hasAccessRelevantProfileChange(payload)) return;
+            enforceAccess();
+            if (typeof refreshProfile === 'function') {
+              refreshProfile({ reason: 'self-profile-realtime' }).catch(() => {});
+            }
+          },
+        )
+        .subscribe();
+    };
+
+    reconcileChannel();
+    const unsubscribeNetwork = subscribeOfflineState(reconcileChannel);
+
+    return () => {
+      active = false;
+      unsubscribeNetwork();
+      stopChannel();
+    };
+  }, [enforceAccess, hasAccessRelevantProfileChange, isAuthenticated, isInitializing, refreshProfile, user?.id]);
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return undefined;
 
     let active = true;
     const runBootstrap = async (requestPermission) => {
+      const network = getOfflineSnapshot();
+      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return null;
       if (pushSyncInFlightRef.current === user.id) return;
       pushSyncInFlightRef.current = user.id;
       try {
@@ -593,8 +691,16 @@ function RootLayoutInner() {
         runBootstrap(false).catch(() => {});
       }
     });
+    const unsubscribeNetwork = subscribeOfflineState(() => {
+      const network = getOfflineSnapshot();
+      if (network.isNetworkKnown && network.isOnline && !network.isPoorConnection) {
+        runBootstrap(false).catch(() => {});
+      }
+    });
     const pushTokenSub = Notifications.addPushTokenListener((devicePushToken) => {
       if (!active || authSnapshotRef.current.userId !== String(user.id)) return;
+      const network = getOfflineSnapshot();
+      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
       syncChangedPushTokenForUser(user.id, devicePushToken).catch(() => {});
     });
 
@@ -604,6 +710,7 @@ function RootLayoutInner() {
       try {
         bootstrapTask?.cancel?.();
       } catch {}
+      unsubscribeNetwork();
       appStateSub?.remove?.();
       pushTokenSub?.remove?.();
     };

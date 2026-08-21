@@ -45,6 +45,7 @@ import { saveUserLocale } from '../../lib/userLocale';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { availableLocales, getLocale, setLocale } from '../../src/i18n';
 import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
 
 /* Helpers */
 const getDeviceTimeZone = () => {
@@ -337,7 +338,11 @@ export default function CompanySettings() {
     refetch: refreshCompany,
   } = useQuery({
     queryKey: companyQueryKey,
-    queryFn: () => fetchCompanySettingsByCompanyId(companyId),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchCompanySettingsByCompanyId(companyId, readSignal),
+        { label: 'Company settings screen', signal },
+      ),
     enabled: !!companyId,
     gcTime: 30 * 60 * 1000,
     staleTime: 5 * 60 * 1000,
@@ -624,8 +629,16 @@ export default function CompanySettings() {
           })
           .eq('id', companyId);
         if (error) throw error;
-        await refreshCompany();
-        await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
+        await Promise.all([
+          refreshCompany(),
+          queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY }),
+          queryClient.invalidateQueries({ queryKey: ['requests'] }),
+          queryClient.invalidateQueries({ queryKey: ['finance'] }),
+        ]);
+        void broadcastCompanySettingsChanged(companyId, [
+          'payment_method_cash_enabled',
+          'payment_method_cashless_enabled',
+        ]);
         setPaymentMethodsConfirmVisible(false);
         setPaymentMethodsModalVisible(false);
         toast.success(t('settings_payment_methods_saved'));

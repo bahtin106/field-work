@@ -20,15 +20,21 @@ import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
 import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
-import { useOfflineSnapshot } from '../../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../theme/ThemeProvider';
 
-async function fetchUsers(search) {
-  const { data, error } = await supabase.rpc('admin_list_users_v2', {
-    p_search: search || null,
-    p_limit: ADMIN_PAGE_SIZE,
-    p_offset: 0,
-  });
+async function fetchUsers(search, signal) {
+  const { data, error } = await supabase
+    .rpc('admin_list_users_v2', {
+      p_search: search || null,
+      p_limit: ADMIN_PAGE_SIZE,
+      p_offset: 0,
+    })
+    .abortSignal(signal);
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
@@ -76,7 +82,9 @@ function getRoleColor(row, theme) {
 export default function AdminUsersScreen() {
   const { theme } = useTheme();
   const { t, locale } = useTranslation();
-  const { isOnline } = useOfflineSnapshot();
+  const offlineSnapshot = useOfflineSnapshot();
+  const { isOnline } = offlineSnapshot;
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const nav = useNavigation();
   const router = useRouter();
@@ -98,11 +106,19 @@ export default function AdminUsersScreen() {
 
   const { data, isLoading, isRefetching, error, refetch } = useQuery({
     queryKey: ['adminUsersV2', debouncedSearch],
-    queryFn: () => fetchUsers(debouncedSearch),
-    enabled: isAllowed,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchUsers(debouncedSearch, readSignal),
+        { label: 'Admin users', signal },
+      ),
+    enabled: isAllowed && canUseAdminNetwork,
     placeholderData: (previousData) => previousData,
     staleTime: 30 * 1000,
   });
+  const refreshUsers = React.useCallback(
+    () => (canUseAdminNetwork ? refetch() : Promise.resolve()),
+    [canUseAdminNetwork, refetch],
+  );
 
   const isOnlineNow = React.useCallback(
     (value) => {
@@ -182,7 +198,7 @@ export default function AdminUsersScreen() {
 
   const openUser = React.useCallback(
     (profileId) => {
-      router.push(`/users/${profileId}`);
+      router.push(`/admin/users/${profileId}`);
     },
     [router],
   );
@@ -271,7 +287,7 @@ export default function AdminUsersScreen() {
       <Button
         title={t('btn_retry')}
         size="sm"
-        onPress={() => refetch()}
+        onPress={refreshUsers}
         containerStyle={styles.retryButton}
       />
     </Card>
@@ -306,7 +322,7 @@ export default function AdminUsersScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           refreshControl={
-            <ThemedRefreshControl refreshing={refreshing} onRefresh={refetch} />
+            <ThemedRefreshControl refreshing={refreshing} onRefresh={refreshUsers} />
           }
           ListHeaderComponent={error && users.length > 0 ? errorCard : null}
           ListEmptyComponent={

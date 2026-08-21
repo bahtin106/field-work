@@ -18,6 +18,11 @@ import {
   getTrashMediaOrigin,
 } from '../../src/features/trash/api';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTheme } from '../../theme';
 
@@ -55,6 +60,8 @@ export default function TrashDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const id = normalizeParam(params?.id);
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseTrashNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const [accessToken, setAccessToken] = useState('');
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -69,17 +76,20 @@ export default function TrashDetailScreen() {
 
   const detailQuery = useQuery({
     queryKey: [...queryKeys.trash.detail(id), 'read-only-screen'],
-    queryFn: async () => {
-      const detail = await getTrashItem(id);
-      let origin = null;
-      if (detail?.entity_type === 'media') {
-        try {
-          origin = await getTrashMediaOrigin(id);
-        } catch {}
-      }
-      return { ...detail, origin };
-    },
-    enabled: Boolean(id) && has('canViewTrash'),
+    queryFn: ({ signal }) => withReadDeadline(
+      async (readSignal) => {
+        const detail = await getTrashItem(id, readSignal);
+        let origin = null;
+        if (detail?.entity_type === 'media') {
+          try {
+            origin = await getTrashMediaOrigin(id, readSignal);
+          } catch {}
+        }
+        return { ...detail, origin };
+      },
+      { label: 'Trash item detail', signal },
+    ),
+    enabled: Boolean(id) && has('canViewTrash') && canUseTrashNetwork,
   });
   const detail = detailQuery.data;
 

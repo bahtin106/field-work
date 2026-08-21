@@ -4,7 +4,6 @@ import { formatPersonName } from '../../../lib/personName';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { applyOrderSortToQuery, ORDER_DEFAULT_SORT_KEY } from '../orders/orderSort';
 import {
-  enrichOrdersWithExecutorNames,
   prefetchExecutorNames,
   readOrderExecutorName,
   seedExecutorNames,
@@ -19,6 +18,11 @@ import { applyOrderRelationFilters, hasRelationFilters } from './relationFilters
 import { resolveRequestTitle } from './title';
 import { getMyCompanyId } from '../profile/api';
 import { buildClientObjectLocationSummary } from '../objects/addressing';
+import {
+  assertOwnerBoundAuthorization,
+  pinOwnerBoundPostgrestRequest,
+  type OwnerBoundAuthorization,
+} from '../../shared/security/ownerBoundAuthorization';
 
 const DEFAULT_PAGE_SIZE = 20;
 const SECURE_ORDER_SELECT_COLUMNS = '*';
@@ -42,6 +46,18 @@ const OBJECT_LOCATION_SELECT_COLUMNS = [
 // PostgreSQL accepts canonical UUID strings regardless of their version bits.
 // Do not reject imported or legacy identifiers solely because their version is unusual.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function applyReadAbortSignal(query: any, signal?: AbortSignal) {
+  return signal ? query.abortSignal(signal) : query;
+}
+
+function throwIfReadAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Request read was aborted');
+  error.name = 'AbortError';
+  throw error;
+}
 
 function warmExecutorNames(rows: any[] = []) {
   seedExecutorNames(rows);
@@ -80,8 +96,9 @@ export function isRequestAuthorizationError(error: any) {
   );
 }
 
-async function requireRequestSession() {
+async function requireRequestSession(signal?: AbortSignal) {
   const { data, error } = await supabase.auth.getSession();
+  throwIfReadAborted(signal);
   if (error) throw error;
 
   const session = data?.session;
@@ -156,8 +173,9 @@ function normalizeOrder(row) {
   const legacyPhoneVisible = row.phone_visible ?? customerPhoneVisible;
   const objectItem = row.object || row.client_object || null;
   const clientItem = row.client || null;
-  const address = extractOrderAddress(row);
-  const addressMode = normalizeOrderAddressMode(row.address_mode);
+  const objectId = String(row.object_id || '').trim() || null;
+  const address = extractOrderAddress(objectId ? row : {});
+  const addressMode = objectId ? 'object' : 'custom';
   const objectLocationMode =
     String(objectItem?.location_mode || row.object_location_mode || '').trim() || null;
   const objectSummary =
@@ -183,8 +201,8 @@ function normalizeOrder(row) {
     client: clientItem,
     fio: customerName || null,
     customer_name: customerName || null,
-    object_name: objectItem?.name || String(row.object_name || '').trim() || null,
-    object_summary: objectSummary,
+    object_name: objectId ? objectItem?.name || String(row.object_name || '').trim() || null : null,
+    object_summary: objectId ? objectSummary : null,
     object_location_mode: objectLocationMode,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,
@@ -218,7 +236,10 @@ function readExplicitObjectLocationMode(row) {
   return mode === 'map' || mode === 'address' ? mode : '';
 }
 
-export async function hydrateRequestObjectLocations(rows: any[] = []) {
+export async function hydrateRequestObjectLocations(
+  rows: any[] = [],
+  signal?: AbortSignal,
+) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const objectIds = Array.from(
     new Set(
@@ -236,10 +257,13 @@ export async function hydrateRequestObjectLocations(rows: any[] = []) {
   if (!objectIds.length) return safeRows.map(normalizeOrder);
 
   try {
-    const { data, error } = await supabase
-      .from('client_objects_secure')
-      .select(OBJECT_LOCATION_SELECT_COLUMNS)
-      .in('id', objectIds);
+    const { data, error } = await applyReadAbortSignal(
+      supabase
+        .from('client_objects_secure')
+        .select(OBJECT_LOCATION_SELECT_COLUMNS)
+        .in('id', objectIds),
+      signal,
+    );
     if (error) throw error;
 
     const objectsById = new Map<string, any>();
@@ -276,26 +300,6 @@ export async function hydrateRequestObjectLocations(rows: any[] = []) {
   }
 }
 
-async function enrichOrderWithExtraFields(row) {
-  const normalized = normalizeOrder(row);
-  const workTypeId = String(normalized?.work_type_id || '').trim();
-  const existingName = String(
-    normalized?.work_type_name || normalized?.work_type?.name || '',
-  ).trim();
-  if (!workTypeId || existingName) return normalized;
-
-  const { data, error } = await supabase
-    .from('work_types')
-    .select('id, name')
-    .eq('id', workTypeId)
-    .maybeSingle();
-  if (error || !data) return normalized;
-  const name = String(data?.name || '').trim();
-  return name
-    ? { ...normalized, work_type_name: name, work_type: { id: data.id, name } }
-    : normalized;
-}
-
 function buildConcurrencyError(message: string, latest: any = null) {
   const error: any = new Error(message || 'Request was changed by another user');
   error.code = 'CONFLICT';
@@ -303,31 +307,57 @@ function buildConcurrencyError(message: string, latest: any = null) {
   return error;
 }
 
-export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = null) {
+export async function updateRequestWithVersion(
+  id,
+  patch,
+  expectedUpdatedAt = null,
+  signal?: AbortSignal,
+  options: {
+    retryOnVersionMismatch?: boolean;
+    authorization?: OwnerBoundAuthorization | null;
+  } = {},
+) {
   return measureNetwork('requests.update.withVersion', async () => {
     if (!id) throw new Error('Order id is required');
     // Preferred path: DB-side atomic RPC (supports all current fields).
     try {
-      const { data: rpcData, error: rpcError } = await supabase.rpc('update_order_if_version', {
+      let request = supabase.rpc('update_order_if_version', {
         p_order_id: String(id),
         p_expected_updated_at: expectedUpdatedAt,
         p_patch: patch ?? {},
       });
+      if (options.authorization) {
+        request = pinOwnerBoundPostgrestRequest(request, options.authorization);
+      }
+      if (signal) request = request.abortSignal(signal);
+      const { data: rpcData, error: rpcError } = await request;
+      if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
       if (rpcError) throw rpcError;
 
       if (!rpcData) {
         if (!expectedUpdatedAt) {
           throw new Error('Order not found');
         }
-        const latest = await getRequestById(id);
+        const latest = await getRequestById(id, signal, {
+          authorization: options.authorization,
+        });
         const retryExpectedUpdatedAt = latest?.updated_at || null;
         // One transparent retry with fresh row version to avoid "save only on second click".
-        if (retryExpectedUpdatedAt) {
-          const { data: retryData, error: retryError } = await supabase.rpc('update_order_if_version', {
+        if (retryExpectedUpdatedAt && options.retryOnVersionMismatch !== false) {
+          let retryRequest = supabase.rpc('update_order_if_version', {
             p_order_id: String(id),
             p_expected_updated_at: retryExpectedUpdatedAt,
             p_patch: patch ?? {},
           });
+          if (options.authorization) {
+            retryRequest = pinOwnerBoundPostgrestRequest(
+              retryRequest,
+              options.authorization,
+            );
+          }
+          if (signal) retryRequest = retryRequest.abortSignal(signal);
+          const { data: retryData, error: retryError } = await retryRequest;
+          if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
           if (!retryError && retryData) {
             return normalizeOrder(Array.isArray(retryData) ? retryData[0] : retryData);
           }
@@ -347,7 +377,7 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
   });
 }
 
-export async function listRequests(params: any = {}) {
+export async function listRequests(params: any = {}, signal?: AbortSignal) {
   return measureNetwork('requests.list', async () => {
     const {
       scope = 'all',
@@ -432,7 +462,8 @@ export async function listRequests(params: any = {}) {
     query = applyStatusFilterValues(query, extraStatusValues);
 
     if (Array.isArray(workTypeIds) && workTypeIds.length) {
-      const ids = await getOrderIdsByWorkTypes(workTypeIds);
+      const ids = await getOrderIdsByWorkTypes(workTypeIds, signal);
+      throwIfReadAborted(signal);
       if (!ids.length) return [];
       query = query.in('id', ids);
     }
@@ -464,18 +495,25 @@ export async function listRequests(params: any = {}) {
     const from = Math.max(0, (Number(page) - 1) * Number(pageSize));
     const to = from + Number(pageSize) - 1;
 
-    const { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
+    const { data, error } = await applyReadAbortSignal(
+      applyOrderSortToQuery(query, sortKey).range(from, to),
+      signal,
+    );
     if (error) throw error;
-    const rows = await hydrateRequestObjectLocations(Array.isArray(data) ? data : []);
+    const rows = await hydrateRequestObjectLocations(Array.isArray(data) ? data : [], signal);
+    throwIfReadAborted(signal);
     return warmExecutorNames(rows);
   });
 }
 
-export async function getRelatedRequestCount({
-  scope = 'my',
-  clientId = '',
-  objectIds = [],
-}: any = {}) {
+export async function getRelatedRequestCount(
+  {
+    scope = 'my',
+    clientId = '',
+    objectIds = [],
+  }: any = {},
+  signal?: AbortSignal,
+) {
   const relationFilters = {
     clientId: String(clientId || '').trim(),
     objectIds: Array.from(
@@ -489,7 +527,7 @@ export async function getRelatedRequestCount({
   if (!hasRelationFilters(relationFilters)) return 0;
 
   return measureNetwork('requests.relatedCount', async () => {
-    const session = await requireRequestSession();
+    const session = await requireRequestSession(signal);
     let query = supabase
       .from('orders_accessible')
       .select('id', { count: 'exact', head: true });
@@ -501,54 +539,84 @@ export async function getRelatedRequestCount({
     query = excludeFeedStatuses(query);
     query = applyOrderRelationFilters(query, relationFilters);
 
-    const { count, error } = await query;
+    const { count, error } = await applyReadAbortSignal(query, signal);
     if (error) throw error;
     return Math.max(0, Number(count || 0));
   });
 }
 
-export async function getRequestById(id: any) {
+export async function getRequestById(
+  id: any,
+  signal?: AbortSignal,
+  options: { authorization?: OwnerBoundAuthorization | null } = {},
+) {
   const key = String(id || '').trim();
   if (!key || !isUuid(key)) return null;
   return measureNetwork('requests.getById', async () => {
     // Never let a protected order-detail request fall through as `anon` while
     // Supabase is restoring or refreshing the persisted mobile session.
-    await requireRequestSession();
-    const { data, error } = await supabase
-      .from('orders_accessible')
-      .select(SECURE_ORDER_SELECT_COLUMNS)
-      .eq('id', key)
-      .maybeSingle();
+    if (!options.authorization) await requireRequestSession(signal);
+    else assertOwnerBoundAuthorization(options.authorization);
+    let request = supabase
+        .from('orders_accessible')
+        .select(SECURE_ORDER_SELECT_COLUMNS)
+        .eq('id', key)
+        .maybeSingle();
+    if (options.authorization) {
+      request = pinOwnerBoundPostgrestRequest(request, options.authorization);
+    }
+    const { data, error } = await applyReadAbortSignal(request, signal);
+    if (options.authorization) assertOwnerBoundAuthorization(options.authorization);
     if (error) throw error;
-    const enriched = await enrichOrderWithExtraFields(data);
-    const withExecutor = await enrichOrdersWithExecutorNames(enriched ? [enriched] : []);
-    return withExecutor[0] || enriched;
+    throwIfReadAborted(signal);
+    // The protected order row is the critical path. Optional work-type and
+    // executor labels must not consume the detail deadline on EDGE; existing
+    // reference-data queries fill them independently, while this warms the
+    // executor-name cache without delaying first paint.
+    const normalized = normalizeOrder(data);
+    return warmExecutorNames(normalized ? [normalized] : [])[0] || normalized;
   });
 }
 
-export async function updateRequest(id: any, patch: any, expectedUpdatedAt: any = null) {
-  return updateRequestWithVersion(id, patch, expectedUpdatedAt);
+export async function updateRequest(
+  id: any,
+  patch: any,
+  expectedUpdatedAt: any = null,
+  signal?: AbortSignal,
+  options: {
+    retryOnVersionMismatch?: boolean;
+    authorization?: OwnerBoundAuthorization | null;
+  } = {},
+) {
+  return updateRequestWithVersion(id, patch, expectedUpdatedAt, signal, options);
 }
 
-export async function listRequestExecutors({ companyId = null }: any = {}) {
+export async function listRequestExecutors(
+  { companyId = null }: any = {},
+  signal?: AbortSignal,
+) {
   return measureNetwork('requests.executors', async () => {
-    const scopedCompanyId = String(companyId || '').trim() || String(await getMyCompanyId() || '').trim();
+    const scopedCompanyId =
+      String(companyId || '').trim() || String(await getMyCompanyId(signal) || '').trim();
     if (!scopedCompanyId) return [];
     let query = supabase
       .from('profiles')
       .select('id, first_name, middle_name, last_name, full_name, email, role, department_id')
       .neq('role', 'client')
       .eq('company_id', scopedCompanyId);
-    const { data, error } = await query;
+    const { data, error } = await applyReadAbortSignal(query, signal);
 
     if (error) throw error;
     return Array.isArray(data) ? data : [];
   });
 }
 
-export async function listRequestFilterOptions() {
+export async function listRequestFilterOptions(signal?: AbortSignal) {
   return measureNetwork('requests.filterOptions', async () => {
-    const { data, error } = await supabase.rpc('get_order_filter_options');
+    const { data, error } = await applyReadAbortSignal(
+      supabase.rpc('get_order_filter_options'),
+      signal,
+    );
     if (error) throw error;
     return {
       work_type: Array.isArray(data?.work_type) ? data.work_type : [],
@@ -557,30 +625,36 @@ export async function listRequestFilterOptions() {
   });
 }
 
-export async function getAssigneeDisplayNameById(userId: any) {
+export async function getAssigneeDisplayNameById(userId: any, signal?: AbortSignal) {
   return measureNetwork('requests.assigneeName', async () => {
     if (!userId) return '';
-    const scopedCompanyId = String(await getMyCompanyId() || '').trim();
+    const scopedCompanyId = String(await getMyCompanyId(signal) || '').trim();
     if (!scopedCompanyId) return '';
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('first_name, middle_name, last_name, full_name, email')
-      .eq('id', userId)
-      .eq('company_id', scopedCompanyId)
-      .maybeSingle();
+    const { data, error } = await applyReadAbortSignal(
+      supabase
+        .from('profiles')
+        .select('first_name, middle_name, last_name, full_name, email')
+        .eq('id', userId)
+        .eq('company_id', scopedCompanyId)
+        .maybeSingle(),
+      signal,
+    );
     if (error) throw error;
     if (!data) return '';
     return formatPersonName(data, data.email || '');
   });
 }
 
-export async function listCalendarRequests({
-  userId,
-  role,
-  scope = 'my',
-  startDate = null,
-  endDate = null,
-}: any = {}) {
+export async function listCalendarRequests(
+  {
+    userId,
+    role,
+    scope = 'my',
+    startDate = null,
+    endDate = null,
+  }: any = {},
+  signal?: AbortSignal,
+) {
   return measureNetwork('requests.calendar', async () => {
     if (!userId) return [];
     const normalizedScope = scope === 'all' ? 'all' : 'my';
@@ -600,10 +674,14 @@ export async function listCalendarRequests({
       query = query.lte('time_window_start', endDate);
     }
 
-    const { data, error } = await query;
+    const { data, error } = await applyReadAbortSignal(query, signal);
     if (error) throw error;
 
-    const hydratedRows = await hydrateRequestObjectLocations(Array.isArray(data) ? data : []);
+    const hydratedRows = await hydrateRequestObjectLocations(
+      Array.isArray(data) ? data : [],
+      signal,
+    );
+    throwIfReadAborted(signal);
     const rows = warmExecutorNames(hydratedRows);
     if (normalizedScope === 'my' && userId) return rows.filter((row) => row.assigned_to === userId);
 

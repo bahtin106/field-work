@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { supabase } from '../../../lib/supabase';
 import { getCachedSupabaseAccessToken } from '../../../lib/supabaseSessionCache';
 import { t as T } from '../../i18n';
+import { canRunDeferredNetworkWork } from '../../shared/offline/offlineStatus';
 
 type EntityType = 'employee' | 'client' | 'object' | 'feedback' | 'feedback_attachment';
 
@@ -176,6 +177,11 @@ export function getCachedProfileMediaResolution(sourceUrl: string) {
 }
 
 async function invokeProfileMedia(action: string, payload: Record<string, any> = {}) {
+  if (!canRunDeferredNetworkWork()) {
+    const error = new Error(T('errors_network')) as Error & { code?: string };
+    error.code = 'NETWORK_QUALITY_REQUIRED';
+    throw error;
+  }
   const token = await getCachedSupabaseAccessToken();
   if (!token) throw new Error(T('profile_media_session_expired'));
 

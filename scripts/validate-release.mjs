@@ -45,6 +45,16 @@ const externalUrls = read('config/externalUrls.js');
 const appRuntime = read('config/appRuntime.js');
 const financeQueue = read('src/features/finance/queries.js');
 const financeApi = read('src/features/finance/api.js');
+const tagQueries = read('src/features/tags/queries.ts');
+const tagApi = read('src/features/tags/api.ts');
+const mutationAuthCarrier = read('src/shared/security/mutationAuthCarrier.ts');
+const requestQueries = read('src/features/requests/queries.ts');
+const executorNameCache = read('src/features/requests/executorNameCache.js');
+const clientQueries = read('src/features/clients/queries.ts');
+const objectQueries = read('src/features/objects/queries.ts');
+const employeeQueries = read('src/features/employees/queries.ts');
+const employeeApi = read('src/features/employees/api.ts');
+const queryKeysSource = read('src/shared/query/queryKeys.ts');
 const keyboardControllerCompat = read('lib/keyboardControllerCompat.js');
 const mapHelpers = read('components/ui/map.js');
 const mapQueriesPlugin = read('plugins/withMapAppQueries.js');
@@ -58,6 +68,8 @@ const orderSort = read('src/features/orders/orderSort.js');
 const orderFacetCounts = read('src/features/orders/facetCounts.js');
 const filtersPanel = read('components/filters/FiltersPanel.jsx');
 const appSettingsScreen = read('screens/app_settings/AppSettingsScreen.jsx');
+const adminHomeScreen = read('app/admin/index.jsx');
+const adminFeedbackDetailsScreen = read('app/admin/feedbacks/[id]/index.jsx');
 const trashScreen = read('screens/app_settings/TrashScreen.jsx');
 const trashFiltersPanel = read('components/filters/TrashFiltersPanel.jsx');
 const selectionToolbar = read('components/ui/SelectionToolbar.jsx');
@@ -70,7 +82,16 @@ const allOrdersRoute = read('app/orders/all-orders.jsx');
 const orderDetailsRoute = read('app/orders/[id].jsx');
 const bottomNavigation = read('components/navigation/BottomNav.jsx');
 const universalHome = read('components/UniversalHome.jsx');
+const orderActivityTimeline = read('components/orders/OrderActivityTimeline.jsx');
+const billingScreen = read('screens/billing/BillingScreen.jsx');
 const userViewScreen = read('screens/users/[id]/UserViewScreen.jsx');
+const userEditScreen = read('screens/users/[id]/UserEditScreen.jsx');
+const adminUsersScreen = read('app/admin/users/index.jsx');
+const adminUserViewRoute = read('app/admin/users/[id]/index.jsx');
+const adminUserEditRoute = read('app/admin/users/[id]/edit.jsx');
+const adminCompanyDetailsScreen = read('app/admin/companies/details.jsx');
+const adminCompanyEditScreen = read('app/admin/companies/edit.jsx');
+const companyAccessStateHook = read('hooks/useCompanyAccessState.js');
 const bottomNavigationGuard = read('src/shared/navigation/bottomNavigationGuard.js');
 const textField = read('components/ui/TextField.jsx');
 const phoneInput = read('components/ui/PhoneInput.jsx');
@@ -79,6 +100,7 @@ const expandableTextRow = read('components/ui/ExpandableTextRow.jsx');
 const inputLimits = read('src/shared/input/limits.js');
 const requestSearch = read('src/features/requests/search.js');
 const requestApi = read('src/features/requests/api.ts');
+const supportRequestsApi = read('src/features/supportRequests/api.js');
 const tagFiltering = read('src/features/tags/filtering.js');
 const clientsIndexScreen = read('screens/clients/ClientsIndexScreen.jsx');
 const clientViewScreen = read('screens/clients/[id]/ClientViewScreen.jsx');
@@ -91,14 +113,34 @@ const myOrdersScreen = read('screens/orders/MyOrdersScreen.js');
 const allOrdersScreen = read('screens/orders/AllOrdersScreen.jsx');
 const authValidation = read('lib/authValidation.js');
 const authProvider = read('providers/SimpleAuthProvider.jsx');
+const authLogin = read('hooks/useAuthLogin.js');
+const authSessionCleanup = read('lib/authSessionCleanup.js');
+const supabaseSessionCache = read('lib/supabaseSessionCache.js');
 const supabaseClient = read('lib/supabase.js');
 const offlineStatus = read('src/shared/offline/offlineStatus.ts');
+const ownerBoundAuthorization = read('src/shared/security/ownerBoundAuthorization.ts');
+const offlineSync = read('src/shared/offline/useOfflineSync.ts');
+const backgroundSync = read('src/shared/offline/backgroundSync.js');
+const queryProvider = read('src/shared/query/QueryProvider.tsx');
 const queryClient = read('src/shared/query/queryClient.ts');
+const prefetchRegistry = read('src/shared/query/prefetchRegistry.js');
+const routeFreshnessBoundary = read('src/shared/query/RouteFreshnessBoundary.tsx');
+const readDeadline = read('src/shared/network/readDeadline.ts');
+const imageSizeSecurityPatch = read('patches/image-size+1.2.1.patch');
 const authFlowState = read('lib/authFlowNavigationState.js');
+const accessSnapshot = read('lib/accessSnapshot.js');
+const permissionsProvider = read('lib/permissions.js');
+const workTypes = read('lib/workTypes.js');
 const rootLayout = read('app/_layout.js');
 const photoQueue = read('src/shared/media/orderPhotoQueue.js');
+const orderMediaHook = read('hooks/useOrderMedia.js');
+const mediaStorageAction = read('lib/mediaStorageAction.js');
+const orderMediaStorage = read('lib/orderMediaStorage.js');
+const yandexDiskIntegration = read('lib/yandexDiskIntegration.js');
+const financeEntryMediaHook = read('hooks/useFinanceEntryMedia.js');
 const cachedImage = read('components/ui/CachedImage.jsx');
 const photoGrid = read('app/orders/components/PhotoGrid.jsx');
+const orderPhotoRow = read('app/orders/components/OrderPhotoRow.jsx');
 const quickPreviewModal = read('components/ui/modals/QuickPreviewModal.jsx');
 const dialog = read('components/ui/Dialog.jsx');
 const fullscreenImageViewer = read('app/orders/components/FullscreenImageViewer.jsx');
@@ -161,8 +203,10 @@ const trashClearRollback = read(trashClearRollbackPath);
 check(!packageJson.dependencies?.['expo-dev-client'], 'expo-dev-client must not be bundled in production dependencies');
 check(packageJson.dependencies?.['expo-background-task'], 'expo-background-task is required for deferred media delivery');
 check(packageJson.dependencies?.['expo-contacts'] === '~15.0.11', 'expo-contacts must match Expo SDK 54');
-check(packageJson.dependencies?.expo === '~54.0.36', 'Expo must stay on the validated SDK 54 patch');
-check(packageJson.dependencies?.['expo-updates'] === '~29.0.19', 'expo-updates must match the validated SDK 54 patch');
+check(packageJson.dependencies?.expo === '~54.0.37', 'Expo must stay on the validated SDK 54 patch');
+check(packageJson.dependencies?.['expo-constants'] === '~18.0.14', 'expo-constants must match the validated SDK 54 patch');
+check(packageJson.dependencies?.['expo-file-system'] === '~19.0.24', 'expo-file-system must match the validated SDK 54 patch');
+check(packageJson.dependencies?.['expo-updates'] === '~29.0.20', 'expo-updates must match the validated SDK 54 patch');
 check(packageJson.dependencies?.['@react-native-community/netinfo'] === '11.4.1', 'NetInfo must match Expo SDK 54');
 check(packageJson.dependencies?.['react-native-keyboard-controller'] === '1.18.5', 'Keyboard controller must match Expo SDK 54');
 check(
@@ -354,8 +398,44 @@ check(
 );
 check(financeQueue.includes('ownerUserId') && financeQueue.includes('mutateFinanceOutbox'), 'Finance outbox must be owner-scoped and serialized');
 check(
-  financeQueue.includes('if (!snapshot.isNetworkKnown) return true'),
-  'Cold-start finance writes must try the server before falling back to the outbox',
+  financeQueue.includes('return onlineManager.isOnline() && canRunOutboxSync(snapshot)'),
+  'Unknown, offline, and EDGE finance writes must use the durable outbox without blocking the UI',
+);
+check(
+  mutationAuthCarrier.includes('export function assertMutationPayloadCompany') &&
+    mutationAuthCarrier.includes("'MUTATION_COMPANY_SCOPE_REQUIRED'") &&
+    mutationAuthCarrier.includes("'MUTATION_COMPANY_SCOPE_MISMATCH'") &&
+    mutationAuthCarrier.includes('payloadCompanyId !== queryCompanyId') &&
+    mutationAuthCarrier.includes('payloadCompanyId !== offlineCompanyId') &&
+    mutationAuthCarrier.includes('enumerable: false') &&
+    mutationAuthCarrier.includes("request.setHeader('Authorization', activeCarrier.authorization)"),
+  'Mutation authorization must remain non-serializable and fail closed across user/company owner epochs',
+);
+check(
+  financeQueue.includes('async function beginSecuredFinanceMutation') &&
+    financeQueue.includes('clearMutationAuthCarrier(payload)') &&
+    financeQueue.includes('companyId: item.ownerCompanyId') &&
+    financeQueue.includes('requireMutationAuthCarrier(payload, { requireOfflineOwner: true })') &&
+    financeQueue.includes('assertMutationPayloadCompany(authCarrier, payload?.company_id)') &&
+    financeApi.includes('export async function deleteOrderFinanceEntry(') &&
+    financeApi.includes(".eq('company_id', scopedCompanyId)") &&
+    financeApi.includes("supabase.rpc('set_order_finance_money_holder_v2'") &&
+    financeApi.includes("supabase.rpc('set_order_finance_scheme_disabled_v2'") &&
+    financeApi.includes("supabase.rpc('delete_company_finance_rule'") &&
+    financeApi.includes("supabase.rpc('upsert_company_finance_scheme_v2'") &&
+    financeApi.includes("supabase.rpc('archive_company_finance_scheme_v2'") &&
+    financeApi.includes("supabase.rpc('set_company_finance_scheme_enabled_v2'") &&
+    (financeApi.match(/pinMutationAuthorization\(/g) || []).length >= 12,
+  'Every finance write path, including background deletes, must pin auth and preserve company scope',
+);
+check(
+  ['createCompanyTag', 'deleteAllCompanyTags', 'updateCompanyTagSettings'].every(
+    (name) => tagApi.includes(`export async function ${name}`),
+  ) &&
+    (tagApi.match(/assertMutationPayloadCompany\(authCarrier, companyId\)/g) || []).length >= 3 &&
+    (tagQueries.match(/assertMutationPayloadCompany\(authCarrier, variables\?\.companyId\)/g) || [])
+      .length >= 3,
+  'Company tag creation, bulk deletion, and settings writes must reject stale or cross-company payloads',
 );
 check(
   inputLimits.includes('description: 4000') &&
@@ -463,7 +543,33 @@ check(
   'Cold auth restore must preserve encrypted sessions across transient mobile network failures',
 );
 check(
-  offlineStatus.includes('QUALITY_REQUIRED_SLOW_SAMPLES = 3') &&
+  queryProvider.indexOf('configureQueryEnvironment();') >= 0 &&
+    queryProvider.indexOf('configureQueryEnvironment();') <
+      queryProvider.indexOf('export function QueryProvider') &&
+    queryClient.includes('PERSIST_RESTORE_TIMEOUT_MS = 1_800') &&
+    queryClient.includes("const timedOut = Symbol('persist-restore-timeout')") &&
+    queryClient.includes('if (result === timedOut)') &&
+    authProvider.includes('useIsRestoring()') &&
+    authProvider.includes('queryCacheBootstrapReady') &&
+    authProvider.includes('LOCAL_SESSION_READ_WAIT_MS = 1500') &&
+    authProvider.includes('PROFILE_UI_WAIT_TIMEOUT_MS = 4000') &&
+    authFlowState.includes('PUBLIC_AUTH_ROUTE_HYDRATION_TIMEOUT_MS = 1200') &&
+    authFlowState.includes('hydrationPromise = Promise.race([') &&
+    rootLayout.includes('NATIVE_SPLASH_WATCHDOG_MS = 2500') &&
+    accessSnapshot.includes('LOCAL_READ_WATCHDOG_MS = 1200') &&
+    accessSnapshot.includes('options.onLateValue?.(lateValue)'),
+  'Cold startup, splash, auth hydration, and local access snapshots must all remain bounded',
+);
+check(
+  readDeadline.includes('DEGRADED_READ_DEADLINE_MS = 6_000') &&
+    readDeadline.includes('const upstreamSignal = options.signal') &&
+    readDeadline.includes('controller.abort(reason)') &&
+    readDeadline.includes('(controller.signal)') &&
+    readDeadline.includes("error.code = 'READ_DEADLINE_EXCEEDED'"),
+  'Foreground remote reads must retain a constrained-link deadline and composed cancellation',
+);
+check(
+  offlineStatus.includes('QUALITY_REQUIRED_SLOW_SAMPLES = 2') &&
     offlineStatus.includes('QUALITY_REQUIRED_GOOD_SAMPLES = 2') &&
     offlineStatus.includes('QUALITY_CONFIRMATION_DELAY_MS') &&
     offlineStatus.includes('QUALITY_SLOW_RTT_MS') &&
@@ -472,10 +578,230 @@ check(
     /:\s*probeTimedOut\s*\?\s*'slow'\s*:\s*'neutral'/.test(offlineStatus) &&
     !offlineStatus.includes('transportHintWasPoor') &&
     !offlineStatus.includes('hasPoorTransportHint') &&
+    offlineStatus.includes('isConstrainedCellularState') &&
     offlineStatus.includes('qualityProbeAbortController?.abort()') &&
     queryClient.includes('startNetworkQualityMonitoring') &&
     queryClient.includes('setNetworkQualityMonitoringActive(isActive)'),
-  'Poor-connection banner must use confirmed backend latency with hysteresis and foreground-only probes',
+  'Poor-connection handling must combine immediate 2G constraints with latency hysteresis and foreground-only probes',
+);
+check(
+  queryClient.includes('QUERY_CACHE_ENVELOPE_SCHEMA = 1') &&
+    queryClient.includes('readPersistedAuthSession()') &&
+    queryClient.includes('query-cache-owner-changed-before-write') &&
+    queryClient.includes('query-cache-company-owner-required') &&
+    queryClient.includes('persistedClientContainsCompanyScopedData') &&
+    authProvider.includes('hasQueryCacheOwnerScopeChanged') &&
+    authProvider.includes('hasAuthMetadataCompanyScopeChanged') &&
+    authProvider.includes("const safeRole = 'worker'") &&
+    authProvider.includes('Boolean(previousRole || nextRole) && previousRole !== nextRole') &&
+    authProvider.includes('scheduleProfileRecovery(user);') &&
+    authProvider.includes("cleanupSessionRuntime('auth-metadata-company-changed')") &&
+    authProvider.includes('const authEventGeneration = ++authEventGenerationRef.current') &&
+    authProvider.includes('authEventGeneration !== authEventGenerationRef.current') &&
+    authProvider.includes('profile: bootstrapProfile || (metadataScopeChanged ? null : prev.profile) || null') &&
+    authSessionCleanup.includes('clearActiveQueryCacheOwner()'),
+  'Persisted query data must be owner-enveloped and rejected before hydration across account/company changes',
+);
+check(
+  offlineStatus.includes('export function getActiveOfflineOwnerContext') &&
+    offlineStatus.includes('export function isActiveOfflineOwnerContext') &&
+    offlineStatus.includes('if (!owner.companyId) return false;') &&
+    offlineStatus.includes('itemCompanyId === owner.companyId') &&
+    offlineStatus.includes("error.code = 'OFFLINE_OWNER_CHANGED'") &&
+    offlineStatus.includes('Offline request conflict check') &&
+    authSessionCleanup.includes('clearActiveOfflineOwner()') &&
+    financeQueue.includes('requireFinanceOwnerContext') &&
+    financeQueue.includes('assertFinanceOwnerContext(ownerContext)') &&
+    photoQueue.includes('requireOwnerContext') &&
+    photoQueue.includes('assertPhotoOwnerContext(ownerContext)'),
+  'Every durable outbox must be exact user/company scoped, epoch guarded, and bound its conflict reads',
+);
+check(
+  supabaseSessionCache.includes('cachedAccessTokenUserId') &&
+    supabaseSessionCache.includes('tokenCacheGeneration') &&
+    supabaseSessionCache.includes('supabase.auth.onAuthStateChange') &&
+    supabaseSessionCache.includes('generationAtStart !== tokenCacheGeneration') &&
+    supabaseSessionCache.includes('accessTokenPromise?.promise === promise') &&
+    authSessionCleanup.includes('clearCachedSupabaseAccessToken()') &&
+    ownerBoundAuthorization.includes('new WeakMap<object, string>()') &&
+    ownerBoundAuthorization.includes('Object.freeze({ userId })') &&
+    ownerBoundAuthorization.includes('pinOwnerBoundPostgrestRequest'),
+  'Supabase JWT reuse must be owner-bound, generation guarded, non-serializable, and cleared on every auth transition',
+);
+check(
+  offlineStatus.includes('captureOwnerBoundAuthorization(owner.userId)') &&
+    offlineStatus.includes('pinOwnerBoundPostgrestRequest') &&
+    offlineStatus.includes('getClientByIdForOfflineSync') &&
+    offlineStatus.includes('getClientObjectByIdForOfflineSync') &&
+    offlineStatus.includes('getEmployeeByIdForOfflineSync') &&
+    photoQueue.includes('captureOwnerBoundAuthorization(owner.userId)') &&
+    photoQueue.includes('{ authCarrier }') &&
+    mediaStorageAction.includes('buildOwnerBoundFunctionHeaders') &&
+    orderMediaStorage.includes('options') &&
+    yandexDiskIntegration.includes('const maxAttempts = authCarrier ? 1 : 2'),
+  'Generic and photo outbox runs must pin one owner-bound Authorization through all network transports',
+);
+check(
+    executorNameCache.includes('generation: 0') &&
+    executorNameCache.includes('throwIfExecutorCacheGenerationChanged') &&
+    executorNameCache.includes('expectedGeneration') &&
+    executorNameCache.includes('EXECUTOR_NAME_BATCH_STATE.controller?.abort()'),
+  'Late executor-name hydration and batch responses must not repopulate cache after owner cleanup',
+);
+check(
+  offlineStatus.includes('export function canRunDeferredNetworkWork') &&
+    offlineStatus.includes('export function canRunOutboxSync') &&
+    offlineStatus.includes('if (!canRunOutboxSync()) break;') &&
+    financeQueue.includes('return onlineManager.isOnline() && canRunOutboxSync(snapshot)') &&
+    financeQueue.includes('if (!canRunOutboxSync()) break;') &&
+    photoQueue.includes('if (!canRunOutboxSync()) return { completed: 0, failed: 0 }') &&
+    photoQueue.includes('if (!canRunOutboxSync()) break;') &&
+    backgroundSync.includes('if (!canRunOutboxSync()) return true;') &&
+    orderDetailsScreen.includes('const canRunDeferredSync = canRunOutboxSync(offlineSnapshot)') &&
+    offlineSync.includes('wasSyncableRef') &&
+    offlineSync.includes('becameSyncable') &&
+    authLogin.includes('LOGIN_UI_WATCHDOG_MS') &&
+    authLogin.includes("code: 'AUTH_UI_TIMEOUT'"),
+  'EDGE mode must pause outbox traffic, resume on poor-to-good recovery, and never leave login loading forever',
+);
+check(
+  offlineStatus.includes('const syncInFlightByOwner = new Map') &&
+    offlineStatus.includes('const syncRerunRequestedByOwner = new Set') &&
+    offlineStatus.includes('const syncRetryTimersByOwner = new Map') &&
+    offlineStatus.includes('getOfflineOwnerRunKey(activeContext)') &&
+    prefetchRegistry.includes('canRunDeferredNetworkWork') &&
+    prefetchRegistry.includes("error.code = 'PREFETCH_NETWORK_PAUSED'") &&
+    routeFreshnessBoundary.includes(
+      'if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;',
+    ),
+  'Reconnect sync and prefetch work must be owner-isolated, deduplicated, and quality-gated',
+);
+check(
+  allOrdersScreen.includes('isSuccess: requestsSuccess') &&
+    allOrdersScreen.includes('isPlaceholderData: requestsPlaceholder') &&
+    allOrdersScreen.includes('const canApplyRequestItems =') &&
+    allOrdersScreen.includes(
+      '!requestsPlaceholder && (requestItems.length > 0 || requestsSuccess)',
+    ) &&
+    allOrdersScreen.includes(
+      'requestsLoading && requestItems.length === 0 && orders.length === 0',
+    ),
+  'All-orders must retain a visible persisted snapshot until its exact query returns an authoritative result',
+);
+check(
+  myOrdersScreen.includes("if (context?.reason === 'network-recovered') return undefined;") &&
+    myOrdersScreen.includes('const shouldUseCacheOnly =') &&
+    myOrdersScreen.includes('network.isPoorConnection'),
+  'My-orders network recovery must use its single cache-preserving loader instead of clearing cache and fetching twice',
+);
+check(
+  createOrderScreen.includes('useMyCompanyIdQuery()') &&
+    createOrderScreen.includes('useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER') &&
+    createOrderScreen.includes('useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT') &&
+    createOrderScreen.includes('fetchWorkTypes(cid, {') &&
+    createOrderScreen.includes('deferNetworkWhenConstrained: true') &&
+    createOrderScreen.includes('WORK_TYPES_NETWORK_DEFERRED_CODE') &&
+    createOrderScreen.includes('[canRefreshWorkTypes, companyId, companySettings?.use_work_types, profile?.company_id]') &&
+    queryClient.includes("key0 === 'company-order-statuses'") &&
+    queryClient.includes("key0 === 'clients' || key0 === 'objects' || key0 === 'tags' || key0 === 'field-settings'") &&
+    workTypes.includes("WORK_TYPES_STORAGE_PREFIX = 'workTypes.cache.v2:'") &&
+    workTypes.includes('readWorkTypesDiskCache(cacheKey)') &&
+    workTypes.includes('WORK_TYPES_DISK_CACHE_MAX_AGE_MS') &&
+    workTypes.includes("WORK_TYPES_NETWORK_DEFERRED_CODE = 'WORK_TYPES_NETWORK_DEFERRED'") &&
+    workTypes.includes('options?.deferNetworkWhenConstrained && !canRunDeferredNetworkWork()') &&
+    workTypes.includes('if (!network.isOnline || network.isPoorConnection) return;') &&
+    permissionsProvider.includes('readPermissionsSnapshot(requestedUserId') &&
+    permissionsProvider.includes('onLateValue: (lateSnapshot)') &&
+    permissionsProvider.includes('setLoading(false)'),
+  'Create-order permissions and reference data must retain owner-scoped, durable cache-first bootstrap paths',
+);
+check(
+  requestQueries.includes('findRequestPageInCachedSuperset') &&
+    clientQueries.includes('findClientsInCachedSuperset') &&
+    objectQueries.includes('findClientObjectsInCachedCompanySuperset') &&
+    employeeQueries.includes('findEmployeesInCachedSuperset') &&
+    employeeQueries.includes('findDepartmentsInCachedSuperset') &&
+    [requestQueries, clientQueries, objectQueries, employeeQueries].every(
+      (source) => source.includes('if (derived) return derived;') && source.includes('throw error;'),
+    ),
+  'Offline list reads must prefer exact/same-scope cached supersets and preserve errors instead of caching false empty success',
+);
+check(
+  [requestQueries, clientQueries, objectQueries, employeeQueries].every(
+    (source) =>
+      source.includes('onlineManager.isOnline() && canRunOutboxSync()') &&
+      !source.includes('onlineManager.isOnline() && getOfflineSnapshot().isOnline'),
+  ) &&
+    trashApi.includes('if (!canRunOutboxSync())') &&
+    orderDetailsScreen.includes('const canAttemptForegroundMedia = canRunOutboxSync(getOfflineSnapshot())'),
+  'Queue-capable entity writes, trash restore, and foreground media must route unknown/EDGE traffic to durable pending state',
+);
+check(
+  orderMediaHook.includes('const canUseMediaNetwork = canRunDeferredNetworkWork(offlineSnapshot)') &&
+    orderMediaHook.includes('if (!order?.id || !canUseMediaNetwork) return;') &&
+    orderMediaHook.includes('if (cancelled || !canUseMediaNetworkRef.current) return undefined;') &&
+    financeEntryMediaHook.includes('!financeEntryId || !canUseMediaNetwork') &&
+    photoGrid.includes('if (!canPrefetchMedia) return;') &&
+    orderPhotoRow.includes('if (!canPrefetchMedia) return;'),
+  'Automatic media inspection, prefetch, retry, and disk warmup must pause on unknown/EDGE networks',
+);
+check(
+  photoQueue.includes("from 'expo-file-system/legacy'") &&
+    photoQueue.includes('FileSystem.documentDirectory') &&
+    photoQueue.includes('persistManagedLocalFile') &&
+    photoQueue.includes('managedLocalUrl') &&
+    photoQueue.includes('FileSystem.copyAsync') &&
+    photoQueue.includes('FileSystem.moveAsync') &&
+    photoQueue.includes('safeDeleteManagedLocalFile') &&
+    photoQueue.includes('const inFlightQueueItemIds = new Set()'),
+  'Queued order photos must survive picker cleanup/restarts and remain single-flight',
+);
+check(
+  orderDetailsScreen.includes('if (!canRunDeferredSync) return undefined;') &&
+    orderDetailsScreen.includes("yandexDiskIntegration('status', {}, { signal })") &&
+    orderDetailsScreen.includes("label: 'Yandex Disk status'") &&
+    orderDetailsScreen.includes('yandexStatusCheckRef') &&
+    yandexDiskIntegration.includes('signal,') &&
+    yandexDiskIntegration.includes('signal?.aborted'),
+  'Yandex health checks must be bounded, cancellable, single-flight, and skipped on constrained links',
+);
+check(
+  supportRequestsApi.includes('throwIfSupportReadAborted(signal)') &&
+    supportRequestsApi.includes('{ forcePhotoRefresh = false, signal = undefined }') &&
+    supportRequestsApi.includes('countUnreadSupportRequests(signal = undefined)') &&
+    adminFeedbackDetailsScreen.includes('canRunDeferredNetworkWork(offlineSnapshot)') &&
+    adminFeedbackDetailsScreen.includes("label: 'Admin support request details'") &&
+    adminHomeScreen.includes('enabled: isAllowed && canUseAdminNetwork') &&
+    adminHomeScreen.includes('refetchIntervalInBackground: false'),
+  'Admin support reads, retries, polling, and realtime must be bounded and quality-gated',
+);
+check(
+  !universalHome.includes('refetchOnReconnect: true') &&
+    !billingScreen.includes('refetchOnReconnect: true') &&
+    universalHome.includes("label: 'Home unread support count'") &&
+    orderActivityTimeline.includes('canRunDeferredNetworkWork(offlineSnapshot)') &&
+    orderActivityTimeline.includes('query.isPending && canUseActivityNetwork') &&
+    orderActivityTimeline.includes('refetchIntervalInBackground: false') &&
+    requestQueries.includes('const canUseCalendarPolling = canRunDeferredNetworkWork(network)') &&
+    requestQueries.includes(
+      'refetchInterval: isScreenActive && canUseCalendarPolling ? refetchIntervalMs : false',
+    ),
+  'Home, billing, calendar, and activity reads must not fan out on raw reconnect or poll constrained links',
+);
+check(
+  objectQueries.includes('readCachedObjectSearchFallback') &&
+    objectQueries.includes('findObjectSearchInCachedCompanySuperset') &&
+    objectQueries.includes('enabled: hasEnoughInput && isRequested && canSearchNetwork') &&
+    objectQueries.includes("pausedError.code = 'OBJECT_SEARCH_NETWORK_PAUSED'") &&
+    !objectQueries.includes('return Array.isArray(cached) ? cached : [];'),
+  'Offline object search must preserve scoped cached suggestions without persisting a false empty success',
+);
+check(
+  imageSizeSecurityPatch.includes('if (boxSize < 8)') &&
+    imageSizeSecurityPatch.includes('assertValidImageEntry') &&
+    packageJson.scripts?.['test:security-regressions'] ===
+      'node scripts/test-image-size-security.mjs',
+  'The Metro image parser DoS mitigation and its isolated regression test must remain reproducible',
 );
 check(
   authFlowState.includes('hydratePublicAuthRoute') &&
@@ -610,7 +936,7 @@ check(
     requestApi.includes(".from('client_objects_secure')") &&
     requestApi.includes('!readExplicitObjectLocationMode(row)') &&
     requestApi.includes('object_location_mode: objectItem.location_mode') &&
-    requestApi.includes('await hydrateRequestObjectLocations(Array.isArray(data) ? data : [])') &&
+    requestApi.includes('await hydrateRequestObjectLocations(Array.isArray(data) ? data : [], signal)') &&
     myOrdersScreen.includes('await hydrateRequestObjectLocations('),
   'Request lists must hydrate missing object location modes from the secure object projection before rendering addresses',
 );
@@ -655,7 +981,9 @@ check(
 check(
   orderDetailsScreen.includes('const bgTasks = [];') &&
     orderDetailsScreen.includes('cachedOrderNeedsStatusAdvance') &&
-    orderDetailsScreen.includes('const shouldAdvanceStatus =') &&
+    orderDetailsScreen.includes('const shouldVerifyAutomaticStatus =') &&
+    orderDetailsScreen.includes("{ label: 'Automatic order status verification' }") &&
+    orderDetailsScreen.includes('retryOnVersionMismatch: false') &&
     orderDetailsScreen.includes('.then((updatedOrder) => {') &&
     !orderDetailsScreen.includes('const refreshed = await ensureRequestPrefetch(queryClient, id);'),
   'Order details must render before automatic status persistence and redundant detail refetching',
@@ -687,8 +1015,8 @@ check(
     orderDetailsScreen.includes("const leavingFeed = resolvedCurrentStatus === 'feed'") &&
     orderDetailsScreen.includes('setPendingStatusSelection({ orderId: targetOrderId, statusKey: nextStatus })') &&
     orderDetailsScreen.includes('{ status: nextStatus, assigned_to: selectedAssigneeId }') &&
-    orderDetailsScreen.includes(".eq('company_id', executorCompanyId)") &&
-    orderDetailsScreen.includes("String(profile?.company_id || '') === executorCompanyId") &&
+    orderDetailsScreen.includes('const executorsQuery = useRequestExecutors({') &&
+    orderDetailsScreen.includes('placeholderData: () => undefined') &&
     orderDetailsScreen.includes('const selectedAssigneeIsScoped = users.some') &&
     orderDetailsScreen.includes("String(profile?.company_id || '') === targetCompanyId") &&
     orderDetailsScreen.includes('await handleFinishOrder(currentOrder)') &&
@@ -904,6 +1232,46 @@ check(
 check(
   emailServer.includes('<!doctype html>') && emailServer.includes('<html lang="ru">'),
   'Transactional verification email must use a complete HTML document',
+);
+check(
+  queryKeysSource.includes("adminDetail: (id) => ['adminEmployeeDetail'") &&
+    employeeQueries.includes('allowSuperAdmin: privilegedAdminAccess') &&
+    employeeQueries.includes('PRIVILEGED_EMPLOYEE_EDIT_REQUIRES_ONLINE') &&
+    employeeQueries.includes('{ privilegedAdminAccess }') &&
+    employeeApi.includes("`${allowSuperAdmin ? 'admin' : 'regular'}:${employeeId}`") &&
+    employeeApi.includes("if (!iAmSuperAdmin) throw new Error('SUPER_ADMIN_ACCESS_REQUIRED')"),
+  'Employee detail must keep ordinary and super-admin reads, in-flight work, writes, and offline behavior capability-scoped',
+);
+check(
+  adminUserViewRoute.includes('useRequireSuperAdmin') &&
+    adminUserViewRoute.includes('screenProps={{ privilegedAdminAccess: true }}') &&
+    adminUserEditRoute.includes('useRequireSuperAdmin') &&
+    adminUserEditRoute.includes('screenProps={{ privilegedAdminAccess: true }}') &&
+    adminUsersScreen.includes('router.push(`/admin/users/${profileId}`)') &&
+    !adminUsersScreen.includes('router.push(`/users/${profileId}`)') &&
+    userViewScreen.includes('privilegedAdminAccess = false') &&
+    userViewScreen.includes('`/admin/users/${userId}/edit`') &&
+    userEditScreen.includes('privilegedAdminAccess = false'),
+  'Super-admin employee routes must guard before mounting and must never fall back to ordinary user navigation',
+);
+check(
+  queryClient.includes('isLegacyPrivilegedEmployeeDetailQuery') &&
+    queryClient.includes('data.meIsSuperAdmin === true') &&
+    queryClient.includes('!isPrivilegedAdminQuery(query)') &&
+    queryClient.includes("'adminEmployeeDetail'") &&
+    routeFreshnessBoundary.includes('queryKeys.employees.adminDetail(userId)'),
+  'Legacy elevated employee rows and new admin employee details must remain memory-only and purgeable on demotion',
+);
+check(
+  companyAccessStateHook.includes("adminScope ? 'adminCompanyAccessState' : 'companyAccessState'") &&
+    companyAccessStateHook.includes('enabled: canRefresh') &&
+    adminCompanyDetailsScreen.includes("['adminCompanyAccessState', companyId]") &&
+    adminCompanyDetailsScreen.includes('adminScope: true') &&
+    adminCompanyDetailsScreen.includes('enabled: isAllowed') &&
+    adminCompanyEditScreen.includes('adminScope: true') &&
+    adminCompanyEditScreen.includes('enabled: isAllowed') &&
+    routeFreshnessBoundary.includes("['adminCompanyAccessState']"),
+  'Cross-company access state must use an authorization-gated memory-only admin cache key',
 );
 
 if (failures.length) {

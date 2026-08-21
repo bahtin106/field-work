@@ -4,10 +4,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { cacheDirectory, deleteAsync, downloadAsync, getInfoAsync } from 'expo-file-system/legacy';
+import {
+  cacheDirectory,
+  createDownloadResumable,
+  deleteAsync,
+  getInfoAsync,
+} from 'expo-file-system/legacy';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
 import { orderMediaStorage } from '../lib/orderMediaStorage';
-import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
+import {
+  canRunDeferredNetworkWork,
+  getActiveOfflineOwnerContext,
+  getOfflineSnapshot,
+  isActiveOfflineOwnerContext,
+  useOfflineSnapshot,
+} from '../src/shared/offline/offlineStatus';
 import {
   buildMediaAssetDisplayMap,
   buildMediaAssetInfoMap,
@@ -25,19 +36,177 @@ const _globalIssuesCache   = new Map();  // key → issue object
 const _globalThumbCache = new Map();
 const _globalMediaInfoCache = new Map();
 const GLOBAL_MEDIA_CACHE_MAX_ENTRIES = 1200;
-const ORDER_MEDIA_LOCAL_CACHE_KEY = 'offline.orderMedia.localCache.v1';
+const ORDER_MEDIA_LOCAL_CACHE_LEGACY_KEY = 'offline.orderMedia.localCache.v1';
+const ORDER_MEDIA_LOCAL_CACHE_KEY = 'offline.orderMedia.localCache.v2';
+const ORDER_MEDIA_LOCAL_CACHE_SCHEMA = 2;
 const ORDER_MEDIA_LOCAL_CACHE_MAX_ENTRIES = 220;
 const MAX_URL_PROBE_RETRIES = 2;
 const URL_PROBE_RETRY_BASE_DELAY_MS = 900;
+let orderMediaCacheGeneration = 0;
+let orderMediaIndexMutation = Promise.resolve();
+const activeLocalCacheJobs = new Set();
+
+function enqueueOrderMediaIndexMutation(work) {
+  const next = orderMediaIndexMutation.catch(() => {}).then(work);
+  orderMediaIndexMutation = next.catch(() => {});
+  return next;
+}
+
+function normalizeLocalCacheOwner(owner) {
+  const userId = String(owner?.userId || '').trim();
+  const companyId = String(owner?.companyId || '').trim();
+  return userId && companyId ? { userId, companyId } : null;
+}
+
+function isSameLocalCacheOwner(left, right) {
+  const normalizedLeft = normalizeLocalCacheOwner(left);
+  const normalizedRight = normalizeLocalCacheOwner(right);
+  return Boolean(
+    normalizedLeft &&
+      normalizedRight &&
+      normalizedLeft.userId === normalizedRight.userId &&
+      normalizedLeft.companyId === normalizedRight.companyId,
+  );
+}
+
+function captureOrderMediaCacheScope() {
+  const ownerContext = getActiveOfflineOwnerContext();
+  if (!ownerContext) return null;
+  return { ownerContext, generation: orderMediaCacheGeneration };
+}
+
+function isOrderMediaCacheScopeActive(scope) {
+  return Boolean(
+    scope &&
+      scope.generation === orderMediaCacheGeneration &&
+      isActiveOfflineOwnerContext(scope.ownerContext),
+  );
+}
+
+function normalizeLocalCacheEntries(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const entries = {};
+  for (const [key, fileUri] of Object.entries(value)) {
+    const normalizedKey = String(key || '').trim();
+    const normalizedFileUri = String(fileUri || '').trim();
+    if (!normalizedKey || !normalizedFileUri) continue;
+    entries[normalizedKey] = normalizedFileUri;
+  }
+  return entries;
+}
+
+function parseLocalCacheEnvelope(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const owner = normalizeLocalCacheOwner(parsed?.owner);
+    if (parsed?.schema !== ORDER_MEDIA_LOCAL_CACHE_SCHEMA || !owner) return null;
+    return {
+      schema: ORDER_MEDIA_LOCAL_CACHE_SCHEMA,
+      owner,
+      entries: normalizeLocalCacheEntries(parsed.entries),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function serializeLocalCacheEnvelope(scope, entries) {
+  const owner = normalizeLocalCacheOwner(scope?.ownerContext?.owner);
+  if (!owner) return '';
+  return JSON.stringify({
+    schema: ORDER_MEDIA_LOCAL_CACHE_SCHEMA,
+    owner,
+    entries: normalizeLocalCacheEntries(entries),
+  });
+}
+
+function getLegacyLocalCacheEntries(raw) {
+  if (!raw) return {};
+  try {
+    return normalizeLocalCacheEntries(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+function getUntrustedEnvelopeEntries(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeLocalCacheEntries(parsed?.entries);
+  } catch {
+    return {};
+  }
+}
+
+function isManagedOrderMediaCacheFile(fileUri) {
+  const normalizedUri = String(fileUri || '').trim();
+  return Boolean(
+    cacheDirectory &&
+      normalizedUri.startsWith(`${cacheDirectory}order_media_`) &&
+      isLocalFileUri(normalizedUri),
+  );
+}
+
+async function deleteManagedLocalCacheFiles(entries) {
+  const files = new Set(
+    Object.values(normalizeLocalCacheEntries(entries)).filter(isManagedOrderMediaCacheFile),
+  );
+  await Promise.all(
+    [...files].map((fileUri) => deleteAsync(fileUri, { idempotent: true }).catch(() => {})),
+  );
+}
+
+async function discardLocalCacheIndexIfUnchanged(storageKey, expectedRaw, entries) {
+  if (!expectedRaw) return;
+  await enqueueOrderMediaIndexMutation(async () => {
+    try {
+      const currentRaw = await AsyncStorage.getItem(storageKey);
+      if (currentRaw !== expectedRaw) return;
+      await AsyncStorage.removeItem(storageKey);
+      await deleteManagedLocalCacheFiles(entries);
+    } catch {}
+  });
+}
+
+function abortLocalCacheJob(job) {
+  if (!job || job.controller.signal.aborted) return;
+  job.controller.abort();
+  job.downloadTask?.cancelAsync?.().catch(() => {});
+}
 
 export async function clearOrderMediaCaches() {
+  orderMediaCacheGeneration += 1;
+  const activeJobEntries = {};
+  for (const [index, job] of [...activeLocalCacheJobs].entries()) {
+    if (job.fileUri) activeJobEntries[`active:${index}`] = job.fileUri;
+    abortLocalCacheJob(job);
+  }
   _globalResolvedCache.clear();
   _globalThumbCache.clear();
   _globalIssuesCache.clear();
   _globalMediaInfoCache.clear();
-  try {
-    await AsyncStorage.removeItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
-  } catch {}
+  await enqueueOrderMediaIndexMutation(async () => {
+    try {
+      const [rawCurrent, rawLegacy] = await Promise.all([
+        AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_KEY),
+        AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_LEGACY_KEY),
+      ]);
+      const currentEntries =
+        parseLocalCacheEnvelope(rawCurrent)?.entries || getUntrustedEnvelopeEntries(rawCurrent);
+      const legacyEntries = getLegacyLocalCacheEntries(rawLegacy);
+      await AsyncStorage.multiRemove([
+        ORDER_MEDIA_LOCAL_CACHE_KEY,
+        ORDER_MEDIA_LOCAL_CACHE_LEGACY_KEY,
+      ]);
+      await Promise.all([
+        deleteManagedLocalCacheFiles(currentEntries),
+        deleteManagedLocalCacheFiles(legacyEntries),
+        deleteManagedLocalCacheFiles(activeJobEntries),
+      ]);
+    } catch {}
+  });
 }
 
 function pruneMapCache(map, maxEntries = GLOBAL_MEDIA_CACHE_MAX_ENTRIES) {
@@ -127,9 +296,21 @@ function mergeStringMapIfChanged(current, incoming) {
   return next;
 }
 
-function makeLocalFileName(url) {
+function makeStableFileToken(value, seed = 2166136261) {
+  let hash = seed >>> 0;
+  const raw = String(value || '');
+  for (let index = 0; index < raw.length; index += 1) {
+    hash ^= raw.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+function makeLocalFileName(url, owner) {
+  const ownerIdentity = `${String(owner?.userId || '').trim()}:${String(owner?.companyId || '').trim()}`;
+  const ownerToken = `${makeStableFileToken(ownerIdentity)}${makeStableFileToken(ownerIdentity, 2246822519)}`;
   const normalized = encodeURIComponent(String(url || '').trim()).slice(0, 180);
-  return `order_media_${normalized}.jpg`;
+  return `order_media_${ownerToken}_${normalized}.jpg`;
 }
 
 function normalizeUrlCacheKey(url) {
@@ -182,6 +363,10 @@ async function runWithConcurrency(items, worker, concurrency = 2) {
  * @returns {{ resolvedUrls, issues, resolveOrder, syncPhotos, getDisplayUrl, inspectSingle }}
  */
 export function useOrderMedia({ order, mediaProvider, t }) {
+  const localCacheScopeRef = useRef(undefined);
+  if (localCacheScopeRef.current === undefined) {
+    localCacheScopeRef.current = captureOrderMediaCacheScope();
+  }
   // Seed local state from global cache for instant display on re-mount
   const [resolvedUrls, setResolvedUrls] = useState(() => Object.fromEntries(_globalResolvedCache));
   const [thumbUrls, setThumbUrls] = useState(() => Object.fromEntries(_globalThumbCache));
@@ -189,6 +374,9 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const [mediaInfoBySource, setMediaInfoBySource] = useState(() => Object.fromEntries(_globalMediaInfoCache));
   const [localCacheVersion, setLocalCacheVersion] = useState(0);
   const [probeRetryTick, setProbeRetryTick] = useState(0);
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseMediaNetwork = canRunDeferredNetworkWork(offlineSnapshot);
+  const canUseMediaNetworkRef = useRef(canUseMediaNetwork);
   const probeInFlight = useRef(new Map());
   const probedUrlsRef = useRef(new Set()); // tracks URLs already probed this session
   const probeRetryCountsRef = useRef(new Map());
@@ -196,6 +384,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const isMounted = useRef(true);
   const resolvedRef = useRef(resolvedUrls); // always-current snapshot (no stale closures)
   const localCacheRef = useRef({});
+  const localDownloadJobsRef = useRef(new Set());
   const mediaSignature = useMemo(
     () =>
       MEDIA_CATEGORIES.map((category) =>
@@ -208,10 +397,18 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     setLocalCacheVersion((value) => (value + 1) % 1000000);
   }, []);
 
+  const isLocalCacheScopeActive = useCallback(
+    () => isOrderMediaCacheScopeActive(localCacheScopeRef.current),
+    [],
+  );
+
   useEffect(() => {
+    const localDownloadJobs = localDownloadJobsRef.current;
     isMounted.current = true;
     return () => {
       isMounted.current = false;
+      for (const job of [...localDownloadJobs]) abortLocalCacheJob(job);
+      localDownloadJobs.clear();
       if (probeRetryTimerRef.current) {
         clearTimeout(probeRetryTimerRef.current);
         probeRetryTimerRef.current = null;
@@ -219,7 +416,19 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     };
   }, []);
 
+  useEffect(() => {
+    canUseMediaNetworkRef.current = canUseMediaNetwork;
+    if (!canUseMediaNetwork && probeRetryTimerRef.current) {
+      clearTimeout(probeRetryTimerRef.current);
+      probeRetryTimerRef.current = null;
+    }
+    if (!canUseMediaNetwork) {
+      for (const job of [...localDownloadJobsRef.current]) abortLocalCacheJob(job);
+    }
+  }, [canUseMediaNetwork]);
+
   const scheduleProbeRetry = useCallback((urls) => {
+    if (!canUseMediaNetworkRef.current || !isLocalCacheScopeActive()) return;
     const list = Array.isArray(urls) ? urls : [urls];
     let maxAttempt = 0;
     let hasRetry = false;
@@ -236,21 +445,50 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     if (!hasRetry || probeRetryTimerRef.current) return;
     probeRetryTimerRef.current = setTimeout(() => {
       probeRetryTimerRef.current = null;
-      if (isMounted.current) {
+      if (
+        isMounted.current &&
+        canUseMediaNetworkRef.current &&
+        isLocalCacheScopeActive()
+      ) {
         setProbeRetryTick((value) => (value + 1) % 1000000);
       }
     }, URL_PROBE_RETRY_BASE_DELAY_MS * Math.max(1, maxAttempt));
-  }, []);
+  }, [isLocalCacheScopeActive]);
 
   useEffect(() => {
+    const scope = localCacheScopeRef.current;
+    if (!isOrderMediaCacheScopeActive(scope)) return undefined;
     let cancelled = false;
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        if (cancelled || !parsed || typeof parsed !== 'object') return;
-        localCacheRef.current = parsed;
-        if (Object.keys(parsed).length) markLocalCacheChanged();
+        const [rawCurrent, rawLegacy] = await Promise.all([
+          AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_KEY),
+          AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_LEGACY_KEY),
+        ]);
+        const legacyEntries = getLegacyLocalCacheEntries(rawLegacy);
+        if (rawLegacy) {
+          discardLocalCacheIndexIfUnchanged(
+            ORDER_MEDIA_LOCAL_CACHE_LEGACY_KEY,
+            rawLegacy,
+            legacyEntries,
+          ).catch(() => {});
+        }
+        if (cancelled || !isOrderMediaCacheScopeActive(scope) || !rawCurrent) return;
+        const envelope = parseLocalCacheEnvelope(rawCurrent);
+        if (!envelope || !isSameLocalCacheOwner(envelope.owner, scope.ownerContext.owner)) {
+          const staleEntries = envelope?.entries || getUntrustedEnvelopeEntries(rawCurrent);
+          discardLocalCacheIndexIfUnchanged(
+            ORDER_MEDIA_LOCAL_CACHE_KEY,
+            rawCurrent,
+            staleEntries,
+          ).catch(() => {});
+          return;
+        }
+        localCacheRef.current = {
+          ...envelope.entries,
+          ...(localCacheRef.current || {}),
+        };
+        if (Object.keys(localCacheRef.current).length) markLocalCacheChanged();
       } catch {}
     })();
     return () => {
@@ -259,10 +497,23 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   }, [markLocalCacheChanged]);
 
   const persistLocalCache = useCallback(async () => {
+    const scope = localCacheScopeRef.current;
+    if (!isOrderMediaCacheScopeActive(scope)) return false;
     try {
       localCacheRef.current = pruneLocalCacheMap(localCacheRef.current);
-      await AsyncStorage.setItem(ORDER_MEDIA_LOCAL_CACHE_KEY, JSON.stringify(localCacheRef.current || {}));
-    } catch {}
+      const serialized = serializeLocalCacheEnvelope(scope, localCacheRef.current || {});
+      if (!serialized) return false;
+      return await enqueueOrderMediaIndexMutation(async () => {
+        if (!isOrderMediaCacheScopeActive(scope)) return false;
+        await AsyncStorage.setItem(ORDER_MEDIA_LOCAL_CACHE_KEY, serialized);
+        if (isOrderMediaCacheScopeActive(scope)) return true;
+        const currentRaw = await AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
+        if (currentRaw === serialized) await AsyncStorage.removeItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
+        return false;
+      });
+    } catch {
+      return false;
+    }
   }, []);
 
   const ensureLocalCached = useCallback(async (sourceUrl, displayUrl) => {
@@ -270,6 +521,22 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     const remote = String(displayUrl || src).trim();
     if (!src || !remote) return;
     if (!/^https?:\/\//i.test(remote)) return;
+    const scope = localCacheScopeRef.current;
+    if (
+      !isMounted.current ||
+      !canUseMediaNetworkRef.current ||
+      !isOrderMediaCacheScopeActive(scope) ||
+      !cacheDirectory
+    ) return;
+    const job = { controller: new AbortController(), downloadTask: null, fileUri: '' };
+    const isJobActive = () =>
+      isMounted.current &&
+      canUseMediaNetworkRef.current &&
+      !job.controller.signal.aborted &&
+      isOrderMediaCacheScopeActive(scope);
+    activeLocalCacheJobs.add(job);
+    localDownloadJobsRef.current.add(job);
+    let createdFileUri = '';
     try {
       const normalizedSrc = normalizeUrlCacheKey(src);
       const normalizedRemote = normalizeUrlCacheKey(remote);
@@ -282,8 +549,10 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       ).trim();
       if (existing) {
         const info = await getInfoAsync(existing, { size: true });
+        if (!isJobActive()) return;
         if (info?.exists && Number(info?.size || 0) > 0) return;
         if (info?.exists) await deleteAsync(existing, { idempotent: true }).catch(() => {});
+        if (!isJobActive()) return;
         const nextLocalCache = Object.fromEntries(
           Object.entries(localCacheRef.current || {}).filter(([, value]) => value !== existing),
         );
@@ -291,31 +560,60 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         markLocalCacheChanged();
         await persistLocalCache();
       }
-      const path = `${cacheDirectory}${makeLocalFileName(src)}`;
-      const result = await downloadAsync(remote, path);
+      if (!isJobActive()) return;
+      const path = `${cacheDirectory}${makeLocalFileName(src, scope.ownerContext.owner)}`;
+      createdFileUri = path;
+      job.fileUri = path;
+      job.downloadTask = createDownloadResumable(remote, path, {});
+      if (!isJobActive()) {
+        abortLocalCacheJob(job);
+        return;
+      }
+      const result = await job.downloadTask.downloadAsync();
+      const outputUri = String(result?.uri || path).trim();
+      if (!isJobActive()) {
+        await deleteAsync(outputUri, { idempotent: true }).catch(() => {});
+        return;
+      }
       const status = Number(result?.status);
       if (Number.isFinite(status) && status >= 400) {
         await deleteAsync(path, { idempotent: true }).catch(() => {});
         return;
       }
-      const downloadedInfo = await getInfoAsync(result?.uri || path, { size: true });
-      if (!downloadedInfo?.exists || Number(downloadedInfo?.size || 0) <= 0) {
-        await deleteAsync(result?.uri || path, { idempotent: true }).catch(() => {});
+      const downloadedInfo = await getInfoAsync(outputUri, { size: true });
+      if (!isJobActive()) {
+        await deleteAsync(outputUri, { idempotent: true }).catch(() => {});
         return;
       }
-      if (result?.uri) {
-        localCacheRef.current = {
-          ...(localCacheRef.current || {}),
-          [remote]: result.uri,
-          [src]: result.uri,
-          ...(normalizedSrc ? { [normalizedSrc]: result.uri } : {}),
-          ...(normalizedRemote ? { [normalizedRemote]: result.uri } : {}),
-        };
-        localCacheRef.current = pruneLocalCacheMap(localCacheRef.current);
-        markLocalCacheChanged();
-        await persistLocalCache();
+      if (!downloadedInfo?.exists || Number(downloadedInfo?.size || 0) <= 0) {
+        await deleteAsync(outputUri, { idempotent: true }).catch(() => {});
+        return;
       }
-    } catch {}
+      localCacheRef.current = {
+        ...(localCacheRef.current || {}),
+        [remote]: outputUri,
+        [src]: outputUri,
+        ...(normalizedSrc ? { [normalizedSrc]: outputUri } : {}),
+        ...(normalizedRemote ? { [normalizedRemote]: outputUri } : {}),
+      };
+      localCacheRef.current = pruneLocalCacheMap(localCacheRef.current);
+      markLocalCacheChanged();
+      const persisted = await persistLocalCache();
+      if (!persisted) {
+        localCacheRef.current = Object.fromEntries(
+          Object.entries(localCacheRef.current || {}).filter(([, value]) => value !== outputUri),
+        );
+        markLocalCacheChanged();
+        await deleteAsync(outputUri, { idempotent: true }).catch(() => {});
+      }
+    } catch {
+      if (createdFileUri) {
+        await deleteAsync(createdFileUri, { idempotent: true }).catch(() => {});
+      }
+    } finally {
+      activeLocalCacheJobs.delete(job);
+      localDownloadJobsRef.current.delete(job);
+    }
   }, [markLocalCacheChanged, persistLocalCache]);
 
   // Keep resolvedRef always in sync for proactive effect
@@ -329,7 +627,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       const source = String(sourceUrl || '').trim();
       if (!source) return '';
       // localCacheVersion refreshes this callback after ref-only cache updates.
-      const localCache = localCacheVersion >= 0 ? localCacheRef.current || {} : {};
+      const localCache =
+        localCacheVersion >= 0 && isLocalCacheScopeActive() ? localCacheRef.current || {} : {};
       const normalizedSource = normalizeUrlCacheKey(source);
       const resolved = String(resolvedUrls[source] || '').trim();
       const usableResolved = isSignedMediaUrlStale(resolved) ? '' : resolved;
@@ -355,7 +654,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       if (usableResolved) return usableResolved;
       return isRenderableSourceUrl(source) ? source : '';
     },
-    [localCacheVersion, resolvedUrls],
+    [isLocalCacheScopeActive, localCacheVersion, resolvedUrls],
   );
 
   const getThumbnailUrl = useCallback(
@@ -410,7 +709,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const inspectSingle = useCallback(
     (category, sourceUrl) => {
       const key = `${category}:${sourceUrl}`;
-      if (!canInspectUrl(sourceUrl)) {
+      const scope = localCacheScopeRef.current;
+      if (!canInspectUrl(sourceUrl) || !isOrderMediaCacheScopeActive(scope)) {
         return Promise.resolve({ resolved: false, issue: false, displayUrl: '' });
       }
       const existingRequest = probeInFlight.current.get(key);
@@ -434,11 +734,13 @@ export function useOrderMedia({ order, mediaProvider, t }) {
           const issuesMap =
             data?.issues && typeof data.issues === 'object' ? sanitizeMediaIssues(data.issues) : {};
 
-          if (isMounted.current) {
+          if (isMounted.current && isOrderMediaCacheScopeActive(scope)) {
             if (Object.keys(resolved).length) {
               for (const [k, v] of Object.entries(resolved)) setResolvedCacheEntry(k, v);
               setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, resolved));
-              prefetchMediaUrls(Object.values(resolved), { batchSize: 2 }).catch(() => {});
+              if (canUseMediaNetworkRef.current) {
+                prefetchMediaUrls(Object.values(resolved), { batchSize: 2 }).catch(() => {});
+              }
             }
             if (Object.keys(issuesMap).length) {
               for (const [k, v] of Object.entries(issuesMap)) setIssueCacheEntry(k, v);
@@ -471,6 +773,9 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const resolveOrder = useCallback(
     async (baseOrder) => {
       if (!baseOrder?.id) return baseOrder;
+      if (!canUseMediaNetwork) return baseOrder;
+      const scope = localCacheScopeRef.current;
+      if (!isOrderMediaCacheScopeActive(scope)) return baseOrder;
 
       const nextOrder = { ...baseOrder };
       const categoryPromises = MEDIA_CATEGORIES.filter((cat) => {
@@ -531,14 +836,14 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         Object.assign(nextIssues, r.issues);
       }
 
-      if (isMounted.current) {
+      if (isMounted.current && isOrderMediaCacheScopeActive(scope)) {
         for (const [k, v] of Object.entries(nextResolved)) setResolvedCacheEntry(k, v);
         for (const [k, v] of Object.entries(nextIssues)) setIssueCacheEntry(k, v);
         setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, nextResolved));
         setIssues(nextIssues);
       }
-      prefetchMediaUrls(Object.values(nextResolved), { batchSize: 2 }).catch(() => {});
-      if (getOfflineSnapshot().isOnline) {
+      if (canUseMediaNetworkRef.current && isOrderMediaCacheScopeActive(scope)) {
+        prefetchMediaUrls(Object.values(nextResolved), { batchSize: 2 }).catch(() => {});
         const cachedPairs = Object.entries(nextResolved);
         if (cachedPairs.length) {
           await runWithConcurrency(
@@ -549,7 +854,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       }
       return nextOrder;
     },
-    [ensureLocalCached, t],
+    [canUseMediaNetwork, ensureLocalCached, t],
   );
 
   // ─── Sync photos from Supabase Storage ───────────────────────────
@@ -560,18 +865,21 @@ export function useOrderMedia({ order, mediaProvider, t }) {
 
   // ─── Proactive URL resolution for Yandex (no dependency on resolvedUrls!) ──
   useEffect(() => {
-    if (!order?.id) return;
+    const scope = localCacheScopeRef.current;
+    if (!order?.id || !canUseMediaNetwork || !isOrderMediaCacheScopeActive(scope)) return;
     let cancelled = false;
     listMediaAssets({ entityType: 'order', entityId: order.id, categories: MEDIA_CATEGORIES })
       .then((assets) => {
-        if (cancelled || !isMounted.current) return;
+        if (cancelled || !isMounted.current || !isOrderMediaCacheScopeActive(scope)) return;
         const displayMap = buildMediaAssetDisplayMap(assets);
         const thumbMap = buildMediaAssetThumbMap(assets);
         const infoMap = buildMediaAssetInfoMap(assets);
         if (Object.keys(displayMap).length) {
           for (const [key, value] of Object.entries(displayMap)) setResolvedCacheEntry(key, value);
           setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, displayMap));
-          prefetchMediaUrls(Object.values(displayMap), { batchSize: 2 }).catch(() => {});
+          if (canUseMediaNetworkRef.current) {
+            prefetchMediaUrls(Object.values(displayMap), { batchSize: 2 }).catch(() => {});
+          }
         }
         if (Object.keys(thumbMap).length) {
           for (const [key, value] of Object.entries(thumbMap)) {
@@ -580,7 +888,9 @@ export function useOrderMedia({ order, mediaProvider, t }) {
             pruneMapCache(_globalThumbCache);
           }
           setThumbUrls((prev) => mergeStringMapIfChanged(prev, thumbMap));
-          prefetchMediaUrls(Object.values(thumbMap), { batchSize: 6 }).catch(() => {});
+          if (canUseMediaNetworkRef.current) {
+            prefetchMediaUrls(Object.values(thumbMap), { batchSize: 6 }).catch(() => {});
+          }
         }
         if (Object.keys(infoMap).length) {
           for (const [key, value] of Object.entries(infoMap)) {
@@ -595,10 +905,11 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     return () => {
       cancelled = true;
     };
-  }, [mediaSignature, order?.id]);
+  }, [canUseMediaNetwork, mediaSignature, order?.id]);
 
   useEffect(() => {
-    if (!order?.id) return;
+    const scope = localCacheScopeRef.current;
+    if (!order?.id || !canUseMediaNetwork || !isOrderMediaCacheScopeActive(scope)) return;
     const attempts = [];
     const currentResolved = resolvedRef.current;
     for (const cat of MEDIA_CATEGORIES) {
@@ -620,7 +931,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     if (attempts.length) {
       Promise.allSettled(attempts.map((item) => item.promise))
         .then((results) => {
-          if (!isMounted.current) return;
+          if (!isMounted.current || !isOrderMediaCacheScopeActive(scope)) return;
           const retryable = [];
           results.forEach((settled, index) => {
             const url = attempts[index]?.url;
@@ -637,11 +948,10 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         })
         .catch(() => {});
     }
-  }, [order, inspectSingle, probeRetryTick, scheduleProbeRetry]);
+  }, [canUseMediaNetwork, order, inspectSingle, probeRetryTick, scheduleProbeRetry]);
 
   useEffect(() => {
-    if (!order?.id) return;
-    if (!getOfflineSnapshot().isOnline) return;
+    if (!order?.id || !canUseMediaNetwork) return;
     let cancelled = false;
     const jobs = [];
     for (const cat of MEDIA_CATEGORIES) {
@@ -654,14 +964,14 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     }
     if (jobs.length) {
       runWithConcurrency(jobs, ({ source, display }) => {
-        if (cancelled) return undefined;
+        if (cancelled || !canUseMediaNetworkRef.current) return undefined;
         return ensureLocalCached(source, display);
       }).catch(() => {});
     }
     return () => {
       cancelled = true;
     };
-  }, [ensureLocalCached, order]);
+  }, [canUseMediaNetwork, ensureLocalCached, order]);
 
   // ─── Clear caches on provider/order switch ──────────────────────
   const clearCaches = useCallback(() => {
@@ -786,13 +1096,14 @@ export function useOrderMedia({ order, mediaProvider, t }) {
 
     const result = await inspectSingle(category, source);
     const freshDisplayUrl = String(result?.displayUrl || '').trim();
-    if (freshDisplayUrl && getOfflineSnapshot().isOnline) {
+    if (freshDisplayUrl && canUseMediaNetworkRef.current) {
       ensureLocalCached(source, freshDisplayUrl).catch(() => {});
     }
     return freshDisplayUrl || (isRenderableSourceUrl(source) ? source : '');
   }, [ensureLocalCached, inspectSingle, markLocalCacheChanged, persistLocalCache]);
 
   const setDisplayUrl = useCallback((sourceUrl, displayUrl) => {
+    if (!isLocalCacheScopeActive()) return;
     const source = String(sourceUrl || '').trim();
     if (!source) return;
     const nextDisplay = String(displayUrl || '').trim();
@@ -820,7 +1131,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     setResolvedCacheEntry(source, nextDisplay);
     probeRetryCountsRef.current.delete(source);
     setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, { [source]: nextDisplay }));
-  }, [markLocalCacheChanged, persistLocalCache]);
+  }, [isLocalCacheScopeActive, markLocalCacheChanged, persistLocalCache]);
 
   return {
     resolvedUrls,

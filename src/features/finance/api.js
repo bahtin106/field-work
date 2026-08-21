@@ -1,5 +1,11 @@
 ﻿import { supabase } from '../../../lib/supabase';
 
+import {
+  assertMutationAuthCarrier,
+  assertMutationPayloadCompany,
+  pinMutationAuthorization,
+} from '../../shared/security/mutationAuthCarrier';
+
 const ORDER_FINANCE_SELECT = `
   id,
   company_id,
@@ -188,67 +194,91 @@ function normalizePercentBase(kind, value) {
   return allowed.includes(normalizedBase) ? normalizedBase : 'base_price';
 }
 
-export async function listOrderFinanceEntries(orderId) {
+export async function listOrderFinanceEntries(orderId, signal = undefined) {
   if (!isValidUuid(orderId)) return [];
-  const { data, error } = await supabase
+  let request = supabase
     .from('order_finance_entries')
     .select(ORDER_FINANCE_SELECT)
     .eq('order_id', orderId)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
 
-export async function getOrderFinanceSnapshot(orderId) {
+export async function getOrderFinanceSnapshot(orderId, signal = undefined) {
   if (!isValidUuid(orderId)) return null;
-  const { data, error } = await supabase
+  let request = supabase
     .from('order_finance_snapshots')
     .select(ORDER_FINANCE_SNAPSHOT_SELECT)
     .eq('order_id', orderId)
     .maybeSingle();
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return data || null;
 }
 
-export async function getOrderFinanceSchemeRule(orderId) {
+export async function getOrderFinanceSchemeRule(orderId, signal = undefined) {
   if (!isValidUuid(orderId)) return null;
-  const { data, error } = await supabase.rpc('get_order_finance_scheme_rule_v2', {
+  let request = supabase.rpc('get_order_finance_scheme_rule_v2', {
     p_order_id: orderId,
   });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return data && typeof data === 'object' ? data : null;
 }
 
-export async function setOrderFinanceMoneyHolder({ orderId, moneyHolder }) {
+export async function setOrderFinanceMoneyHolder({ orderId, moneyHolder }, authCarrier) {
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
   if (!isValidUuid(orderId)) throw new Error('Order id is required');
   const holder = String(moneyHolder || '').trim() === 'executor' ? 'executor' : 'company';
-  const { data, error } = await supabase.rpc('set_order_finance_money_holder_v2', {
-    p_order_id: orderId,
-    p_money_holder: holder,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('set_order_finance_money_holder_v2', {
+      p_order_id: orderId,
+      p_money_holder: holder,
+    }),
+    authCarrier,
+    { requireOfflineOwner: true },
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
   if (error) throw error;
   return data !== false;
 }
 
-export async function setOrderFinanceSchemeDisabled({ orderId, isDisabled }) {
+export async function setOrderFinanceSchemeDisabled({ orderId, isDisabled }, authCarrier) {
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
   if (!isValidUuid(orderId)) throw new Error('Order id is required');
-  const { data, error } = await supabase.rpc('set_order_finance_scheme_disabled_v2', {
-    p_order_id: orderId,
-    p_is_disabled: isDisabled === true,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('set_order_finance_scheme_disabled_v2', {
+      p_order_id: orderId,
+      p_is_disabled: isDisabled === true,
+    }),
+    authCarrier,
+    { requireOfflineOwner: true },
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
   if (error) throw error;
   return data !== false;
 }
 
-export async function upsertOrderFinanceEntry(payload) {
+export async function upsertOrderFinanceEntry(payload, authCarrier) {
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
+  const companyId = assertMutationPayloadCompany(authCarrier, payload?.company_id, {
+    requireOfflineOwner: true,
+  });
   const financeEffect = normalizeFinanceEffect(
     payload?.finance_effect,
     payload?.kind,
     payload?.expense_payer,
   );
   const row = {
-    company_id: normalizeId(payload?.company_id),
+    company_id: companyId,
     order_id: normalizeId(payload?.order_id),
     kind: financeEffectKind(financeEffect),
     title: String(payload?.title || '').trim(),
@@ -279,42 +309,80 @@ export async function upsertOrderFinanceEntry(payload) {
     delete updateRow.company_id;
     delete updateRow.order_id;
 
-    const { data: updated, error: updateError } = await supabase
-      .from('order_finance_entries')
-      .update(updateRow)
-      .eq('id', normalizedId)
-      .eq('company_id', row.company_id)
-      .eq('order_id', row.order_id)
-      .select(ORDER_FINANCE_SELECT)
-      .maybeSingle();
+    const updateRequest = pinMutationAuthorization(
+      supabase
+        .from('order_finance_entries')
+        .update(updateRow)
+        .eq('id', normalizedId)
+        .eq('company_id', row.company_id)
+        .eq('order_id', row.order_id)
+        .select(ORDER_FINANCE_SELECT)
+        .maybeSingle(),
+      authCarrier,
+      { requireOfflineOwner: true },
+    );
+    const { data: updated, error: updateError } = await updateRequest;
+    assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
 
     if (updateError) throw updateError;
     if (updated) return updated;
   }
 
-  const { data, error } = await supabase
-    .from('order_finance_entries')
-    .insert(row)
-    .select(ORDER_FINANCE_SELECT)
-    .single();
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
+  const insertRequest = pinMutationAuthorization(
+    supabase
+      .from('order_finance_entries')
+      .insert(row)
+      .select(ORDER_FINANCE_SELECT)
+      .single(),
+    authCarrier,
+    { requireOfflineOwner: true },
+  );
+  const { data, error } = await insertRequest;
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
 
   if (error) throw error;
   return data;
 }
 
-export async function deleteOrderFinanceEntry(entryId) {
+export async function deleteOrderFinanceEntry(
+  { entryId, companyId, orderId = null },
+  authCarrier,
+) {
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
+  const scopedCompanyId = assertMutationPayloadCompany(authCarrier, companyId, {
+    requireOfflineOwner: true,
+  });
   if (!entryId) throw new Error('Entry id is required');
-  const { error } = await supabase.from('order_finance_entries').delete().eq('id', entryId);
+  let request = supabase
+    .from('order_finance_entries')
+    .delete()
+    .eq('id', entryId)
+    .eq('company_id', scopedCompanyId);
+  if (orderId) request = request.eq('order_id', orderId);
+  const protectedRequest = pinMutationAuthorization(request, authCarrier, {
+    requireOfflineOwner: true,
+  });
+  const { error } = await protectedRequest;
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
   if (error) throw error;
   return true;
 }
 
-export async function excludeOrderFinanceRule({ orderId, ruleId }) {
+export async function excludeOrderFinanceRule({ orderId, ruleId, companyId }, authCarrier) {
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
+  assertMutationPayloadCompany(authCarrier, companyId, { requireOfflineOwner: true });
   if (!orderId || !ruleId) throw new Error('Order id and rule id are required');
-  const { data, error } = await supabase.rpc('exclude_order_finance_rule', {
-    p_order_id: orderId,
-    p_rule_id: ruleId,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('exclude_order_finance_rule', {
+      p_order_id: orderId,
+      p_rule_id: ruleId,
+    }),
+    authCarrier,
+    { requireOfflineOwner: true },
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier, { requireOfflineOwner: true });
   if (error) throw error;
   return data !== false;
 }
@@ -345,9 +413,11 @@ export async function listCompanyFinanceRules(companyId) {
   });
 }
 
-export async function upsertCompanyFinanceRule(payload) {
+export async function upsertCompanyFinanceRule(payload, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
+  const companyId = assertMutationPayloadCompany(authCarrier, payload?.company_id);
   const row = {
-    company_id: normalizeId(payload?.company_id),
+    company_id: companyId,
     name: String(payload?.name || '').trim(),
     kind: String(payload?.kind || 'expense').trim(),
     calc_mode: String(payload?.calc_mode || 'fixed').trim(),
@@ -370,28 +440,52 @@ export async function upsertCompanyFinanceRule(payload) {
   if (!row.company_id) throw new Error('company_id is required');
   if (!row.name) throw new Error('name is required');
 
-  const { data, error } = await supabase
-    .from('company_finance_rules')
-    .upsert(row, { onConflict: 'id' })
-    .select(FINANCE_RULE_SELECT)
-    .single();
+  const request = pinMutationAuthorization(
+    supabase
+      .from('company_finance_rules')
+      .upsert(row, { onConflict: 'id' })
+      .select(FINANCE_RULE_SELECT)
+      .single(),
+    authCarrier,
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier);
   if (error) throw error;
   return data;
 }
 
-export async function deleteCompanyFinanceRule(payload) {
+export async function deleteCompanyFinanceRule(payload, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
   const isObjectPayload = payload && typeof payload === 'object' && !Array.isArray(payload);
   const ruleId = isObjectPayload ? payload.ruleId : payload;
   const deleteExistingEntries = isObjectPayload ? payload.deleteExistingEntries === true : false;
+  const companyId = assertMutationPayloadCompany(
+    authCarrier,
+    isObjectPayload ? payload.companyId || payload.company_id : null,
+  );
   if (!ruleId) throw new Error('Rule id is required');
 
-  const { error } = await supabase.rpc('delete_company_finance_rule', {
-    p_rule_id: ruleId,
-    p_delete_existing_entries: deleteExistingEntries,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('delete_company_finance_rule', {
+      p_rule_id: ruleId,
+      p_delete_existing_entries: deleteExistingEntries,
+    }),
+    authCarrier,
+  );
+  const { error } = await request;
+  assertMutationAuthCarrier(authCarrier);
 
   if (error && !deleteExistingEntries) {
-    const fallback = await supabase.from('company_finance_rules').delete().eq('id', ruleId);
+    const fallbackRequest = pinMutationAuthorization(
+      supabase
+        .from('company_finance_rules')
+        .delete()
+        .eq('id', ruleId)
+        .eq('company_id', companyId),
+      authCarrier,
+    );
+    const fallback = await fallbackRequest;
+    assertMutationAuthCarrier(authCarrier);
     if (fallback.error) throw fallback.error;
     return true;
   }
@@ -429,8 +523,9 @@ export async function listCompanyFinanceSchemes(companyId) {
   }));
 }
 
-export async function upsertCompanyFinanceScheme(payload) {
-  const companyId = normalizeId(payload?.company_id);
+export async function upsertCompanyFinanceScheme(payload, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
+  const companyId = assertMutationPayloadCompany(authCarrier, payload?.company_id);
   if (!companyId) throw new Error('company_id is required');
   const name = String(payload?.name || '').trim();
   if (!name) throw new Error('name is required');
@@ -472,37 +567,58 @@ export async function upsertCompanyFinanceScheme(payload) {
         : {},
   };
 
-  const { data, error } = await supabase.rpc('upsert_company_finance_scheme_v2', {
-    p_payload: rpcPayload,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('upsert_company_finance_scheme_v2', {
+      p_payload: rpcPayload,
+    }),
+    authCarrier,
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier);
   if (error) throw error;
   return data;
 }
 
 export async function archiveCompanyFinanceScheme({
   schemeId,
+  companyId,
   recalculateExisting = false,
-}) {
+}, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
+  assertMutationPayloadCompany(authCarrier, companyId);
   if (!schemeId) throw new Error('Scheme id is required');
-  const { data, error } = await supabase.rpc('archive_company_finance_scheme_v2', {
-    p_scheme_id: schemeId,
-    p_recalculate_existing: recalculateExisting === true,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('archive_company_finance_scheme_v2', {
+      p_scheme_id: schemeId,
+      p_recalculate_existing: recalculateExisting === true,
+    }),
+    authCarrier,
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier);
   if (error) throw error;
   return data !== false;
 }
 
 export async function setCompanyFinanceSchemeEnabled({
   schemeId,
+  companyId,
   isEnabled,
   recalculateExisting = true,
-}) {
+}, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
+  assertMutationPayloadCompany(authCarrier, companyId);
   if (!schemeId) throw new Error('Scheme id is required');
-  const { data, error } = await supabase.rpc('set_company_finance_scheme_enabled_v2', {
-    p_scheme_id: schemeId,
-    p_is_enabled: isEnabled === true,
-    p_recalculate_existing: recalculateExisting === true,
-  });
+  const request = pinMutationAuthorization(
+    supabase.rpc('set_company_finance_scheme_enabled_v2', {
+      p_scheme_id: schemeId,
+      p_is_enabled: isEnabled === true,
+      p_recalculate_existing: recalculateExisting === true,
+    }),
+    authCarrier,
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier);
   if (error) throw error;
   return data !== false;
 }

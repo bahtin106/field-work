@@ -14,6 +14,10 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import Card from '../../../components/ui/Card';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { prefetchMediaUrls } from '../../../src/shared/media/imagePipeline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 
 const LOCAL_FILE_URI_RE = /^file:\/\//i;
 
@@ -163,6 +167,8 @@ function OrderPhotoRow({
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canPrefetchMedia = canRunDeferredNetworkWork(offlineSnapshot);
   const thumbSize = theme.components?.media?.thumbSize || 116;
   const borderRadius = theme.radii?.lg || 12;
   const s = useMemo(() => makeStyles(theme, thumbSize, borderRadius), [theme, thumbSize, borderRadius]);
@@ -183,12 +189,13 @@ function OrderPhotoRow({
   );
 
   useEffect(() => {
+    if (!canPrefetchMedia) return;
     const urls = (Array.isArray(photos) ? photos : [])
       .map((url) => getDisplayUrl?.(url) || url)
       .map((url) => String(url || '').trim())
       .filter(Boolean);
     prefetchMediaUrls(urls, { batchSize: 6 }).catch(() => {});
-  }, [getDisplayUrl, photos]);
+  }, [canPrefetchMedia, getDisplayUrl, photos]);
 
   return (
     <View>

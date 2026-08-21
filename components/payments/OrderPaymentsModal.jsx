@@ -265,7 +265,7 @@ export default function OrderPaymentsModal({
   const deletePayment = React.useCallback(async () => {
     if (!draft.id) return;
     try {
-      await deleteMutation.mutateAsync(draft.id);
+      await deleteMutation.mutateAsync({ paymentId: draft.id });
       setDeleteConfirmVisible(false);
       setEditorVisible(false);
       toast.success(t('order_payments_deleted'));

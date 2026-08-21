@@ -15,14 +15,21 @@ import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
 import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
+import { withReadDeadline } from '../../../src/shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../../src/shared/offline/offlineStatus';
 import { useTheme } from '../../../theme/ThemeProvider';
 
-async function fetchCompanies(search) {
-  const { data, error } = await supabase.rpc('admin_list_companies', {
-    p_search: search || null,
-    p_limit: ADMIN_PAGE_SIZE,
-    p_offset: 0,
-  });
+async function fetchCompanies(search, signal) {
+  const { data, error } = await supabase
+    .rpc('admin_list_companies', {
+      p_search: search || null,
+      p_limit: ADMIN_PAGE_SIZE,
+      p_offset: 0,
+    })
+    .abortSignal(signal);
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
@@ -77,6 +84,8 @@ export default function AdminCompaniesScreen() {
   const nav = useNavigation();
   const router = useRouter();
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const [search, setSearch] = React.useState('');
 
   React.useLayoutEffect(() => {
@@ -85,10 +94,19 @@ export default function AdminCompaniesScreen() {
 
   const { data, isLoading, isRefetching, error, refetch } = useQuery({
     queryKey: ['adminCompanies', search],
-    queryFn: () => fetchCompanies(search.trim()),
-    enabled: isAllowed,
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchCompanies(search.trim(), readSignal),
+        { label: 'Admin companies', signal },
+      ),
+    enabled: isAllowed && canUseAdminNetwork,
+    placeholderData: (previousData) => previousData,
     staleTime: 30 * 1000,
   });
+  const refreshCompanies = React.useCallback(
+    () => (canUseAdminNetwork ? refetch() : Promise.resolve()),
+    [canUseAdminNetwork, refetch],
+  );
 
   const openCompany = React.useCallback(
     (companyId) => {
@@ -165,7 +183,7 @@ export default function AdminCompaniesScreen() {
       <Button
         title={t('btn_retry')}
         size="sm"
-        onPress={() => refetch()}
+        onPress={refreshCompanies}
         containerStyle={styles.retryButton}
       />
     </Card>
@@ -200,7 +218,7 @@ export default function AdminCompaniesScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           refreshControl={
-            <ThemedRefreshControl refreshing={refreshing} onRefresh={refetch} />
+            <ThemedRefreshControl refreshing={refreshing} onRefresh={refreshCompanies} />
           }
           ListHeaderComponent={error && companies.length > 0 ? errorCard : null}
           ListEmptyComponent={

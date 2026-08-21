@@ -4,18 +4,28 @@ import { onlineManager, type QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { APP_RUNTIME_CONFIG } from '../../../config/appRuntime';
 import { supabase } from '../../../lib/supabase';
+import { detachObjectFromRequestCaches } from '../../features/requests/objectRelationCache';
 import { queryKeys } from '../query/queryKeys';
+import {
+  assertOwnerBoundAuthorization,
+  captureOwnerBoundAuthorization,
+  isOwnerAuthorizationUnavailableError,
+  pinOwnerBoundPostgrestRequest,
+  type OwnerBoundAuthorization,
+} from '../security/ownerBoundAuthorization';
 
 const OUTBOX_KEY = 'offline.outbox.v1';
 const MAX_ATTEMPTS = 8;
+const OUTBOX_WRITE_DEADLINE_MS = 12_000;
 const OFFLINE_CONFIRMATION_MS = 2500;
 const QUALITY_PROBE_INTERVAL_MS = 45_000;
-const QUALITY_CONFIRMATION_DELAY_MS = 5_000;
-const QUALITY_PROBE_TIMEOUT_MS = 6_000;
+const QUALITY_CONFIRMATION_DELAY_MS = 1_500;
+const QUALITY_PROBE_TIMEOUT_MS = 3_500;
 const QUALITY_SLOW_RTT_MS = 2_500;
 const QUALITY_RECOVERED_RTT_MS = 2_000;
-const QUALITY_REQUIRED_SLOW_SAMPLES = 3;
+const QUALITY_REQUIRED_SLOW_SAMPLES = 2;
 const QUALITY_REQUIRED_GOOD_SAMPLES = 2;
+const QUALITY_INITIAL_PROBE_DELAY_MS = 250;
 
 export type OfflineOutboxItem = {
   id: string;
@@ -40,6 +50,11 @@ export type OfflineOutboxOwner = {
   companyId: string | null;
 };
 
+export type OfflineOwnerContext = {
+  owner: OfflineOutboxOwner;
+  epoch: number;
+};
+
 type Listener = () => void;
 
 let lastNetState: NetInfoState | null = null;
@@ -54,9 +69,9 @@ let confirmedPoorConnection = false;
 let consecutiveSlowSamples = 0;
 let consecutiveGoodSamples = 0;
 let isSyncing = false;
-let syncInFlight: Promise<ReturnType<typeof summarizeOutbox>> | null = null;
-let syncRerunRequested = false;
-let syncRetryTimer: ReturnType<typeof setTimeout> | null = null;
+const syncInFlightByOwner = new Map<string, Promise<ReturnType<typeof summarizeOutbox>>>();
+const syncRerunRequestedByOwner = new Set<string>();
+const syncRetryTimersByOwner = new Map<string, ReturnType<typeof setTimeout>>();
 const transientSyncFailures = new Map<string, number>();
 let cachedOfflineSnapshot: {
   isNetworkKnown: boolean;
@@ -65,11 +80,18 @@ let cachedOfflineSnapshot: {
   isSyncing: boolean;
 } | null = null;
 const listeners = new Set<Listener>();
+let activeOfflineOwner: OfflineOutboxOwner | null = null;
+let activeOfflineOwnerEpoch = 0;
 
 function getConnectionIdentity(state: NetInfoState | null) {
   const type = String(state?.type || 'unknown').toLowerCase();
   const cellularGeneration = String((state?.details as any)?.cellularGeneration || '').toLowerCase();
   return `${type}:${cellularGeneration}`;
+}
+
+function isConstrainedCellularState(state: NetInfoState | null) {
+  if (String(state?.type || '').toLowerCase() !== 'cellular') return false;
+  return String((state?.details as any)?.cellularGeneration || '').toLowerCase() === '2g';
 }
 
 function emit() {
@@ -126,10 +148,23 @@ export function getOfflineSnapshot() {
   cachedOfflineSnapshot = {
     isNetworkKnown,
     isOnline,
-    isPoorConnection: isOnline && confirmedPoorConnection,
+    // EDGE/GPRS is a useful immediate transport constraint even before an
+    // endpoint RTT sample completes. It does not mean "offline": foreground
+    // reads may still refresh, while bulk prefetch and route-wide refreshes can
+    // yield to the last-known-good cache.
+    isPoorConnection:
+      isOnline && (confirmedPoorConnection || isConstrainedCellularState(lastNetState)),
     isSyncing,
   };
   return cachedOfflineSnapshot;
+}
+
+export function canRunDeferredNetworkWork(snapshot = getOfflineSnapshot()) {
+  return snapshot.isNetworkKnown && snapshot.isOnline && !snapshot.isPoorConnection;
+}
+
+export function canRunOutboxSync(snapshot = getOfflineSnapshot()) {
+  return canRunDeferredNetworkWork(snapshot);
 }
 
 export function setOfflineNetState(state: NetInfoState | null) {
@@ -138,8 +173,17 @@ export function setOfflineNetState(state: NetInfoState | null) {
     if (connectionChanged) resetNetworkQualityState();
     clearOfflineConfirmation();
     applyNetState(state);
+    if (isConstrainedCellularState(state)) {
+      // EDGE/GPRS is already conclusively constrained for deferred work. A
+      // health probe cannot change that decision, but it can occupy one of the
+      // few usable sockets while the foreground restores cached content.
+      clearNetworkQualityProbeTimer();
+      qualityProbeAbortController?.abort();
+      qualityProbeAbortController = null;
+      return;
+    }
     if (connectionChanged) {
-      scheduleNetworkQualityProbe(1_200);
+      scheduleNetworkQualityProbe(QUALITY_INITIAL_PROBE_DELAY_MS);
     } else if (!qualityProbeTimer && !qualityProbeInFlight) {
       scheduleNetworkQualityProbe(QUALITY_PROBE_INTERVAL_MS);
     }
@@ -194,7 +238,12 @@ function setConfirmedPoorConnection(nextValue: boolean) {
 }
 
 function scheduleNetworkQualityProbe(delayMs: number) {
-  if (!qualityMonitoringStarted || !qualityMonitoringActive || !isOnlineNetState(lastNetState)) return;
+  if (
+    !qualityMonitoringStarted ||
+    !qualityMonitoringActive ||
+    !isOnlineNetState(lastNetState) ||
+    isConstrainedCellularState(lastNetState)
+  ) return;
   clearNetworkQualityProbeTimer();
   qualityProbeTimer = setTimeout(() => {
     qualityProbeTimer = null;
@@ -221,8 +270,12 @@ function recordNetworkQualitySample(sample: 'slow' | 'good' | 'neutral') {
   }
 
   const needsConfirmation =
-    (!confirmedPoorConnection && consecutiveSlowSamples === 1) ||
-    (confirmedPoorConnection && consecutiveGoodSamples === 1);
+    (!confirmedPoorConnection &&
+      consecutiveSlowSamples > 0 &&
+      consecutiveSlowSamples < QUALITY_REQUIRED_SLOW_SAMPLES) ||
+    (confirmedPoorConnection &&
+      consecutiveGoodSamples > 0 &&
+      consecutiveGoodSamples < QUALITY_REQUIRED_GOOD_SAMPLES);
   scheduleNetworkQualityProbe(
     needsConfirmation ? QUALITY_CONFIRMATION_DELAY_MS : QUALITY_PROBE_INTERVAL_MS,
   );
@@ -236,7 +289,8 @@ async function runNetworkQualityProbe() {
   if (
     !qualityMonitoringStarted ||
     !qualityMonitoringActive ||
-    !isOnlineNetState(lastNetState)
+    !isOnlineNetState(lastNetState) ||
+    isConstrainedCellularState(lastNetState)
   ) {
     return;
   }
@@ -348,17 +402,60 @@ function makeOutboxId(entity: string, operation: string, entityId: string) {
   return `${entity}:${operation}:${entityId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export async function getActiveOfflineOwner(): Promise<OfflineOutboxOwner | null> {
-  try {
-    const { data } = await supabase.auth.getSession();
-    const user = data?.session?.user;
-    const userId = String(user?.id || '').trim();
-    if (!userId) return null;
-    const companyId = String(user?.user_metadata?.company_id || '').trim() || null;
-    return { userId, companyId };
-  } catch {
-    return null;
+export function setActiveOfflineOwner(owner: OfflineOutboxOwner | null | undefined) {
+  const userId = String(owner?.userId || '').trim();
+  const companyId = String(owner?.companyId || '').trim() || null;
+  const next = userId ? { userId, companyId } : null;
+  if (
+    activeOfflineOwner?.userId === next?.userId &&
+    activeOfflineOwner?.companyId === next?.companyId
+  ) {
+    return activeOfflineOwnerEpoch;
   }
+  activeOfflineOwner = next;
+  activeOfflineOwnerEpoch += 1;
+  refreshActiveOwnerSyncIndicator();
+  return activeOfflineOwnerEpoch;
+}
+
+export function clearActiveOfflineOwner() {
+  activeOfflineOwner = null;
+  activeOfflineOwnerEpoch += 1;
+  refreshActiveOwnerSyncIndicator();
+  return activeOfflineOwnerEpoch;
+}
+
+export function getActiveOfflineOwner(): OfflineOutboxOwner | null {
+  return activeOfflineOwner ? { ...activeOfflineOwner } : null;
+}
+
+export function getActiveOfflineOwnerContext(): OfflineOwnerContext | null {
+  const owner = getActiveOfflineOwner();
+  if (!owner?.userId || !owner.companyId) return null;
+  return { owner, epoch: activeOfflineOwnerEpoch };
+}
+
+export function isActiveOfflineOwnerContext(context: OfflineOwnerContext | null | undefined) {
+  if (!context?.owner?.userId || !context.owner.companyId) return false;
+  return (
+    context.epoch === activeOfflineOwnerEpoch &&
+    context.owner.userId === activeOfflineOwner?.userId &&
+    context.owner.companyId === activeOfflineOwner?.companyId
+  );
+}
+
+function getOfflineOwnerRunKey(context: OfflineOwnerContext) {
+  return `${context.owner.userId}:${context.owner.companyId}:${context.epoch}`;
+}
+
+function refreshActiveOwnerSyncIndicator() {
+  const activeContext = getActiveOfflineOwnerContext();
+  const nextIsSyncing = activeContext
+    ? syncInFlightByOwner.has(getOfflineOwnerRunKey(activeContext))
+    : false;
+  if (nextIsSyncing === isSyncing) return;
+  isSyncing = nextIsSyncing;
+  emit();
 }
 
 export function isOfflineItemOwnedBy(
@@ -366,11 +463,11 @@ export function isOfflineItemOwnedBy(
   owner: OfflineOutboxOwner | null,
 ) {
   if (!owner?.userId) return false;
+  if (!owner.companyId) return false;
   const itemUserId = String(item?.ownerUserId || '').trim();
   if (!itemUserId || itemUserId !== owner.userId) return false;
   const itemCompanyId = String(item?.ownerCompanyId || '').trim();
-  if (itemCompanyId && owner.companyId && itemCompanyId !== owner.companyId) return false;
-  return true;
+  return !!itemCompanyId && itemCompanyId === owner.companyId;
 }
 
 function getOutboxDetailQueryKey(item: OfflineOutboxItem) {
@@ -386,18 +483,29 @@ function isLegacyOutboxItemClaimable(
   owner: OfflineOutboxOwner,
   queryClient: QueryClient,
 ) {
-  if (String(item?.ownerUserId || '').trim()) return false;
-  const itemCompanyId = String(item?.base?.company_id || '').trim();
-  if (itemCompanyId && owner.companyId && itemCompanyId !== owner.companyId) return false;
+  const itemOwnerUserId = String(item?.ownerUserId || '').trim();
+  const itemOwnerCompanyId = String(item?.ownerCompanyId || '').trim();
+  if (itemOwnerCompanyId) return false;
+  if (itemOwnerUserId && itemOwnerUserId !== owner.userId) return false;
+  if (!owner.companyId) return false;
   const activeProfile = queryClient.getQueryData(queryKeys.profile.me()) as any;
   if (String(activeProfile?.id || '').trim() !== owner.userId) return false;
+  if (String(activeProfile?.company_id || '').trim() !== owner.companyId) return false;
+
+  const baseCompanyMatches = String(item?.base?.company_id || '').trim() === owner.companyId;
   const detailKey = getOutboxDetailQueryKey(item);
-  if (!detailKey) return false;
-  const cachedDetail = queryClient.getQueryData(detailKey) as any;
-  return (
+  const cachedDetail = detailKey ? queryClient.getQueryData(detailKey) as any : null;
+  const pendingDetailMatches =
+    String(cachedDetail?.company_id || '').trim() === owner.companyId &&
     cachedDetail?.__offlinePending === true &&
-    String(cachedDetail?.__offlineOutboxId || '').trim() === String(item.id || '').trim()
-  );
+    String(cachedDetail?.__offlineOutboxId || '').trim() === String(item.id || '').trim();
+
+  // Older builds stored the authenticated user but could miss the company.
+  // Claim those rows only when company-scoped cached data proves ownership;
+  // otherwise leave them quarantined instead of reintroducing a wildcard.
+  return itemOwnerUserId
+    ? baseCompanyMatches || pendingDetailMatches
+    : pendingDetailMatches;
 }
 
 function isOutboxItemOwnedBy(item: OfflineOutboxItem, owner: OfflineOutboxOwner | null) {
@@ -445,19 +553,26 @@ function mutateOutbox<T>(
   return operation;
 }
 
-async function claimLegacyOutboxForOwner(owner: OfflineOutboxOwner, queryClient: QueryClient) {
+async function claimLegacyOutboxForOwner(
+  ownerContext: OfflineOwnerContext,
+  queryClient: QueryClient,
+) {
+  const { owner } = ownerContext;
   const snapshot = await readOutbox();
+  if (!isActiveOfflineOwnerContext(ownerContext)) return;
   if (!snapshot.some((item) => isLegacyOutboxItemClaimable(item, owner, queryClient))) return;
   await mutateOutbox((items) => ({
-    items: items.map((item) =>
-      isLegacyOutboxItemClaimable(item, owner, queryClient)
-        ? {
-            ...item,
-            ownerUserId: owner.userId,
-            ownerCompanyId: owner.companyId,
-          }
-        : item,
-    ),
+    items: !isActiveOfflineOwnerContext(ownerContext)
+      ? items
+      : items.map((item) =>
+          isLegacyOutboxItemClaimable(item, owner, queryClient)
+            ? {
+                ...item,
+                ownerUserId: owner.userId,
+                ownerCompanyId: owner.companyId,
+              }
+            : item,
+        ),
     result: undefined,
   }));
 }
@@ -488,10 +603,14 @@ export async function enqueueRequestUpdate({
 }) {
   const entityId = String(id || '').trim();
   if (!entityId) throw new Error('Request id is required');
-  const owner = await getActiveOfflineOwner();
-  if (!owner) throw new Error('Authenticated session is required for offline changes');
+  const ownerContext = getActiveOfflineOwnerContext();
+  if (!ownerContext) throw new Error('Company-scoped session is required for offline changes');
+  const { owner } = ownerContext;
 
   return mutateOutbox((items) => {
+    if (!isActiveOfflineOwnerContext(ownerContext)) {
+      throw new Error('Offline owner changed before request enqueue');
+    }
     const existingIndex = items.findIndex(
       (item) =>
         item.entity === 'request' &&
@@ -589,10 +708,14 @@ async function enqueueEntityUpdate({
 }) {
   const entityId = String(id || '').trim();
   if (!entityId) throw new Error('Entity id is required');
-  const owner = await getActiveOfflineOwner();
-  if (!owner) throw new Error('Authenticated session is required for offline changes');
+  const ownerContext = getActiveOfflineOwnerContext();
+  if (!ownerContext) throw new Error('Company-scoped session is required for offline changes');
+  const { owner } = ownerContext;
 
   return mutateOutbox((items) => {
+    if (!isActiveOfflineOwnerContext(ownerContext)) {
+      throw new Error('Offline owner changed before entity enqueue');
+    }
     const existingIndex = items.findIndex(
       (item) =>
         item.entity === entity &&
@@ -682,10 +805,14 @@ async function enqueueTrashOperation({
 }) {
   const entityId = String(id || '').trim();
   if (!entityId) throw new Error('Entity id is required');
-  const owner = await getActiveOfflineOwner();
-  if (!owner) throw new Error('Authenticated session is required for offline changes');
+  const ownerContext = getActiveOfflineOwnerContext();
+  if (!ownerContext) throw new Error('Company-scoped session is required for offline changes');
+  const { owner } = ownerContext;
 
   return mutateOutbox((items) => {
+    if (!isActiveOfflineOwnerContext(ownerContext)) {
+      throw new Error('Offline owner changed before trash enqueue');
+    }
     const existing = items.find(
       (item) =>
         item.entity === entity &&
@@ -737,6 +864,13 @@ function isSemanticallyEqual(left: any, right: any) {
 
 function hasFieldConflict(item: OfflineOutboxItem, latest: Record<string, any> | null) {
   if (!item.base || !latest) return false;
+  if (
+    item.entity === 'request' &&
+    Object.prototype.hasOwnProperty.call(item.patch || {}, 'status') &&
+    !isSemanticallyEqual(item.base?.assigned_to, latest?.assigned_to)
+  ) {
+    return true;
+  }
   const patchKeys = Object.keys(item.patch || {});
   return patchKeys.some((key) => {
     const before = item.base?.[key];
@@ -752,6 +886,14 @@ function hasFieldConflict(item: OfflineOutboxItem, latest: Record<string, any> |
     // true concurrent edit on same field
     return true;
   });
+}
+
+function isPatchAlreadyApplied(item: OfflineOutboxItem, latest: Record<string, any> | null) {
+  if (!latest) return false;
+  const patchKeys = Object.keys(item.patch || {});
+  return patchKeys.length > 0 && patchKeys.every((key) =>
+    isSemanticallyEqual(latest?.[key], item.patch?.[key]),
+  );
 }
 
 function applyOptimisticRequest(queryClient: QueryClient, item: OfflineOutboxItem) {
@@ -891,12 +1033,28 @@ function applyOptimisticTrashOperation(queryClient: QueryClient, item: OfflineOu
     queryClient.setQueriesData({ queryKey: ['objects'] }, (old) => pruneEntityFromCache(old, id));
     queryClient.setQueriesData({ queryKey: ['clients'] }, (old) => pruneEntityFromCache(old, id));
     queryClient.removeQueries({ queryKey: queryKeys.objects.detail(id), exact: true });
+    detachObjectFromRequestCaches(queryClient, id);
   }
 }
 
-async function performTrashOperationOnline(item: OfflineOutboxItem) {
+async function performTrashOperationOnline(
+  item: OfflineOutboxItem,
+  ownerContext: OfflineOwnerContext,
+  authorization: OwnerBoundAuthorization,
+  signal?: AbortSignal,
+) {
+  assertOfflineOwnerContext(ownerContext);
+  assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
   if (item.operation === 'restore') {
-    const { error } = await supabase.rpc('restore_trash_item', { p_id: item.entityId });
+    let request = pinOwnerBoundPostgrestRequest(
+      supabase.rpc('restore_trash_item', { p_id: item.entityId }),
+      authorization,
+      ownerContext.owner.userId,
+    );
+    if (signal) request = request.abortSignal(signal);
+    const { error } = await request;
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
     if (error) throw error;
     return;
   }
@@ -912,7 +1070,15 @@ async function performTrashOperationOnline(item: OfflineOutboxItem) {
   if (!table) throw new Error(`Unsupported trash entity: ${item.entity}`);
   let query = supabase.from(table).delete().eq('id', item.entityId);
   if (item.ownerCompanyId) query = query.eq('company_id', item.ownerCompanyId);
+  query = pinOwnerBoundPostgrestRequest(
+    query,
+    authorization,
+    ownerContext.owner.userId,
+  );
+  if (signal) query = query.abortSignal(signal);
   const { error } = await query;
+  assertOfflineOwnerContext(ownerContext);
+  assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
   if (error) throw error;
 }
 
@@ -930,67 +1096,256 @@ function invalidateTrashOperationQueries(queryClient: QueryClient, item: Offline
   queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers'] });
 }
 
-async function fetchLatestForItem(item: OfflineOutboxItem) {
+async function fetchLatestForItem(
+  item: OfflineOutboxItem,
+  ownerContext: OfflineOwnerContext,
+  authorization: OwnerBoundAuthorization,
+) {
+  assertOfflineOwnerContext(ownerContext);
+  assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+  const controller = new AbortController();
+  const timeoutMs = 12_000;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const readWithDeadline = async <T>(
+    label: string,
+    reader: (signal: AbortSignal) => Promise<T>,
+  ) => {
+    try {
+      return await Promise.race([
+        reader(controller.signal),
+        new Promise<T>((_resolve, reject) => {
+          timeoutId = setTimeout(() => {
+            const error = new Error(`${label} timed out after ${timeoutMs}ms`) as Error & {
+              code?: string;
+            };
+            error.name = 'ReadDeadlineError';
+            error.code = 'READ_DEADLINE_EXCEEDED';
+            controller.abort(error);
+            reject(error);
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
+
   if (item.entity === 'request') {
     const { getRequestById } = await import('../../features/requests/api');
-    return getRequestById(item.entityId);
+    assertOfflineOwnerContext(ownerContext);
+    const result = await readWithDeadline('Offline request conflict check', (signal) =>
+      getRequestById(item.entityId, signal, { authorization }),
+    );
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
   }
   if (item.entity === 'client') {
-    const { getClientById } = await import('../../features/clients/api');
-    return getClientById(item.entityId);
+    const { getClientByIdForOfflineSync } = await import('../../features/clients/api');
+    assertOfflineOwnerContext(ownerContext);
+    const result = await readWithDeadline('Offline client conflict check', (signal) =>
+      getClientByIdForOfflineSync(item.entityId, {
+        authorization,
+        companyId: ownerContext.owner.companyId,
+        signal,
+      }),
+    );
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
   }
   if (item.entity === 'object') {
-    const { getClientObjectById } = await import('../../features/objects/api');
-    return getClientObjectById(item.entityId);
+    const { getClientObjectByIdForOfflineSync } = await import('../../features/objects/api');
+    assertOfflineOwnerContext(ownerContext);
+    const result = await readWithDeadline('Offline object conflict check', (signal) =>
+      getClientObjectByIdForOfflineSync(item.entityId, {
+        authorization,
+        companyId: ownerContext.owner.companyId,
+        signal,
+      }),
+    );
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
   }
   if (item.entity === 'employee') {
-    const { getEmployeeById } = await import('../../features/employees/api');
-    return getEmployeeById(item.entityId);
+    const { getEmployeeByIdForOfflineSync } = await import('../../features/employees/api');
+    assertOfflineOwnerContext(ownerContext);
+    const result = await readWithDeadline('Offline employee conflict check', (signal) =>
+      getEmployeeByIdForOfflineSync(item.entityId, {
+        authorization,
+        companyId: ownerContext.owner.companyId,
+        signal,
+      }),
+    );
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
+  }
+  if (item.entity === 'trash' && item.operation === 'restore') {
+    const result = await readWithDeadline('Offline trash restore verification', async (signal) => {
+      let request = pinOwnerBoundPostgrestRequest(
+        supabase.rpc('get_trash_item', { p_id: item.entityId }),
+        authorization,
+        ownerContext.owner.userId,
+      );
+      request = request.abortSignal(signal);
+      const { data, error } = await request;
+      assertOfflineOwnerContext(ownerContext);
+      assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+      // A successful restore removes the trash entry, and get_trash_item
+      // reports that state as P0002 rather than returning null. Treat only
+      // that exact server result as confirmation; permission and transport
+      // errors must remain pending/failed and must not be acknowledged.
+      if (error?.code === 'P0002') return null;
+      if (error) throw error;
+      return data || null;
+    });
+    assertOfflineOwnerContext(ownerContext);
+    return result;
   }
   return null;
 }
 
-async function updateItemOnline(item: OfflineOutboxItem, latest: any) {
+async function runOutboxWriteWithDeadline<T>(
+  label: string,
+  writer: (signal: AbortSignal) => Promise<T>,
+) {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const timeoutError = new Error(
+    `${label} timed out after ${OUTBOX_WRITE_DEADLINE_MS}ms; completion is ambiguous`,
+  ) as Error & { code?: string; ambiguous?: boolean };
+  timeoutError.name = 'OutboxWriteDeadlineError';
+  timeoutError.code = 'OUTBOX_WRITE_AMBIGUOUS';
+  timeoutError.ambiguous = true;
+
+  const writePromise = Promise.resolve()
+    .then(() => writer(controller.signal))
+    .catch((error) => {
+      if (timedOut) throw timeoutError;
+      throw error;
+    });
+  try {
+    return await Promise.race([
+      writePromise,
+      new Promise<T>((_resolve, reject) => {
+        timeoutId = setTimeout(() => {
+          timedOut = true;
+          controller.abort(timeoutError);
+          reject(timeoutError);
+        }, OUTBOX_WRITE_DEADLINE_MS);
+      }),
+    ]);
+  } catch (error) {
+    if (timedOut) throw timeoutError;
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function updateItemOnline(
+  item: OfflineOutboxItem,
+  latest: any,
+  ownerContext: OfflineOwnerContext,
+  authorization: OwnerBoundAuthorization,
+  signal?: AbortSignal,
+) {
+  assertOfflineOwnerContext(ownerContext);
+  assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
   if (item.entity === 'request') {
     const { updateRequest } = await import('../../features/requests/api');
-    return updateRequest(item.entityId, item.patch, latest?.updated_at || item.expectedUpdatedAt || null);
+    assertOfflineOwnerContext(ownerContext);
+    const result = await updateRequest(
+      item.entityId,
+      item.patch,
+      latest?.updated_at || item.expectedUpdatedAt || null,
+      signal,
+      { retryOnVersionMismatch: false, authorization },
+    );
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
   }
   if (item.entity === 'client') {
     const { updateClient } = await import('../../features/clients/api');
-    return updateClient(item.entityId, item.patch);
+    assertOfflineOwnerContext(ownerContext);
+    const result = await updateClient(item.entityId, item.patch, signal, {
+      authorization,
+      companyId: ownerContext.owner.companyId,
+    });
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
   }
   if (item.entity === 'object') {
     const { updateClientObject } = await import('../../features/objects/api');
-    return updateClientObject(item.entityId, item.patch);
+    assertOfflineOwnerContext(ownerContext);
+    const result = await updateClientObject(item.entityId, item.patch, signal, {
+      authorization,
+      companyId: ownerContext.owner.companyId,
+    });
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
   }
   if (item.entity === 'employee') {
     const { updateEmployeeProfile } = await import('../../features/employees/api');
-    return updateEmployeeProfile(item.entityId, item.patch);
+    assertOfflineOwnerContext(ownerContext);
+    const result = await updateEmployeeProfile(item.entityId, item.patch, signal, {
+      authorization,
+      companyId: ownerContext.owner.companyId,
+    });
+    assertOfflineOwnerContext(ownerContext);
+    assertOwnerBoundAuthorization(authorization, ownerContext.owner.userId);
+    return result;
   }
   return null;
 }
 
-function scheduleOutboxRetry(queryClient: QueryClient, attempts: number) {
-  if (syncRetryTimer || attempts >= MAX_ATTEMPTS) return;
+function scheduleOutboxRetry(
+  queryClient: QueryClient,
+  attempts: number,
+  ownerContext: OfflineOwnerContext,
+) {
+  const ownerRunKey = getOfflineOwnerRunKey(ownerContext);
+  if (syncRetryTimersByOwner.has(ownerRunKey) || attempts >= MAX_ATTEMPTS) return;
   const delay = Math.min(2_000 * 2 ** Math.max(0, attempts - 1), 30_000);
-  syncRetryTimer = setTimeout(() => {
-    syncRetryTimer = null;
-    if (!getOfflineSnapshot().isOnline) return;
+  const timer = setTimeout(() => {
+    syncRetryTimersByOwner.delete(ownerRunKey);
+    if (!isActiveOfflineOwnerContext(ownerContext) || !canRunOutboxSync()) return;
     syncOfflineOutbox(queryClient).catch(() => {});
   }, delay);
+  syncRetryTimersByOwner.set(ownerRunKey, timer);
 }
 
-async function runOfflineOutboxSync(queryClient: QueryClient) {
+function assertOfflineOwnerContext(context: OfflineOwnerContext) {
+  if (isActiveOfflineOwnerContext(context)) return;
+  const error = new Error('Offline owner changed during sync') as Error & { code?: string };
+  error.code = 'OFFLINE_OWNER_CHANGED';
+  throw error;
+}
+
+async function runOfflineOutboxSync(
+  queryClient: QueryClient,
+  ownerContext: OfflineOwnerContext,
+) {
   const snapshot = getOfflineSnapshot();
-  if (!snapshot.isOnline) return await getOfflineOutboxSummary();
-  const owner = await getActiveOfflineOwner();
-  if (!owner) return summarizeOutbox([]);
-  await claimLegacyOutboxForOwner(owner, queryClient);
+  if (!canRunOutboxSync(snapshot)) return await getOfflineOutboxSummary();
+  if (!isActiveOfflineOwnerContext(ownerContext)) return summarizeOutbox([]);
+  const ownerRunKey = getOfflineOwnerRunKey(ownerContext);
+  const { owner } = ownerContext;
+  await claimLegacyOutboxForOwner(ownerContext, queryClient);
+  assertOfflineOwnerContext(ownerContext);
 
   let initialItems = (await readOutbox()).filter((item) => isOutboxItemOwnedBy(item, owner));
+  assertOfflineOwnerContext(ownerContext);
   const hasInterruptedItems = initialItems.some((item) => item.status === 'syncing');
   if (hasInterruptedItems) {
     initialItems = await mutateOutbox((items) => {
+      assertOfflineOwnerContext(ownerContext);
       const next = items.map((item) =>
         item.status === 'syncing' && isOutboxItemOwnedBy(item, owner)
           ? { ...item, status: 'pending' as const, updatedAt: nowIso() }
@@ -1009,13 +1364,12 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
   );
   if (!hasSyncableItems) return summarizeOutbox(initialItems);
 
-  isSyncing = true;
-  emit();
-  try {
-    let items = initialItems;
-    let changed = false;
+  let items = initialItems;
+  let changed = false;
 
     for (const item of [...items]) {
+      if (!canRunOutboxSync()) break;
+      if (!isActiveOfflineOwnerContext(ownerContext)) break;
       // A conflict needs a new explicit edit (enqueue resets it to pending).
       // Retrying an unchanged conflicting patch on every launch only burns
       // network/CPU and makes the sync indicator flash without making progress.
@@ -1023,6 +1377,7 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
       if (item.attempts >= MAX_ATTEMPTS && item.status === 'failed') continue;
       if (item.operation === 'trash') {
         const currentItems = await readOutbox();
+        assertOfflineOwnerContext(ownerContext);
         const waitsForUpdate = currentItems.some((entry) =>
           entry.entity === item.entity &&
           entry.entityId === item.entityId &&
@@ -1033,6 +1388,9 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
       }
 
       const processingItem = await mutateOutbox((currentItems) => {
+        if (!isActiveOfflineOwnerContext(ownerContext)) {
+          return { items: currentItems, result: null };
+        }
         const currentIndex = currentItems.findIndex((entry) => entry.id === item.id);
         if (currentIndex < 0) return { items: currentItems, result: null };
         const current = currentItems[currentIndex];
@@ -1053,25 +1411,20 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
       if (!processingItem) continue;
 
       try {
-        const activeOwner = await getActiveOfflineOwner();
-        if (!isOutboxItemOwnedBy(processingItem, activeOwner)) {
-          await mutateOutbox((currentItems) => {
-            const idx = currentItems.findIndex((entry) => entry.id === processingItem.id);
-            if (idx >= 0) {
-              currentItems[idx] = {
-                ...currentItems[idx],
-                status: 'pending',
-                updatedAt: nowIso(),
-              };
-            }
-            return { items: currentItems, result: undefined };
-          });
-          break;
-        }
+        assertOfflineOwnerContext(ownerContext);
+        const authorization = await captureOwnerBoundAuthorization(owner.userId);
+        assertOfflineOwnerContext(ownerContext);
+        assertOwnerBoundAuthorization(authorization, owner.userId);
         if (processingItem.operation === 'update') {
-          const latest = await fetchLatestForItem(processingItem);
+          const latest = await fetchLatestForItem(
+            processingItem,
+            ownerContext,
+            authorization,
+          );
+          assertOfflineOwnerContext(ownerContext);
           if (hasFieldConflict(processingItem, latest)) {
             await mutateOutbox((currentItems) => {
+              assertOfflineOwnerContext(ownerContext);
               const idx = currentItems.findIndex((entry) => entry.id === processingItem.id);
               if (idx >= 0) {
                 currentItems[idx] = {
@@ -1088,46 +1441,115 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
             continue;
           }
 
-          const saved = await updateItemOnline(processingItem, latest);
-          const ownerAfterSave = await getActiveOfflineOwner();
-          if (isOutboxItemOwnedBy(processingItem, ownerAfterSave)) {
-            setEntityQueryData(queryClient, processingItem, saved);
-            if (processingItem.entity === 'request') {
-              queryClient.invalidateQueries({ queryKey: ['requests'] });
-            } else if (processingItem.entity === 'client') {
-              queryClient.invalidateQueries({ queryKey: ['clients'] });
-              queryClient.invalidateQueries({ queryKey: ['requests'] });
-            } else if (processingItem.entity === 'object') {
-              queryClient.invalidateQueries({ queryKey: ['objects'] });
-              queryClient.invalidateQueries({ queryKey: ['clients'] });
-              queryClient.invalidateQueries({ queryKey: ['requests'] });
-            } else if (processingItem.entity === 'employee') {
-              queryClient.invalidateQueries({ queryKey: ['employees'] });
-              queryClient.invalidateQueries({ queryKey: ['requests'] });
-            }
-            changed = true;
+          assertOfflineOwnerContext(ownerContext);
+          const saved = isPatchAlreadyApplied(processingItem, latest)
+            ? latest
+            : await runOutboxWriteWithDeadline(
+                `Offline ${processingItem.entity} update`,
+                (signal) => updateItemOnline(
+                  processingItem,
+                  latest,
+                  ownerContext,
+                  authorization,
+                  signal,
+                ),
+              );
+          assertOfflineOwnerContext(ownerContext);
+          setEntityQueryData(queryClient, processingItem, saved);
+          if (processingItem.entity === 'request') {
+            queryClient.invalidateQueries({ queryKey: ['requests'] });
+          } else if (processingItem.entity === 'client') {
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+            queryClient.invalidateQueries({ queryKey: ['requests'] });
+          } else if (processingItem.entity === 'object') {
+            queryClient.invalidateQueries({ queryKey: ['objects'] });
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+            queryClient.invalidateQueries({ queryKey: ['requests'] });
+          } else if (processingItem.entity === 'employee') {
+            queryClient.invalidateQueries({ queryKey: ['employees'] });
+            queryClient.invalidateQueries({ queryKey: ['requests'] });
           }
+          changed = true;
         } else if (processingItem.operation === 'trash' || processingItem.operation === 'restore') {
-          await performTrashOperationOnline(processingItem);
-          const ownerAfterSave = await getActiveOfflineOwner();
-          if (isOutboxItemOwnedBy(processingItem, ownerAfterSave)) {
-            applyOptimisticTrashOperation(queryClient, processingItem);
-            invalidateTrashOperationQueries(queryClient, processingItem);
-            changed = true;
+          assertOfflineOwnerContext(ownerContext);
+          const restoreAlreadyApplied = processingItem.operation === 'restore'
+            ? !(await fetchLatestForItem(
+                processingItem,
+                ownerContext,
+                authorization,
+              ))
+            : false;
+          assertOfflineOwnerContext(ownerContext);
+          if (!restoreAlreadyApplied) {
+            await runOutboxWriteWithDeadline(
+              `Offline ${processingItem.operation} operation`,
+              (signal) => performTrashOperationOnline(
+                processingItem,
+                ownerContext,
+                authorization,
+                signal,
+              ),
+            );
           }
+          assertOfflineOwnerContext(ownerContext);
+          applyOptimisticTrashOperation(queryClient, processingItem);
+          invalidateTrashOperationQueries(queryClient, processingItem);
+          changed = true;
         }
 
+        assertOfflineOwnerContext(ownerContext);
         await mutateOutbox((currentItems) => ({
           items: currentItems.filter((entry) => entry.id !== processingItem.id),
           result: undefined,
         }));
-        if (processingItem.operation === 'update') syncRerunRequested = true;
+        if (processingItem.operation === 'update') {
+          syncRerunRequestedByOwner.add(ownerRunKey);
+        }
         transientSyncFailures.delete(processingItem.id);
       } catch (error: any) {
-        const transientNetworkFailure = isOfflineLikeError(error);
+        if (
+          !isActiveOfflineOwnerContext(ownerContext) ||
+          error?.code === 'OFFLINE_OWNER_CHANGED'
+        ) {
+          await mutateOutbox((currentItems) => {
+            const idx = currentItems.findIndex(
+              (entry) =>
+                entry.id === processingItem.id &&
+                isOutboxItemOwnedBy(entry, owner),
+            );
+            if (idx >= 0 && currentItems[idx].status === 'syncing') {
+              currentItems[idx] = {
+                ...currentItems[idx],
+                status: 'pending',
+                updatedAt: nowIso(),
+              };
+            }
+            return { items: currentItems, result: undefined };
+          });
+          break;
+        }
+        const transientNetworkFailure =
+          isOfflineLikeError(error) || isOwnerAuthorizationUnavailableError(error);
         const failure = await mutateOutbox((currentItems) => {
-          const idx = currentItems.findIndex((entry) => entry.id === processingItem.id);
+          const idx = currentItems.findIndex(
+            (entry) =>
+              entry.id === processingItem.id &&
+              isOutboxItemOwnedBy(entry, owner),
+          );
           if (idx < 0) return { items: currentItems, result: null };
+          if (!isActiveOfflineOwnerContext(ownerContext)) {
+            if (currentItems[idx].status === 'syncing') {
+              currentItems[idx] = {
+                ...currentItems[idx],
+                status: 'pending',
+                updatedAt: nowIso(),
+              };
+            }
+            return {
+              items: currentItems,
+              result: { ownerChanged: true, attempts: 0, status: 'pending' as const },
+            };
+          }
           const recordedAttempts = Number(currentItems[idx].attempts || 0);
           const attempts = transientNetworkFailure
             ? Math.max(0, recordedAttempts - 1)
@@ -1142,8 +1564,9 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
             error: String(error?.message || error || 'Sync failed'),
             updatedAt: nowIso(),
           };
-          return { items: currentItems, result: { attempts, status } };
+          return { items: currentItems, result: { ownerChanged: false, attempts, status } };
         });
+        if (failure?.ownerChanged || !isActiveOfflineOwnerContext(ownerContext)) break;
         if (failure?.status === 'pending') {
           const retryOrdinal = transientNetworkFailure
             ? (transientSyncFailures.get(processingItem.id) || 0) + 1
@@ -1151,7 +1574,7 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
           if (transientNetworkFailure) {
             transientSyncFailures.set(processingItem.id, retryOrdinal);
           }
-          scheduleOutboxRetry(queryClient, retryOrdinal);
+          scheduleOutboxRetry(queryClient, retryOrdinal, ownerContext);
         }
         if (failure?.status === 'failed' && processingItem.operation === 'trash') {
           if (processingItem.base) setEntityQueryData(queryClient, processingItem, processingItem.base);
@@ -1164,42 +1587,51 @@ async function runOfflineOutboxSync(queryClient: QueryClient) {
       }
     }
 
-    if (changed) {
-      queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers'] });
-    }
-    return await getOfflineOutboxSummary();
-  } finally {
-    isSyncing = false;
-    emit();
+  if (changed) {
+    queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers'] });
   }
+  return await getOfflineOutboxSummary();
 }
 
 export function syncOfflineOutbox(queryClient: QueryClient) {
-  if (!getOfflineSnapshot().isOnline) return getOfflineOutboxSummary();
-  if (syncInFlight) {
-    syncRerunRequested = true;
-    return syncInFlight;
+  if (!canRunOutboxSync()) return getOfflineOutboxSummary();
+  const ownerContext = getActiveOfflineOwnerContext();
+  if (!ownerContext) return Promise.resolve(summarizeOutbox([]));
+  const ownerRunKey = getOfflineOwnerRunKey(ownerContext);
+  const existingRun = syncInFlightByOwner.get(ownerRunKey);
+  if (existingRun) {
+    syncRerunRequestedByOwner.add(ownerRunKey);
+    return existingRun;
   }
 
-  syncRerunRequested = false;
-  const run = runOfflineOutboxSync(queryClient);
-  syncInFlight = run.finally(() => {
-    syncInFlight = null;
-    if (!syncRerunRequested) return;
-    syncRerunRequested = false;
-    if (getOfflineSnapshot().isOnline) {
+  syncRerunRequestedByOwner.delete(ownerRunKey);
+  const run = runOfflineOutboxSync(queryClient, ownerContext);
+  const trackedRun = run.finally(() => {
+    if (syncInFlightByOwner.get(ownerRunKey) === trackedRun) {
+      syncInFlightByOwner.delete(ownerRunKey);
+    }
+    refreshActiveOwnerSyncIndicator();
+    if (!syncRerunRequestedByOwner.has(ownerRunKey)) return;
+    syncRerunRequestedByOwner.delete(ownerRunKey);
+    if (isActiveOfflineOwnerContext(ownerContext) && canRunOutboxSync()) {
       syncOfflineOutbox(queryClient).catch(() => {});
     }
   });
-  return syncInFlight;
+  syncInFlightByOwner.set(ownerRunKey, trackedRun);
+  refreshActiveOwnerSyncIndicator();
+  return trackedRun;
 }
 
 export async function restoreOfflineOptimisticState(queryClient: QueryClient) {
-  const owner = await getActiveOfflineOwner();
-  if (!owner) return summarizeOutbox([]);
-  await claimLegacyOutboxForOwner(owner, queryClient);
+  const ownerContext = getActiveOfflineOwnerContext();
+  if (!ownerContext) return summarizeOutbox([]);
+  const { owner } = ownerContext;
+  await claimLegacyOutboxForOwner(ownerContext, queryClient);
+  if (!isActiveOfflineOwnerContext(ownerContext)) return summarizeOutbox([]);
   const items = (await readOutbox()).filter((item) => isOutboxItemOwnedBy(item, owner));
+  if (!isActiveOfflineOwnerContext(ownerContext)) return summarizeOutbox([]);
   items.forEach((item) => {
+    if (!isActiveOfflineOwnerContext(ownerContext)) return;
     if (item.operation === 'trash' || item.operation === 'restore') {
       applyOptimisticTrashOperation(queryClient, item);
       return;

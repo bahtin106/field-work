@@ -11,6 +11,8 @@ import {
 } from '../lib/companySettingsQuery';
 import { supabase } from '../lib/supabase';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
+import { withReadDeadline } from '../src/shared/network/readDeadline';
+import { getOfflineSnapshot, useOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 
 const COMPANY_SETTINGS_GC_MS = 14 * 24 * 60 * 60 * 1000;
 const COMPANY_SETTINGS_STALE_MS = 5 * 60 * 1000;
@@ -26,6 +28,8 @@ function acquireCompanySettingsSubscription(queryClient, companyId) {
   }
 
   const refreshSettings = (payload = null) => {
+    const network = getOfflineSnapshot();
+    if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
     const rowPatch = payload?.new || payload?.payload?.patch || null;
     const patchedFromRealtime = applyCompanySettingsCachePatch(queryClient, key, rowPatch);
     if (patchedFromRealtime) return;
@@ -35,7 +39,6 @@ function acquireCompanySettingsSubscription(queryClient, companyId) {
       refetchType: 'active',
     }).catch(() => {});
   };
-  let subscribedOnce = false;
   const channel = supabase
     .channel(`company-settings-${key}`)
     .on('broadcast', { event: COMPANY_SETTINGS_UPDATED_EVENT }, (payload) => {
@@ -50,8 +53,7 @@ function acquireCompanySettingsSubscription(queryClient, companyId) {
     )
     .subscribe((status) => {
       if (status !== 'SUBSCRIBED') return;
-      if (subscribedOnce) refreshSettings();
-      subscribedOnce = true;
+      refreshSettings();
     });
   const appStateSub = AppState.addEventListener('change', (state) => {
     if (state === 'active') refreshSettings();
@@ -88,6 +90,7 @@ export function useCompanySettings(companyIdOverride = null, options = {}) {
     refetchOnMount = 'stale',
   } = options || {};
   const queryClient = useQueryClient();
+  const network = useOfflineSnapshot();
   const { profile } = useAuthContext();
   const companyId = companyIdOverride || profile?.company_id || null;
   const queryKey = useMemo(
@@ -95,19 +98,25 @@ export function useCompanySettings(companyIdOverride = null, options = {}) {
     [companyId],
   );
   const queryEnabled = enabled !== false && !!companyId;
+  const canUseLiveNetwork =
+    network.isNetworkKnown && network.isOnline && !network.isPoorConnection;
   const liveRefetchInterval =
-    queryEnabled && subscribe !== false && liveRefetchIntervalMs !== false
+    queryEnabled && canUseLiveNetwork && subscribe !== false && liveRefetchIntervalMs !== false
       ? Math.max(1000, Number(liveRefetchIntervalMs) || COMPANY_SETTINGS_LIVE_REFETCH_MS)
       : false;
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey,
-    queryFn: () => fetchCompanySettingsByCompanyId(companyId),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => fetchCompanySettingsByCompanyId(companyId, readSignal),
+        { label: 'Company settings', signal },
+      ),
     enabled: queryEnabled,
     staleTime: COMPANY_SETTINGS_STALE_MS,
     gcTime: COMPANY_SETTINGS_GC_MS,
     refetchOnMount,
-    refetchOnReconnect: true,
+    refetchOnReconnect: canUseLiveNetwork,
     refetchOnWindowFocus: false,
     refetchInterval: liveRefetchInterval,
     refetchIntervalInBackground: false,
@@ -115,9 +124,9 @@ export function useCompanySettings(companyIdOverride = null, options = {}) {
   });
 
   useEffect(() => {
-    if (!companyId || !queryEnabled || subscribe === false) return undefined;
+    if (!companyId || !queryEnabled || !canUseLiveNetwork || subscribe === false) return undefined;
     return acquireCompanySettingsSubscription(queryClient, companyId);
-  }, [companyId, queryClient, queryEnabled, subscribe]);
+  }, [canUseLiveNetwork, companyId, queryClient, queryEnabled, subscribe]);
 
   // Функция для принудительного обновления настроек
   const invalidateSettings = async () => {

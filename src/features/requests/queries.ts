@@ -3,12 +3,20 @@ import { useEffect, useMemo } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { getStatusDbAliases, normalizeOrderStatusFilterKey } from '../../../lib/orderFilters';
 import { queryKeys } from '../../shared/query/queryKeys';
-import { requestScreenRefresh } from '../../shared/query/screenRefreshRegistry';
 import {
+  assertActiveQueryCacheOwnerContext,
+  captureActiveQueryCacheOwnerContext,
+  isActiveQueryCacheOwnerContext,
+} from '../../shared/query/queryClient';
+import { requestScreenRefresh } from '../../shared/query/screenRefreshRegistry';
+import { withReadDeadline } from '../../shared/network/readDeadline';
+import {
+  canRunDeferredNetworkWork,
+  canRunOutboxSync,
   enqueueRequestUpdate,
-  getOfflineSnapshot,
   isOfflineLikeError,
   syncOfflineOutbox,
+  useOfflineSnapshot,
 } from '../../shared/offline/offlineStatus';
 import {
   getAssigneeDisplayNameById,
@@ -25,6 +33,7 @@ import { seedExecutorNames } from './executorNameCache';
 
 const PAGE_SIZE = 30;
 const REQUEST_MEDIA_FIELD_KEYS = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
+const REQUEST_MUTATION_OWNER_CONTEXT = Symbol('request-mutation-owner-context');
 
 function shouldRetryRequestQuery(count: number, error: any) {
   return !isOfflineLikeError(error) && !isRequestAuthorizationError(error) && count < 1;
@@ -68,6 +77,121 @@ function mergePages(data: any) {
   return pages.flatMap((page) => (Array.isArray(page) ? page : []));
 }
 
+const REQUEST_SUPERSET_ARRAY_FILTERS = [
+  'statuses',
+  'executorIds',
+  'clientIds',
+  'objectIds',
+  'clientTags',
+  'objectTags',
+  'workTypeIds',
+  'orderIds',
+  'relationObjectIds',
+];
+const REQUEST_SUPERSET_SCALAR_FILTERS = [
+  'executorId',
+  'departmentId',
+  'relationClientId',
+  'dateFrom',
+  'dateTo',
+  'startDate',
+  'endDate',
+  'createdFrom',
+  'createdTo',
+  'sumMin',
+  'sumMax',
+];
+
+function normalizeRequestScopeValue(value: any) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function requestParamsAreUnfilteredSuperset(source: any = {}, target: any = {}, scope: any) {
+  const sourceStatus = normalizeOrderStatusFilterKey(source?.status || 'all');
+  if (sourceStatus && sourceStatus !== 'all') return false;
+  if (
+    REQUEST_SUPERSET_ARRAY_FILTERS.some(
+      (key) => Array.isArray(source?.[key]) && source[key].filter(Boolean).length > 0,
+    )
+  ) {
+    return false;
+  }
+  if (
+    REQUEST_SUPERSET_SCALAR_FILTERS.some(
+      (key) => source?.[key] !== null && source?.[key] !== undefined && String(source[key]).trim(),
+    )
+  ) {
+    return false;
+  }
+
+  // Filtering preserves ordering only when both queries use the same server sort.
+  if (normalizeRequestScopeValue(source?.sortKey) !== normalizeRequestScopeValue(target?.sortKey)) {
+    return false;
+  }
+  if (
+    scope === 'my' &&
+    normalizeRequestScopeValue(source?.userId) !== normalizeRequestScopeValue(target?.userId)
+  ) {
+    return false;
+  }
+
+  const sourceExcludesFeed = sourceStatus === 'all' && source?.excludeFeedWhenAll !== false;
+  if (sourceExcludesFeed) {
+    const targetStatus = normalizeOrderStatusFilterKey(target?.status || 'all');
+    const targetStatuses = Array.isArray(target?.statuses)
+      ? target.statuses.map(normalizeOrderStatusFilterKey).filter(Boolean)
+      : [];
+    const targetCanContainFeed =
+      targetStatus === 'feed' ||
+      targetStatuses.includes('feed') ||
+      (targetStatus === 'all' &&
+        targetStatuses.length === 0 &&
+        target?.excludeFeedWhenAll === false);
+    if (targetCanContainFeed) return false;
+  }
+
+  return true;
+}
+
+function findRequestPageInCachedSuperset(
+  queryClient: any,
+  queryKey: any,
+  params: any,
+  pageParam: any,
+) {
+  const scope = queryKey?.[1] === 'my' ? 'my' : 'all';
+  const pageNumber = Math.max(1, Number(pageParam) || 1);
+  const from = (pageNumber - 1) * PAGE_SIZE;
+  let best: { rows: any[]; updatedAt: number } | null = null;
+  const entries = queryClient.getQueriesData({ queryKey: ['requests', scope] }) || [];
+
+  for (const [sourceKey, value] of entries) {
+    if (!Array.isArray(sourceKey) || !Array.isArray(value?.pages)) continue;
+    const sourceParams = sourceKey[2] && typeof sourceKey[2] === 'object' ? sourceKey[2] : {};
+    if (!requestParamsAreUnfilteredSuperset(sourceParams, params, scope)) continue;
+
+    const seenIds = new Set<string>();
+    const rows = value.pages
+      .flatMap((page: any) => (Array.isArray(page) ? page : []))
+      .filter((row: any) =>
+        requestBelongsInCachedQuery(queryKey, row, row, { strictLocalProjection: true }),
+      )
+      .filter((row: any) => {
+        const id = String(row?.id || '').trim();
+        if (!id || seenIds.has(id)) return false;
+        seenIds.add(id);
+        return true;
+      })
+      .slice(from, from + PAGE_SIZE);
+    if (rows.length === 0) continue;
+
+    const updatedAt = Number(queryClient.getQueryState(sourceKey)?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) best = { rows, updatedAt };
+  }
+
+  return best?.rows || null;
+}
+
 function findRequestInListCaches(queryClient: any, id: any) {
   const targetId = String(id || '').trim();
   if (!targetId) return null;
@@ -88,15 +212,27 @@ function useRequestInfiniteQuery(queryKey: any, params: any, options: any = {}) 
   const queryClient = useQueryClient();
   const query = useInfiniteQuery({
     queryKey,
-    queryFn: async ({ pageParam = 1 }) => {
+    queryFn: async ({ pageParam = 1, signal }) => {
       try {
-        return await listRequests({ ...params, page: pageParam, pageSize: PAGE_SIZE });
+        return await withReadDeadline(
+          (readSignal) =>
+            listRequests({ ...params, page: pageParam, pageSize: PAGE_SIZE }, readSignal),
+          { label: 'Requests list', signal },
+        );
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached: any = queryClient.getQueryData(queryKey);
         const pages = Array.isArray(cached?.pages) ? cached.pages : [];
         const fromCache = pages[Number(pageParam) - 1];
-        return Array.isArray(fromCache) ? fromCache : [];
+        if (Array.isArray(fromCache)) return fromCache;
+        const derived = findRequestPageInCachedSuperset(
+          queryClient,
+          queryKey,
+          params,
+          pageParam,
+        );
+        if (derived) return derived;
+        throw error;
       }
     },
     initialPageParam: 1,
@@ -166,7 +302,12 @@ function acquireRequestRealtimeSubscription(queryClient: any, companyId: any, on
         if (flushTimer == null) flushTimer = setTimeout(flushInvalidations, 150);
       },
     )
-    .subscribe();
+    .subscribe((status: any) => {
+      if (status !== 'SUBSCRIBED') return;
+      queryClient.invalidateQueries({ queryKey: ['requests', 'all'] });
+      queryClient.invalidateQueries({ queryKey: ['requests', 'my'] });
+      queryClient.invalidateQueries({ queryKey: ['requests', 'calendar'] });
+    });
   requestRealtimeSubscriptions.set(scope, {
     refs: 1,
     channel,
@@ -200,7 +341,21 @@ function requestStatusMatchesFilter(status: any, filter: any) {
   return aliases.includes(rawStatus) || normalizedStatus === normalizedFilter;
 }
 
-function requestBelongsInCachedQuery(queryKey: any, previous: any, next: any) {
+function normalizeRequestTagValues(values: any) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => {
+      if (typeof value === 'string' || typeof value === 'number') return String(value).trim().toLowerCase();
+      return String(value?.value || value?.label || '').trim().toLowerCase();
+    })
+    .filter(Boolean);
+}
+
+function requestBelongsInCachedQuery(
+  queryKey: any,
+  previous: any,
+  next: any,
+  { strictLocalProjection = false }: any = {},
+) {
   if (!Array.isArray(queryKey)) return true;
   const merged = { ...(previous || {}), ...(next || {}) };
   const params = queryKey[0] === 'requests' && queryKey[2] && typeof queryKey[2] === 'object'
@@ -239,6 +394,21 @@ function requestBelongsInCachedQuery(queryKey: any, previous: any, next: any) {
     const clientId = String(merged.client_id || '').trim();
     if (clientIds.length > 0 && !clientIds.includes(clientId)) return false;
 
+    const objectIds = Array.isArray(params.objectIds) ? params.objectIds.map(String) : [];
+    const objectId = String(merged.object_id || '').trim();
+    if (objectIds.length > 0 && !objectIds.includes(objectId)) return false;
+
+    for (const [filterKey, rowKey] of [
+      ['clientTags', 'client_tags'],
+      ['objectTags', 'object_tags'],
+    ]) {
+      const selectedTags = normalizeRequestTagValues(params?.[filterKey]);
+      if (selectedTags.length === 0) continue;
+      const availableTags = new Set(normalizeRequestTagValues(merged?.[rowKey]));
+      if (availableTags.size === 0 && !strictLocalProjection) continue;
+      if (!selectedTags.some((tag) => availableTags.has(tag))) return false;
+    }
+
     const relationClientId = String(params.relationClientId || '').trim();
     const relationObjectIds = Array.isArray(params.relationObjectIds)
       ? params.relationObjectIds.map(String).filter(Boolean)
@@ -265,13 +435,9 @@ function requestBelongsInCachedQuery(queryKey: any, previous: any, next: any) {
     if (params.departmentId != null) {
       const departmentValue =
         merged.department_id ?? merged.executor_department_id ?? merged.assignee_department_id;
-      if (
-        departmentValue !== undefined &&
-        departmentValue !== null &&
-        String(departmentValue) !== String(params.departmentId)
-      ) {
-        return false;
-      }
+      if (departmentValue === undefined || departmentValue === null) {
+        if (strictLocalProjection) return false;
+      } else if (String(departmentValue) !== String(params.departmentId)) return false;
     }
 
     const timeWindowStart = Date.parse(String(merged.time_window_start || ''));
@@ -425,7 +591,11 @@ export function useRelatedRequestCount(params: any = {}, options: any = {}) {
 
   return useQuery({
     queryKey: queryKeys.requests.relatedCount({ scope, ...relationFilters }),
-    queryFn: () => getRelatedRequestCount({ scope, ...relationFilters }),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => getRelatedRequestCount({ scope, ...relationFilters }, readSignal),
+        { label: 'Related requests count', signal },
+      ),
     enabled: Boolean(enabled && hasRelations),
     staleTime: 30 * 1000,
     retry: shouldRetryRequestQuery,
@@ -437,9 +607,14 @@ export function useRequest(id: any, options: any = {}) {
   const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.requests.detail(id),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return markRequestDetailLoaded(await getRequestById(id));
+        return markRequestDetailLoaded(
+          await withReadDeadline((readSignal) => getRequestById(id, readSignal), {
+            label: 'Request detail',
+            signal,
+          }),
+        );
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const fromDetail = queryClient.getQueryData(queryKeys.requests.detail(id));
@@ -467,8 +642,14 @@ export function useRequest(id: any, options: any = {}) {
 export function useRequestExecutors({ companyId = null, ...options }: any = {}) {
   return useQuery({
     queryKey: queryKeys.requests.executors(companyId),
-    queryFn: async () => {
-      const rows = await listRequestExecutors({ companyId });
+    queryFn: async ({ signal }) => {
+      const rows = await withReadDeadline(
+        (readSignal) => listRequestExecutors({ companyId }, readSignal),
+        {
+          label: 'Request executors',
+          signal,
+        },
+      );
       seedExecutorNames(rows);
       return rows;
     },
@@ -480,7 +661,11 @@ export function useRequestExecutors({ companyId = null, ...options }: any = {}) 
 export function useRequestFilterOptions(options: any = {}) {
   return useQuery({
     queryKey: queryKeys.requests.filterOptions(),
-    queryFn: listRequestFilterOptions,
+    queryFn: ({ signal }) =>
+      withReadDeadline((readSignal) => listRequestFilterOptions(readSignal), {
+        label: 'Request filter options',
+        signal,
+      }),
     staleTime: 10 * 60 * 1000,
     ...options,
   });
@@ -496,14 +681,21 @@ export function useCalendarRequests({
   refetchIntervalMs = false,
   enabled = true,
 }: any = {}) {
+  const network = useOfflineSnapshot();
+  const canUseCalendarPolling = canRunDeferredNetworkWork(network);
   return useQuery({
     queryKey: queryKeys.requests.calendar({ userId, role, scope, startDate, endDate }),
-    queryFn: () => listCalendarRequests({ userId, role, scope, startDate, endDate }),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) =>
+          listCalendarRequests({ userId, role, scope, startDate, endDate }, readSignal),
+        { label: 'Calendar requests', signal },
+      ),
     enabled: enabled && !!userId,
     staleTime: 5 * 60 * 1000,
     placeholderData: (previousData) => previousData ?? [],
     refetchOnMount: false,
-    refetchInterval: isScreenActive ? refetchIntervalMs : false,
+    refetchInterval: isScreenActive && canUseCalendarPolling ? refetchIntervalMs : false,
     refetchIntervalInBackground: false,
   });
 }
@@ -514,11 +706,14 @@ export function useRequestRealtimeSync({
   onRequestsChanged,
 }: any = {}) {
   const queryClient = useQueryClient();
+  const network = useOfflineSnapshot();
+  const canUseRealtime =
+    network.isNetworkKnown && network.isOnline && !network.isPoorConnection;
 
   useEffect(() => {
-    if (!enabled) return undefined;
+    if (!enabled || !canUseRealtime) return undefined;
     return acquireRequestRealtimeSubscription(queryClient, companyId, onRequestsChanged);
-  }, [companyId, enabled, onRequestsChanged, queryClient]);
+  }, [canUseRealtime, companyId, enabled, onRequestsChanged, queryClient]);
 }
 
 export function useUpdateRequestMutation() {
@@ -526,10 +721,19 @@ export function useUpdateRequestMutation() {
 
   return useMutation({
     mutationFn: async (variables: any) => {
-      const { id, patch, expectedUpdatedAt = null, base = null } = variables || {};
+      const ownerContext = variables?.[REQUEST_MUTATION_OWNER_CONTEXT];
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      const {
+        id,
+        patch,
+        expectedUpdatedAt = null,
+        base = null,
+        retryOnVersionMismatch = true,
+      } = variables || {};
       const baseSnapshot = base || queryClient.getQueryData(queryKeys.requests.detail(id)) || null;
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      const online = onlineManager.isOnline() && canRunOutboxSync();
       if (!online) {
+        assertActiveQueryCacheOwnerContext(ownerContext);
         const queued = await enqueueRequestUpdate({
           id,
           patch,
@@ -547,13 +751,20 @@ export function useUpdateRequestMutation() {
       }
 
       try {
-        const updated = await updateRequest(id, patch, expectedUpdatedAt);
+        const updated = await updateRequest(
+          id,
+          patch,
+          expectedUpdatedAt,
+          undefined,
+          { retryOnVersionMismatch },
+        );
         return markRequestDetailLoaded({
           ...(baseSnapshot || {}),
           ...(updated || {}),
         });
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
+        assertActiveQueryCacheOwnerContext(ownerContext);
         const queued = await enqueueRequestUpdate({
           id,
           patch,
@@ -571,17 +782,26 @@ export function useUpdateRequestMutation() {
       }
     },
     onMutate: async (variables: any) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      variables[REQUEST_MUTATION_OWNER_CONTEXT] = ownerContext;
       const { id, patch, base } = variables || {};
       const detailKey = queryKeys.requests.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
+      assertActiveQueryCacheOwnerContext(ownerContext);
       const previous = queryClient.getQueryData(detailKey);
       const baseSnapshot = base || previous || null;
       if (baseSnapshot) {
-        queryClient.setQueryData(detailKey, { ...baseSnapshot, ...patch, __offlinePending: !onlineManager.isOnline() });
+        queryClient.setQueryData(detailKey, {
+          ...baseSnapshot,
+          ...patch,
+          __offlinePending: !(onlineManager.isOnline() && canRunOutboxSync()),
+        });
       }
-      return { previous, detailKey, base: baseSnapshot };
+      return { previous, detailKey, base: baseSnapshot, ownerContext };
     },
     onError: (error: any, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (context?.previous) {
         queryClient.setQueryData(context.detailKey, context.previous);
       }
@@ -589,7 +809,8 @@ export function useUpdateRequestMutation() {
         queryClient.setQueryData(queryKeys.requests.detail(error.latest.id), markRequestDetailLoaded(error.latest));
       }
     },
-    onSuccess: (next) => {
+    onSuccess: (next, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (next?.id) {
         const stored = next?.__offlinePending ? markRequestDetailSeed(next) : markRequestDetailLoaded(next);
         queryClient.setQueryData(
@@ -608,7 +829,11 @@ export function useUpdateRequestMutation() {
         syncOfflineOutbox(queryClient).catch(() => {});
       }
     },
-    onSettled: () => {
+    onSettled: (_data, _error, variables: any, context: any) => {
+      if (variables && typeof variables === 'object') {
+        delete variables[REQUEST_MUTATION_OWNER_CONTEXT];
+      }
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       invalidateClientDeleteBlockersNamespace(queryClient);
     },
   });
@@ -621,7 +846,13 @@ export async function ensureRequestPrefetch(queryClient: any, id: any) {
   if (isRequestDetailLoaded(existing)) return existing;
   return queryClient.fetchQuery({
     queryKey: queryKeys.requests.detail(id),
-    queryFn: async () => markRequestDetailLoaded(await getRequestById(id)),
+    queryFn: async ({ signal }) =>
+      markRequestDetailLoaded(
+        await withReadDeadline((readSignal) => getRequestById(id, readSignal), {
+          label: 'Request detail prefetch',
+          signal,
+        }),
+      ),
     staleTime: 0,
   });
 }
@@ -630,7 +861,11 @@ export async function ensureRequestAssigneeNamePrefetch(queryClient: any, userId
   if (!userId) return '';
   return queryClient.ensureQueryData({
     queryKey: queryKeys.requests.assigneeName(userId),
-    queryFn: () => getAssigneeDisplayNameById(userId),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) => getAssigneeDisplayNameById(userId, readSignal),
+        { label: 'Request assignee', signal },
+      ),
     staleTime: 2 * 60 * 1000,
   });
 }
@@ -642,7 +877,12 @@ export async function ensureCalendarRequestsPrefetch(
   if (!userId) return [];
   return queryClient.ensureQueryData({
     queryKey: queryKeys.requests.calendar({ userId, role, scope, startDate, endDate }),
-    queryFn: () => listCalendarRequests({ userId, role, scope, startDate, endDate }),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) =>
+          listCalendarRequests({ userId, role, scope, startDate, endDate }, readSignal),
+        { label: 'Calendar requests prefetch', signal },
+      ),
     staleTime: 60 * 1000,
   });
 }

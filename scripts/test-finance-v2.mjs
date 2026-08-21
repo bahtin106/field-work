@@ -138,4 +138,29 @@ assert.match(migration, /Pass 1: customer charges/);
 assert.match(migration, /Pass 2: discounts/);
 assert.match(migration, /Pass 3: costs, compensation adjustments/);
 
+const trashSafeRecalculationMigrationPath = path.join(
+  root,
+  'supabase',
+  'migrations',
+  '20260821020000_skip_trashed_orders_in_finance_recalculation.sql',
+);
+const trashSafeRecalculationMigration = fs.readFileSync(
+  trashSafeRecalculationMigrationPath,
+  'utf8',
+);
+assert.match(
+  trashSafeRecalculationMigration,
+  /upsert_company_finance_scheme_v2\(jsonb\)/,
+);
+assert.match(
+  trashSafeRecalculationMigration,
+  /archive_company_finance_scheme_v2\(uuid,boolean\)/,
+);
+assert.match(
+  trashSafeRecalculationMigration,
+  /set_company_finance_scheme_enabled_v2\(uuid,boolean,boolean\)/,
+);
+assert.match(trashSafeRecalculationMigration, /from public\.trash_entries trash_entry/);
+assert.match(trashSafeRecalculationMigration, /trash_entry\.entity_id = o\.id/);
+
 console.log('Finance V2 calculation scenarios passed.');

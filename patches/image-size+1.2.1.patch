@@ -1,0 +1,68 @@
+diff --git a/node_modules/image-size/dist/types/icns.js b/node_modules/image-size/dist/types/icns.js
+index f2bfafe..030e346 100644
+--- a/node_modules/image-size/dist/types/icns.js
++++ b/node_modules/image-size/dist/types/icns.js
+@@ -74,6 +74,16 @@ function getImageSize(type) {
+     const size = ICON_TYPE_SIZE[type];
+     return { width: size, height: size, type };
+ }
++function assertValidImageEntry(inputLength, fileLength, imageOffset, imageLength) {
++    const parseLimit = Math.min(inputLength, fileLength);
++    const hasCompleteHeader = imageOffset >= SIZE_HEADER && imageOffset + SIZE_HEADER <= parseLimit;
++    const hasValidLength = Number.isFinite(imageLength) &&
++        imageLength >= SIZE_HEADER &&
++        imageOffset + imageLength <= fileLength;
++    if (!hasCompleteHeader || !hasValidLength) {
++        throw new TypeError('Invalid ICNS image entry length');
++    }
++}
+ exports.ICNS = {
+     validate: (input) => (0, utils_1.toUTF8String)(input, 0, 4) === 'icns',
+     calculate(input) {
+@@ -81,6 +91,7 @@ exports.ICNS = {
+         const fileLength = (0, utils_1.readUInt32BE)(input, FILE_LENGTH_OFFSET);
+         let imageOffset = SIZE_HEADER;
+         let imageHeader = readImageHeader(input, imageOffset);
++        assertValidImageEntry(inputLength, fileLength, imageOffset, imageHeader[1]);
+         let imageSize = getImageSize(imageHeader[0]);
+         imageOffset += imageHeader[1];
+         if (imageOffset === fileLength)
+@@ -92,6 +103,7 @@ exports.ICNS = {
+         };
+         while (imageOffset < fileLength && imageOffset < inputLength) {
+             imageHeader = readImageHeader(input, imageOffset);
++            assertValidImageEntry(inputLength, fileLength, imageOffset, imageHeader[1]);
+             imageSize = getImageSize(imageHeader[0]);
+             imageOffset += imageHeader[1];
+             result.images.push(imageSize);
+diff --git a/node_modules/image-size/dist/types/utils.js b/node_modules/image-size/dist/types/utils.js
+index 5224bba..32e9c8f 100644
+--- a/node_modules/image-size/dist/types/utils.js
++++ b/node_modules/image-size/dist/types/utils.js
+@@ -49,9 +49,14 @@ function readUInt(input, bits, offset, isBigEndian) {
+ }
+ exports.readUInt = readUInt;
+ function readBox(input, offset) {
+-    if (input.length - offset < 4)
++    if (input.length - offset < 8)
+         return;
+     const boxSize = (0, exports.readUInt32BE)(input, offset);
++    // A regular ISO BMFF box must contain its complete 8-byte header. Treat
++    // zero/undersized boxes as malformed so callers can never re-enter at the
++    // same offset (GHSA-5p2g-fcmc-qvqq).
++    if (boxSize < 8)
++        return;
+     if (input.length - offset < boxSize)
+         return;
+     return {
+@@ -67,9 +72,7 @@ function findBox(input, boxName, offset) {
+             break;
+         if (box.name === boxName)
+             return box;
+-        // Fix the infinite loop by ensuring offset always increases
+-        // If box.size is 0, advance by at least 8 bytes (the size of the box header)
+-        offset += box.size > 0 ? box.size : 8;
++        offset += box.size;
+     }
+ }
+ exports.findBox = findBox;

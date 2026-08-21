@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
+  canRunOutboxSync,
   getOfflineOutboxSummary,
   getOfflineSnapshot,
   restoreOfflineOptimisticState,
@@ -14,7 +15,7 @@ export function useOfflineSync({ enabled = true } = {}) {
   const queryClient = useQueryClient();
   const [snapshot, setSnapshot] = useState(getOfflineSnapshot);
   const [summary, setSummary] = useState(EMPTY_SUMMARY);
-  const wasOnlineRef = useRef(snapshot.isOnline);
+  const wasSyncableRef = useRef(canRunOutboxSync(snapshot));
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -22,10 +23,11 @@ export function useOfflineSync({ enabled = true } = {}) {
 
     const refresh = async ({ syncOnReconnect = false } = {}) => {
       const nextSnapshot = getOfflineSnapshot();
-      const becameOnline = !wasOnlineRef.current && nextSnapshot.isOnline;
-      wasOnlineRef.current = nextSnapshot.isOnline;
+      const isSyncable = canRunOutboxSync(nextSnapshot);
+      const becameSyncable = !wasSyncableRef.current && isSyncable;
+      wasSyncableRef.current = isSyncable;
       setSnapshot(nextSnapshot);
-      if (syncOnReconnect && becameOnline) {
+      if (syncOnReconnect && becameSyncable) {
         const nextSummary = await syncOfflineOutbox(queryClient);
         if (active) setSummary(nextSummary);
         return;
@@ -37,7 +39,7 @@ export function useOfflineSync({ enabled = true } = {}) {
     restoreOfflineOptimisticState(queryClient).then((nextSummary) => {
       if (!active) return;
       setSummary(nextSummary);
-      if (getOfflineSnapshot().isOnline) {
+      if (canRunOutboxSync()) {
         syncOfflineOutbox(queryClient)
           .then((syncedSummary) => {
             if (active) setSummary(syncedSummary);

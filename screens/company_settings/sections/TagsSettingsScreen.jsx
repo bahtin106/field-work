@@ -236,7 +236,7 @@ export default function TagsSettingsScreen() {
           const tagId = String(confirmDelete?.tag?.id || '');
           if (!tagId) return;
           try {
-            await deleteTagMutation.mutateAsync(tagId);
+            await deleteTagMutation.mutateAsync({ tagId });
             toast.success(t('tags_deleted_success'));
             setConfirmDelete({ visible: false, tag: null });
           } catch (error) {

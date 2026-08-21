@@ -6,6 +6,10 @@ import {
   normalizeEntityField,
 } from './catalog';
 import { enforceOrderFinanceFieldDependencies } from './orderFinance';
+import {
+  assertMutationAuthCarrier,
+  pinMutationAuthorization,
+} from '../../shared/security/mutationAuthCarrier';
 
 function normalizeFieldRows(entityType, rows) {
   const byKey = new Map();
@@ -37,10 +41,16 @@ function isUnknownFieldKeyError(error) {
   return message.includes('UNKNOWN_FIELD_KEY');
 }
 
-async function fetchServerFieldKeys(entityType) {
-  const { data, error } = await supabase.rpc('get_company_entity_field_settings', {
-    p_entity_type: String(entityType || ''),
-  });
+async function fetchServerFieldKeys(entityType, authCarrier) {
+  assertMutationAuthCarrier(authCarrier);
+  const request = pinMutationAuthorization(
+    supabase.rpc('get_company_entity_field_settings', {
+      p_entity_type: String(entityType || ''),
+    }),
+    authCarrier,
+  );
+  const { data, error } = await request;
+  assertMutationAuthCarrier(authCarrier);
   if (error) throw error;
   const keys = new Set();
   const rows = Array.isArray(data?.fields) ? data.fields : [];
@@ -51,27 +61,35 @@ async function fetchServerFieldKeys(entityType) {
   return keys;
 }
 
-export async function listEntityFieldSettings(entityType) {
+export async function listEntityFieldSettings(entityType, signal = undefined) {
   const fallback = buildFallbackEntityFieldSettings(entityType);
 
   try {
-    const { data, error } = await supabase.rpc('get_company_entity_field_settings', {
+    let query = supabase.rpc('get_company_entity_field_settings', {
       p_entity_type: String(entityType || ''),
     });
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
     if (error) throw error;
     return normalizeResponse(entityType, data);
   } catch (error) {
     const message = String(error?.message || '').toLowerCase();
     const missingRpc =
       message.includes('function') && (message.includes('does not exist') || message.includes('not found'));
-    if (!missingRpc) {
-      fallback.errorMessage = String(error?.message || '').trim() || null;
-    }
-    return fallback;
+    if (missingRpc) return fallback;
+
+    // A network/authorization failure is not a valid replacement for the
+    // company's last-known custom form. Let React Query retain persisted data;
+    // screens without a cache already provide their own static fallback.
+    throw error;
   }
 }
 
-export async function saveEntityFieldSettings({ entityType, fields, expectedVersion = null }) {
+export async function saveEntityFieldSettings(
+  { entityType, fields, expectedVersion = null },
+  authCarrier,
+) {
+  assertMutationAuthCarrier(authCarrier);
   const normalizedFields =
     entityType === ENTITY_FIELD_TYPES.ORDER
       ? enforceOrderFinanceFieldDependencies(fields)
@@ -98,11 +116,17 @@ export async function saveEntityFieldSettings({ entityType, fields, expectedVers
     .filter((field) => validFieldKeys.has(field.field_key));
 
   const savePayload = async (nextPayload) => {
-    const { data, error } = await supabase.rpc('save_company_entity_field_settings', {
-      p_entity_type: String(entityType || ''),
-      p_expected_version: expectedVersion || null,
-      p_fields: nextPayload,
-    });
+    assertMutationAuthCarrier(authCarrier);
+    const request = pinMutationAuthorization(
+      supabase.rpc('save_company_entity_field_settings', {
+        p_entity_type: String(entityType || ''),
+        p_expected_version: expectedVersion || null,
+        p_fields: nextPayload,
+      }),
+      authCarrier,
+    );
+    const { data, error } = await request;
+    assertMutationAuthCarrier(authCarrier);
     if (error) throw error;
     return normalizeResponse(entityType, data);
   };
@@ -112,7 +136,9 @@ export async function saveEntityFieldSettings({ entityType, fields, expectedVers
   } catch (error) {
     if (!isUnknownFieldKeyError(error)) throw error;
 
-    const serverFieldKeys = await fetchServerFieldKeys(entityType);
+    assertMutationAuthCarrier(authCarrier);
+    const serverFieldKeys = await fetchServerFieldKeys(entityType, authCarrier);
+    assertMutationAuthCarrier(authCarrier);
     if (!serverFieldKeys.size) throw error;
 
     const retryPayload = payload.filter((field) => serverFieldKeys.has(field.field_key));

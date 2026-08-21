@@ -1,15 +1,26 @@
 import { useEffect, useMemo } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { formatPersonName } from '../../../lib/personName';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
-import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
 import {
+  assertActiveQueryCacheOwnerContext,
+  captureActiveQueryCacheOwnerContext,
+  getActiveQueryCacheOwner,
+  isActiveQueryCacheOwnerContext,
+} from '../../shared/query/queryClient';
+import { withReadDeadline } from '../../shared/network/readDeadline';
+import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
+import { detachObjectFromRequestCaches } from '../requests/objectRelationCache';
+import {
+  canRunDeferredNetworkWork,
+  canRunOutboxSync,
   enqueueObjectUpdate,
   enqueueTrashDelete,
-  getOfflineSnapshot,
   hasPendingOfflineUpdate,
   isOfflineLikeError,
   syncOfflineOutbox,
+  useOfflineSnapshot,
 } from '../../shared/offline/offlineStatus';
 import {
   createClientObject,
@@ -21,18 +32,250 @@ import {
   searchCompanyObjectsForOrder,
   updateClientObject,
 } from './api';
+import { buildClientObjectLocationSummary } from './addressing';
+
+const OBJECT_MUTATION_OWNER_CONTEXT = '__fieldWorkObjectMutationOwnerContext';
+
+function normalizeObjectListScope(value: any) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function findCachedClientCompanyId(queryClient: any, clientId: any) {
+  const targetClientId = String(clientId || '').trim();
+  if (!targetClientId) return '';
+
+  const detail: any = queryClient.getQueryData(queryKeys.clients.detail(targetClientId));
+  const detailCompanyId = normalizeObjectListScope(detail?.company_id || detail?.companyId);
+  if (detailCompanyId) return detailCompanyId;
+
+  const clientLists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  for (const [key, value] of clientLists) {
+    if (!Array.isArray(value) || !Array.isArray(key)) continue;
+    const client = value.find((row: any) => String(row?.id || '').trim() === targetClientId);
+    if (!client) continue;
+    const rowCompanyId = normalizeObjectListScope(client?.company_id || client?.companyId);
+    const sourceParams = key[2] && typeof key[2] === 'object' ? key[2] : {};
+    const keyCompanyId = normalizeObjectListScope(sourceParams?.companyId);
+    if (rowCompanyId || keyCompanyId) return rowCompanyId || keyCompanyId;
+  }
+
+  return '';
+}
+
+function findClientObjectsInCachedCompanySuperset(queryClient: any, clientId: any) {
+  const targetClientId = String(clientId || '').trim();
+  const targetCompanyId = findCachedClientCompanyId(queryClient, targetClientId);
+  if (!targetClientId || !targetCompanyId) return null;
+
+  let best: { rows: any[]; updatedAt: number } | null = null;
+  const entries = queryClient.getQueriesData({ queryKey: ['objects', 'by-company'] }) || [];
+  for (const [key, value] of entries) {
+    if (!Array.isArray(value) || !Array.isArray(key)) continue;
+    if (normalizeObjectListScope(key[2]) !== targetCompanyId) continue;
+    const rows = value.filter((row: any) => {
+      const rowCompanyId = normalizeObjectListScope(row?.company_id || row?.companyId);
+      if (rowCompanyId && rowCompanyId !== targetCompanyId) return false;
+      return String(row?.client_id || row?.clientId || '').trim() === targetClientId;
+    });
+    if (rows.length === 0) continue;
+    const updatedAt = Number(queryClient.getQueryState(key)?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) best = { rows, updatedAt };
+  }
+
+  return best?.rows || null;
+}
+
+function normalizeObjectSearchText(value: any) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('ru-RU')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+function cachedTextContainsAllTokens(value: any, search: any) {
+  const needle = normalizeObjectSearchText(search);
+  if (!needle) return true;
+  const haystack = normalizeObjectSearchText(value);
+  if (!haystack) return false;
+  return needle.split(/\s+/).every((token) => haystack.includes(token));
+}
+
+function rememberCachedClientName(
+  namesById: Map<string, string>,
+  client: any,
+  targetCompanyId: string,
+  keyCompanyId = '',
+) {
+  const clientId = String(client?.id || '').trim();
+  if (!clientId) return;
+  const rowCompanyId = normalizeObjectListScope(client?.company_id || client?.companyId);
+  if (rowCompanyId && rowCompanyId !== targetCompanyId) return;
+  if (keyCompanyId && keyCompanyId !== targetCompanyId) return;
+  const name = formatPersonName(client);
+  if (name) namesById.set(clientId, name);
+}
+
+function findCachedClientNamesById(queryClient: any, targetCompanyId: string) {
+  const namesById = new Map<string, string>();
+  const lists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  for (const [key, value] of lists) {
+    if (!Array.isArray(value) || !Array.isArray(key)) continue;
+    const sourceParams = key[2] && typeof key[2] === 'object' ? key[2] : {};
+    const keyCompanyId = normalizeObjectListScope(sourceParams?.companyId);
+    value.forEach((client: any) =>
+      rememberCachedClientName(namesById, client, targetCompanyId, keyCompanyId));
+  }
+
+  const details = queryClient.getQueriesData({ queryKey: ['clients', 'detail'] }) || [];
+  for (const [, client] of details) {
+    if (!client || typeof client !== 'object') continue;
+    rememberCachedClientName(namesById, client, targetCompanyId);
+  }
+  return namesById;
+}
+
+function mapCachedObjectSearchResult(
+  row: any,
+  clientName: string,
+  requestedClientId: string,
+) {
+  const clientId = String(row?.client_id || row?.clientId || '').trim();
+  const isSameClient = !!requestedClientId && clientId === requestedClientId;
+  const shortAddress =
+    String(row?.summary || '').trim() ||
+    buildClientObjectLocationSummary(row, { compact: true });
+  return {
+    objectId: String(row?.id || '').trim(),
+    clientId,
+    objectName: String(row?.name || row?.label || '').trim(),
+    clientName,
+    shortAddress,
+    score: isSameClient ? 1 : 0.8,
+    isSameClient,
+    country: String(row?.country || '').trim(),
+    region: String(row?.region || '').trim(),
+    district: String(row?.district || '').trim(),
+    city: String(row?.city || '').trim(),
+    street: String(row?.street || '').trim(),
+    house: String(row?.house || '').trim(),
+    postal_code: String(row?.postal_code || '').trim(),
+    floor: String(row?.floor || '').trim(),
+    entrance: String(row?.entrance || '').trim(),
+    apartment: String(row?.apartment || row?.office || '').trim(),
+    comment: String(row?.comment || row?.entrance_info || '').trim(),
+  };
+}
+
+function findObjectSearchInCachedCompanySuperset(queryClient: any, params: any) {
+  const requestedClientId = String(params?.clientId || '').trim();
+  const clientCompanyId = findCachedClientCompanyId(queryClient, requestedClientId);
+  const ownerCompanyId = normalizeObjectListScope(getActiveQueryCacheOwner()?.companyId);
+  if (clientCompanyId && ownerCompanyId && clientCompanyId !== ownerCompanyId) return null;
+  const targetCompanyId = clientCompanyId || ownerCompanyId;
+  if (!targetCompanyId) return null;
+
+  const namesByClientId = findCachedClientNamesById(queryClient, targetCompanyId);
+  const searchQuery = String(params?.query || '').trim();
+  const street = String(params?.street || '').trim();
+  const house = normalizeObjectSearchText(params?.house).replace(/\s+/g, '');
+  const city = String(params?.city || '').trim();
+  const limit = Number.isFinite(Number(params?.limit))
+    ? Math.min(Math.max(Number(params.limit), 1), 10)
+    : 6;
+
+  let best: { rows: any[]; updatedAt: number } | null = null;
+  const entries = queryClient.getQueriesData({ queryKey: ['objects', 'by-company'] }) || [];
+  for (const [key, value] of entries) {
+    if (!Array.isArray(key) || !Array.isArray(value)) continue;
+    if (normalizeObjectListScope(key[2]) !== targetCompanyId) continue;
+
+    const rows = value
+      .filter((row: any) => {
+        const rowCompanyId = normalizeObjectListScope(row?.company_id || row?.companyId);
+        if (rowCompanyId && rowCompanyId !== targetCompanyId) return false;
+        const clientId = String(row?.client_id || row?.clientId || '').trim();
+        const clientName =
+          formatPersonName(row?.client) || namesByClientId.get(clientId) || '';
+        const summary =
+          String(row?.summary || '').trim() ||
+          buildClientObjectLocationSummary(row, { compact: true });
+        const searchable = [
+          row?.name,
+          clientName,
+          summary,
+          row?.country,
+          row?.region,
+          row?.district,
+          row?.city,
+          row?.street,
+          row?.house,
+          row?.postal_code,
+          row?.floor,
+          row?.entrance,
+          row?.apartment,
+          row?.office,
+          row?.comment,
+        ].join(' ');
+        if (!cachedTextContainsAllTokens(searchable, searchQuery)) return false;
+        if (!cachedTextContainsAllTokens(row?.street, street)) return false;
+        if (!cachedTextContainsAllTokens(row?.city, city)) return false;
+        if (house) {
+          const rowHouse = normalizeObjectSearchText(row?.house).replace(/\s+/g, '');
+          if (rowHouse !== house) return false;
+        }
+        return true;
+      })
+      .map((row: any) => {
+        const clientId = String(row?.client_id || row?.clientId || '').trim();
+        return mapCachedObjectSearchResult(
+          row,
+          formatPersonName(row?.client) || namesByClientId.get(clientId) || '',
+          requestedClientId,
+        );
+      })
+      .filter((row: any) => row.objectId && row.clientId)
+      .sort((left: any, right: any) => {
+        if (left.isSameClient !== right.isSameClient) return left.isSameClient ? -1 : 1;
+        return right.score - left.score;
+      })
+      .slice(0, limit);
+
+    // Zero locally matched rows cannot prove an authoritative empty search;
+    // retain the remote error in that case instead of poisoning this key.
+    if (rows.length === 0) continue;
+    const updatedAt = Number(queryClient.getQueryState(key)?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) best = { rows, updatedAt };
+  }
+  return best?.rows || null;
+}
+
+function readCachedObjectSearchFallback(queryClient: any, queryKey: any, params: any) {
+  const exact = queryClient.getQueryData(queryKey);
+  if (Array.isArray(exact)) return exact;
+  return findObjectSearchInCachedCompanySuperset(queryClient, params) || undefined;
+}
 
 export function useClientObjects(clientId: any, options: any = {}) {
   const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.objects.byClient(clientId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await listClientObjects(String(clientId || ''));
+        return await withReadDeadline(
+          (readSignal) => listClientObjects(String(clientId || ''), readSignal),
+          {
+            label: 'Client objects',
+            signal,
+          },
+        );
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached = queryClient.getQueryData(queryKeys.objects.byClient(clientId));
-        return Array.isArray(cached) ? cached : [];
+        if (Array.isArray(cached)) return cached;
+        const derived = findClientObjectsInCachedCompanySuperset(queryClient, clientId);
+        if (derived) return derived;
+        throw error;
       }
     },
     enabled: !!clientId,
@@ -46,13 +289,20 @@ export function useCompanyObjects(companyId: any, options: any = {}) {
   const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.objects.byCompany(companyId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await listClientObjectsByCompany(String(companyId || ''));
+        return await withReadDeadline(
+          (readSignal) => listClientObjectsByCompany(String(companyId || ''), readSignal),
+          {
+            label: 'Company objects',
+            signal,
+          },
+        );
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const cached = queryClient.getQueryData(queryKeys.objects.byCompany(companyId));
-        return Array.isArray(cached) ? cached : [];
+        if (Array.isArray(cached)) return cached;
+        throw error;
       }
     },
     enabled: !!companyId,
@@ -109,9 +359,15 @@ export function useClientObject(objectId: any, options: any = {}) {
 
   return useQuery({
     queryKey: queryKeys.objects.detail(objectId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await getClientObjectById(String(objectId || ''));
+        return await withReadDeadline(
+          (readSignal) => getClientObjectById(String(objectId || ''), readSignal),
+          {
+            label: 'Object detail',
+            signal,
+          },
+        );
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const fromDetail = queryClient.getQueryData(queryKeys.objects.detail(objectId));
@@ -135,6 +391,8 @@ export function useClientObject(objectId: any, options: any = {}) {
 }
 
 export function useSearchCompanyObjectsForOrder(params: any = {}, options: any = {}) {
+  const queryClient = useQueryClient();
+  const network = useOfflineSnapshot();
   const {
     query = '',
     street = '',
@@ -150,13 +408,40 @@ export function useSearchCompanyObjectsForOrder(params: any = {}, options: any =
   };
 
   const hasEnoughInput = hasEnoughObjectSearchInput({ query, street, house });
+  const queryKey = queryKeys.objects.searchForOrder(params);
+  const canSearchNetwork = canRunDeferredNetworkWork(network);
+  const isRequested = options?.enabled !== false;
 
   return useQuery({
-    queryKey: queryKeys.objects.searchForOrder(params),
-    queryFn: () => searchCompanyObjectsForOrder(params),
-    enabled: hasEnoughInput,
+    queryKey,
+    queryFn: async ({ signal }) => {
+      if (!canRunDeferredNetworkWork()) {
+        const cached = readCachedObjectSearchFallback(queryClient, queryKey, params);
+        if (cached !== undefined) return cached;
+        const pausedError: any = new Error('Object search paused while offline or on a poor connection');
+        pausedError.code = 'OBJECT_SEARCH_NETWORK_PAUSED';
+        throw pausedError;
+      }
+      try {
+        return await withReadDeadline(
+          (readSignal) => searchCompanyObjectsForOrder(params, readSignal),
+          { label: 'Company object search', signal },
+        );
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached = readCachedObjectSearchFallback(queryClient, queryKey, params);
+        if (cached !== undefined) return cached;
+        throw error;
+      }
+    },
     staleTime: 15 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
+    // Search suggestions are deferred enrichment. Keep exact/superset cache
+    // visible on EDGE/offline and wait for a healthy connection before RPC.
+    enabled: hasEnoughInput && isRequested && canSearchNetwork,
+    placeholderData: () =>
+      readCachedObjectSearchFallback(queryClient, queryKey, params),
   });
 }
 
@@ -272,11 +557,14 @@ function acquireObjectsRealtimeSubscription(queryClient: any, companyId: any) {
 
 export function useClientObjectsRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
+  const network = useOfflineSnapshot();
+  const canUseRealtime =
+    network.isNetworkKnown && network.isOnline && !network.isPoorConnection;
 
   useEffect(() => {
-    if (!enabled || !companyId) return undefined;
+    if (!enabled || !companyId || !canUseRealtime) return undefined;
     return acquireObjectsRealtimeSubscription(queryClient, companyId);
-  }, [companyId, enabled, queryClient]);
+  }, [canUseRealtime, companyId, enabled, queryClient]);
 }
 
 function updateObjectInClientCaches(queryClient: any, objectId: string, patchOrUpdater: any) {
@@ -397,14 +685,30 @@ export function removeObjectFromQueryCaches(queryClient: any, objectId: any, cli
       };
     });
   }
+
+  detachObjectFromRequestCaches(queryClient, id);
 }
 
 export function useCreateClientObjectMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (payload: Record<string, any>) => createClientObject(payload),
-    onSuccess: (created: any) => {
+    mutationFn: (payload: Record<string, any>) => {
+      assertActiveQueryCacheOwnerContext(payload?.[OBJECT_MUTATION_OWNER_CONTEXT]);
+      return createClientObject(payload);
+    },
+    onMutate: (payload: Record<string, any>) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      Object.defineProperty(payload, OBJECT_MUTATION_OWNER_CONTEXT, {
+        value: ownerContext,
+        configurable: true,
+        enumerable: false,
+      });
+      return { ownerContext };
+    },
+    onSuccess: (created: any, _payload, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       const clientId = String(created?.client_id || '');
       if (clientId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
@@ -415,6 +719,9 @@ export function useCreateClientObjectMutation() {
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
+    onSettled: (_data, _error, payload: Record<string, any>) => {
+      if (payload && typeof payload === 'object') delete payload[OBJECT_MUTATION_OWNER_CONTEXT];
+    },
   });
 }
 
@@ -422,10 +729,13 @@ export function useUpdateClientObjectMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Record<string, any> }) => {
+    mutationFn: async (variables: { id: string; patch: Record<string, any> } & Record<any, any>) => {
+      assertActiveQueryCacheOwnerContext(variables?.[OBJECT_MUTATION_OWNER_CONTEXT]);
+      const { id, patch } = variables;
       const base = queryClient.getQueryData(queryKeys.objects.detail(id)) as Record<string, any> | null;
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      const online = onlineManager.isOnline() && canRunOutboxSync();
       if (!online) {
+        assertActiveQueryCacheOwnerContext(variables?.[OBJECT_MUTATION_OWNER_CONTEXT]);
         const queued = await enqueueObjectUpdate({ id, patch, base });
         return {
           ...(base || {}),
@@ -439,6 +749,7 @@ export function useUpdateClientObjectMutation() {
         return await updateClientObject(id, patch);
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
+        assertActiveQueryCacheOwnerContext(variables?.[OBJECT_MUTATION_OWNER_CONTEXT]);
         const queued = await enqueueObjectUpdate({ id, patch, base });
         return {
           ...(base || {}),
@@ -449,11 +760,20 @@ export function useUpdateClientObjectMutation() {
         };
       }
     },
-    onMutate: async ({ id, patch }: any) => {
+    onMutate: async (variables: any) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      Object.defineProperty(variables, OBJECT_MUTATION_OWNER_CONTEXT, {
+        value: ownerContext,
+        configurable: true,
+        enumerable: false,
+      });
+      const { id, patch } = variables;
       const detailKey = queryKeys.objects.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
       await queryClient.cancelQueries({ queryKey: ['objects'] });
       await queryClient.cancelQueries({ queryKey: ['clients'] });
+      assertActiveQueryCacheOwnerContext(ownerContext);
       const previous = queryClient.getQueryData(detailKey);
       const previousObjectLists = queryClient.getQueriesData({ queryKey: ['objects'] });
       const previousClientLists = queryClient.getQueriesData({ queryKey: ['clients'] });
@@ -461,11 +781,12 @@ export function useUpdateClientObjectMutation() {
         ...(prev || {}),
         ...(patch || {}),
         id,
-        __offlinePending: !onlineManager.isOnline(),
+        __offlinePending: !(onlineManager.isOnline() && canRunOutboxSync()),
       }));
-      return { previous, previousObjectLists, previousClientLists, detailKey };
+      return { previous, previousObjectLists, previousClientLists, detailKey, ownerContext };
     },
     onError: (_error, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (context?.previous) {
         queryClient.setQueryData(context.detailKey, context.previous);
       }
@@ -480,7 +801,8 @@ export function useUpdateClientObjectMutation() {
         });
       }
     },
-    onSuccess: (updated: any) => {
+    onSuccess: (updated: any, _variables, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       const clientId = String(updated?.client_id || '');
       if (updated?.id) {
         updateObjectQueryCaches(queryClient, updated.id, updated);
@@ -495,6 +817,11 @@ export function useUpdateClientObjectMutation() {
         syncOfflineOutbox(queryClient).catch(() => {});
       }
     },
+    onSettled: (_data, _error, variables: any) => {
+      if (variables && typeof variables === 'object') {
+        delete variables[OBJECT_MUTATION_OWNER_CONTEXT];
+      }
+    },
   });
 }
 
@@ -502,12 +829,18 @@ export function useDeleteClientObjectMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id }: { id: string }) => {
+    mutationFn: async (variables: { id: string } & Record<any, any>) => {
+      const ownerContext = variables?.[OBJECT_MUTATION_OWNER_CONTEXT];
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      const { id } = variables;
       const entityId = String(id || '');
       const base = queryClient.getQueryData(queryKeys.objects.detail(entityId)) as Record<string, any> | null;
-      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
-      if (!online || await hasPendingOfflineUpdate('object', entityId)) {
+      const online = onlineManager.isOnline() && canRunOutboxSync();
+      const hasPendingUpdate = await hasPendingOfflineUpdate('object', entityId);
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      if (!online || hasPendingUpdate) {
         await enqueueTrashDelete({ entity: 'object', id: entityId, base });
+        assertActiveQueryCacheOwnerContext(ownerContext);
         syncOfflineOutbox(queryClient).catch(() => {});
         return { queued: true };
       }
@@ -516,11 +849,23 @@ export function useDeleteClientObjectMutation() {
         return { queued: false };
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
+        assertActiveQueryCacheOwnerContext(ownerContext);
         await enqueueTrashDelete({ entity: 'object', id: entityId, base });
         return { queued: true };
       }
     },
-    onSuccess: (_result, variables: any) => {
+    onMutate: (variables: any) => {
+      const ownerContext = captureActiveQueryCacheOwnerContext();
+      assertActiveQueryCacheOwnerContext(ownerContext);
+      Object.defineProperty(variables, OBJECT_MUTATION_OWNER_CONTEXT, {
+        value: ownerContext,
+        configurable: true,
+        enumerable: false,
+      });
+      return { ownerContext };
+    },
+    onSuccess: (_result, variables: any, context: any) => {
+      if (!isActiveQueryCacheOwnerContext(context?.ownerContext)) return;
       if (variables?.clientId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(variables.clientId) });
         queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(variables.clientId) });
@@ -531,6 +876,11 @@ export function useDeleteClientObjectMutation() {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       queryClient.invalidateQueries({ queryKey: ['requests'] });
     },
+    onSettled: (_data, _error, variables: any) => {
+      if (variables && typeof variables === 'object') {
+        delete variables[OBJECT_MUTATION_OWNER_CONTEXT];
+      }
+    },
   });
 }
 
@@ -538,7 +888,11 @@ export async function ensureClientObjectPrefetch(queryClient: any, id: any) {
   if (!id) return null;
   return queryClient.ensureQueryData({
     queryKey: queryKeys.objects.detail(id),
-    queryFn: () => getClientObjectById(String(id || '')),
+    queryFn: ({ signal }) =>
+      withReadDeadline((readSignal) => getClientObjectById(String(id || ''), readSignal), {
+        label: 'Object detail prefetch',
+        signal,
+      }),
     staleTime: 60 * 1000,
   });
 }

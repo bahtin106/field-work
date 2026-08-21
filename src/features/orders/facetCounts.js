@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { getStatusDbAliases, normalizeOrderStatusFilterKey } from '../../../lib/orderFilters';
 import { supabase } from '../../../lib/supabase';
+import { withReadDeadline } from '../../shared/network/readDeadline';
 
 const EMPTY_COUNTS = Object.freeze({
   version: 0,
@@ -56,14 +57,16 @@ function addOrderTagCounts(target, tags) {
   });
 }
 
-export async function fetchAccessibleFeedCount() {
+export async function fetchAccessibleFeedCount(signal = undefined) {
   const aliases = getStatusDbAliases('feed');
   if (!aliases.length) return 0;
-  const { count, error } = await supabase
+  let query = supabase
     .from('orders_accessible')
     .select('id', { count: 'exact', head: true })
     .is('assigned_to', null)
     .in('status', aliases);
+  if (signal) query = query.abortSignal(signal);
+  const { count, error } = await query;
   if (error) throw error;
   return Number.isFinite(Number(count)) ? Number(count) : 0;
 }
@@ -77,10 +80,30 @@ function excludeFeedStatuses(query) {
   return query.or(`status.is.null,status.not.in.(${encoded})`);
 }
 
-async function fetchOrderFacetRows(scope) {
+function throwIfFacetReadAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Order facet read was aborted');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function isFacetRpcUnavailable(error) {
+  const code = String(error?.code || '').trim().toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    code === '42883' ||
+    code === 'PGRST202' ||
+    (message.includes('function') &&
+      (message.includes('does not exist') || message.includes('not found')))
+  );
+}
+
+async function fetchOrderFacetRows(scope, signal = undefined) {
   let userId = '';
   if (scope === 'my') {
     const { data: userData, error: userError } = await supabase.auth.getUser();
+    throwIfFacetReadAborted(signal);
     if (userError) throw userError;
     userId = String(userData?.user?.id || '').trim();
     if (!userId) return [];
@@ -95,7 +118,9 @@ async function fetchOrderFacetRows(scope) {
     if (scope === 'my') query = query.eq('assigned_to', userId);
     query = excludeFeedStatuses(query);
 
-    const { data, error } = await query.range(from, from + FACET_FALLBACK_PAGE_SIZE - 1);
+    query = query.range(from, from + FACET_FALLBACK_PAGE_SIZE - 1);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
     if (error) throw error;
     const page = Array.isArray(data) ? data : [];
     rows.push(...page);
@@ -111,10 +136,12 @@ async function fetchOrderFacetRows(scope) {
     const links = [];
     for (let offset = 0; offset < uniqueOwnerIds.length; offset += FACET_RELATION_CHUNK_SIZE) {
       const chunk = uniqueOwnerIds.slice(offset, offset + FACET_RELATION_CHUNK_SIZE);
-      const { data, error } = await supabase
+      let query = supabase
         .from(table)
         .select(`${ownerColumn},tag_id`)
         .in(ownerColumn, chunk);
+      if (signal) query = query.abortSignal(signal);
+      const { data, error } = await query;
       if (error) throw error;
       links.push(...(Array.isArray(data) ? data : []));
     }
@@ -125,11 +152,13 @@ async function fetchOrderFacetRows(scope) {
     const tagValueById = new Map();
     for (let offset = 0; offset < tagIds.length; offset += FACET_RELATION_CHUNK_SIZE) {
       const chunk = tagIds.slice(offset, offset + FACET_RELATION_CHUNK_SIZE);
-      const { data, error } = await supabase
+      let query = supabase
         .from('company_tags')
         .select('id,value,tag_type')
         .eq('tag_type', tagType)
         .in('id', chunk);
+      if (signal) query = query.abortSignal(signal);
+      const { data, error } = await query;
       if (error) throw error;
       (Array.isArray(data) ? data : []).forEach((tag) => {
         const id = String(tag?.id || '').trim();
@@ -177,11 +206,15 @@ export async function fetchOrderFacetCounts(
   scope = 'all',
   statusOptions = [],
   { verifyClientTags = false, verifyObjectTags = false, verifyObjects = false } = {},
+  signal = undefined,
 ) {
   const normalizedScope = scope === 'my' ? 'my' : 'all';
-  const { data, error } = await supabase.rpc('get_order_filter_facet_counts', {
+  let query = supabase.rpc('get_order_filter_facet_counts', {
     p_scope: normalizedScope,
   });
+  if (signal) query = query.abortSignal(signal);
+  const { data, error } = await query;
+  if (error && !isFacetRpcUnavailable(error)) throw error;
   if (!error) {
     const remoteCounts = normalizeFacetCounts(data) || EMPTY_COUNTS;
     const needsTagVerification =
@@ -197,7 +230,7 @@ export async function fetchOrderFacetCounts(
   // Keeps a new app release compatible while the database migration is still
   // rolling out or when an older RPC cannot expose related tags. The fallback
   // is exact and paginated, but the RPC remains the normal production path.
-  const rows = await fetchOrderFacetRows(normalizedScope);
+  const rows = await fetchOrderFacetRows(normalizedScope, signal);
   return buildOrderFacetCounts(rows, statusOptions);
 }
 
@@ -305,12 +338,21 @@ export function useOrderFacetCounts(
       verifyObjectTags,
       verifyObjects,
     ],
-    queryFn: () =>
-      fetchOrderFacetCounts(normalizedScope, statusOptions, {
-        verifyClientTags,
-        verifyObjectTags,
-        verifyObjects,
-      }),
+    queryFn: ({ signal }) =>
+      withReadDeadline(
+        (readSignal) =>
+          fetchOrderFacetCounts(
+            normalizedScope,
+            statusOptions,
+            {
+              verifyClientTags,
+              verifyObjectTags,
+              verifyObjects,
+            },
+            readSignal,
+          ),
+        { label: 'Order filter facets', signal },
+      ),
     enabled: enabled && normalizedScope != null,
     staleTime: FACET_COUNTS_STALE_TIME_MS,
     retry: 1,

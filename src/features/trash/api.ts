@@ -1,10 +1,16 @@
 import { supabase } from '../../../lib/supabase';
 import { APP_RUNTIME_CONFIG } from '../../../config/appRuntime';
 import {
+  canRunOutboxSync,
   enqueueTrashRestore,
-  getOfflineSnapshot,
   isOfflineLikeError,
 } from '../../shared/offline/offlineStatus';
+import {
+  assertMutationAuthCarrier,
+  isActiveMutationAuthCarrier,
+  pinMutationAuthorization,
+  type MutationAuthCarrier,
+} from '../../shared/security/mutationAuthCarrier';
 
 export type TrashEntityType = 'order' | 'client' | 'client_object' | 'media';
 
@@ -74,6 +80,24 @@ export type TrashMediaOrigin = {
   trash_entry_id: string | null;
 };
 
+export type TrashMutationOwnerContext = MutationAuthCarrier;
+
+export function isActiveTrashMutationOwnerContext(
+  context: TrashMutationOwnerContext | null | undefined,
+) {
+  return isActiveMutationAuthCarrier(context, { requireOfflineOwner: true });
+}
+
+function assertTrashMutationOwnerContext(
+  context: TrashMutationOwnerContext | null | undefined,
+) {
+  return assertMutationAuthCarrier(context, { requireOfflineOwner: true });
+}
+
+function resolveTrashMutationOwnerContext(context: TrashMutationOwnerContext) {
+  return assertTrashMutationOwnerContext(context);
+}
+
 export function buildTrashMediaUrl(item: Pick<TrashListItem, 'id' | 'entity_type'> | null | undefined, {
   raw = false,
   width = 512,
@@ -103,14 +127,16 @@ export async function listTrashItems({ search = '', filters = {}, sort = 'purge_
   sort?: 'purge_at' | 'deleted_desc' | 'title';
   limit?: number;
   offset?: number;
-} = {}) {
-  const { data, error } = await supabase.rpc('list_trash_items_v2', {
+} = {}, signal?: AbortSignal) {
+  let request = supabase.rpc('list_trash_items_v2', {
     p_search: String(search || '').trim() || null,
     p_filters: compactFilters(filters),
     p_sort: sort,
     p_limit: limit,
     p_offset: offset,
   });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return (Array.isArray(data) ? data : []) as TrashListItem[];
 }
@@ -118,80 +144,140 @@ export async function listTrashItems({ search = '', filters = {}, sort = 'purge_
 export async function listTrashItemIds({ search = '', filters = {} }: {
   search?: string;
   filters?: TrashFilters;
-} = {}) {
-  const { data, error } = await supabase.rpc('list_trash_item_ids_v2', {
+} = {}, signal?: AbortSignal) {
+  let request = supabase.rpc('list_trash_item_ids_v2', {
     p_search: String(search || '').trim() || null,
     p_filters: compactFilters(filters),
   });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return (Array.isArray(data) ? data : []).map(String).filter(Boolean);
 }
 
-export async function getTrashFilterOptions() {
-  const { data, error } = await supabase.rpc('get_trash_filter_options');
+export async function getTrashFilterOptions(signal?: AbortSignal) {
+  let request = supabase.rpc('get_trash_filter_options');
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return (data && typeof data === 'object' ? data : {}) as TrashFilterOptions;
 }
 
-export async function getTrashItem(id: string) {
-  const { data, error } = await supabase.rpc('get_trash_item', { p_id: id });
+export async function getTrashItem(id: string, signal?: AbortSignal) {
+  let request = supabase.rpc('get_trash_item', { p_id: id });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return data as TrashListItem & { data: Record<string, unknown> };
 }
 
-export async function getTrashMediaOrigin(id: string) {
-  const { data, error } = await supabase.rpc('get_trash_media_origin', { p_id: id });
+export async function getTrashMediaOrigin(id: string, signal?: AbortSignal) {
+  let request = supabase.rpc('get_trash_media_origin', { p_id: id });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
   if (error) throw error;
   return data as TrashMediaOrigin;
 }
 
-export async function restoreTrashItem(id: string) {
-  if (!getOfflineSnapshot().isOnline) {
+export async function restoreTrashItem(id: string, context: TrashMutationOwnerContext) {
+  const ownerContext = resolveTrashMutationOwnerContext(context);
+  const assertOwnerContext = () => assertTrashMutationOwnerContext(ownerContext);
+  assertOwnerContext();
+  if (!canRunOutboxSync()) {
     await enqueueTrashRestore(id);
+    assertOwnerContext();
     return { queued: true };
   }
-  const { error } = await supabase.rpc('restore_trash_item', { p_id: id });
+  const request = pinMutationAuthorization(
+    supabase.rpc('restore_trash_item', { p_id: id }),
+    ownerContext,
+    { requireOfflineOwner: true },
+  );
+  const { error } = await request;
+  assertOwnerContext();
   if (!error) return { queued: false };
   if (!isOfflineLikeError(error)) throw error;
   await enqueueTrashRestore(id);
+  assertOwnerContext();
   return { queued: true };
 }
 
-export async function purgeTrashItem(id: string) {
-  if (!getOfflineSnapshot().isOnline) {
+export async function purgeTrashItem(id: string, context: TrashMutationOwnerContext) {
+  const ownerContext = resolveTrashMutationOwnerContext(context);
+  assertTrashMutationOwnerContext(ownerContext);
+  if (!canRunOutboxSync()) {
     throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
   }
-  const { error } = await supabase.rpc('purge_trash_item', { p_id: id });
+  const request = pinMutationAuthorization(
+    supabase.rpc('purge_trash_item', { p_id: id }),
+    ownerContext,
+    { requireOfflineOwner: true },
+  );
+  const { error } = await request;
+  assertTrashMutationOwnerContext(ownerContext);
   if (error) throw error;
   return true;
 }
 
-export async function restoreTrashItems(ids: string[]) {
+export async function restoreTrashItems(
+  ids: string[],
+  context: TrashMutationOwnerContext,
+) {
   const normalizedIds = Array.from(new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean)));
   if (!normalizedIds.length) return { queued: false, count: 0 };
-  if (!getOfflineSnapshot().isOnline) {
+  const ownerContext = resolveTrashMutationOwnerContext(context);
+  const assertOwnerContext = () => assertTrashMutationOwnerContext(ownerContext);
+  assertOwnerContext();
+  if (!canRunOutboxSync()) {
     await Promise.all(normalizedIds.map((id) => enqueueTrashRestore(id)));
+    assertOwnerContext();
     return { queued: true, count: normalizedIds.length };
   }
-  const { data, error } = await supabase.rpc('restore_trash_items', { p_ids: normalizedIds });
+  const request = pinMutationAuthorization(
+    supabase.rpc('restore_trash_items', { p_ids: normalizedIds }),
+    ownerContext,
+    { requireOfflineOwner: true },
+  );
+  const { data, error } = await request;
+  assertOwnerContext();
   if (!error) return { queued: false, count: Number(data || normalizedIds.length) };
   if (!isOfflineLikeError(error)) throw error;
   await Promise.all(normalizedIds.map((id) => enqueueTrashRestore(id)));
+  assertOwnerContext();
   return { queued: true, count: normalizedIds.length };
 }
 
-export async function purgeTrashItems(ids: string[]) {
+export async function purgeTrashItems(
+  ids: string[],
+  context: TrashMutationOwnerContext,
+) {
   const normalizedIds = Array.from(new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean)));
   if (!normalizedIds.length) return 0;
-  if (!getOfflineSnapshot().isOnline) throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
-  const { data, error } = await supabase.rpc('purge_trash_items', { p_ids: normalizedIds });
+  const ownerContext = resolveTrashMutationOwnerContext(context);
+  assertTrashMutationOwnerContext(ownerContext);
+  if (!canRunOutboxSync()) throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
+  const request = pinMutationAuthorization(
+    supabase.rpc('purge_trash_items', { p_ids: normalizedIds }),
+    ownerContext,
+    { requireOfflineOwner: true },
+  );
+  const { data, error } = await request;
+  assertTrashMutationOwnerContext(ownerContext);
   if (error) throw error;
   return Number(data || normalizedIds.length);
 }
 
-export async function purgeAllTrashItems() {
-  if (!getOfflineSnapshot().isOnline) throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
-  const { data, error } = await supabase.rpc('purge_all_trash_items');
+export async function purgeAllTrashItems(context: TrashMutationOwnerContext) {
+  const ownerContext = resolveTrashMutationOwnerContext(context);
+  assertTrashMutationOwnerContext(ownerContext);
+  if (!canRunOutboxSync()) throw new Error('TRASH_PURGE_REQUIRES_ONLINE');
+  const request = pinMutationAuthorization(
+    supabase.rpc('purge_all_trash_items'),
+    ownerContext,
+    { requireOfflineOwner: true },
+  );
+  const { data, error } = await request;
+  assertTrashMutationOwnerContext(ownerContext);
   if (error) throw error;
   return Number(data || 0);
 }

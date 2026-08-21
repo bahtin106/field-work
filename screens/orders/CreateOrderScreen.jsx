@@ -38,7 +38,11 @@ import { useDepartments as useDepartmentsHook } from '../../components/hooks/use
 import { usePermissions } from '../../lib/permissions';
 import { formatPersonName } from '../../lib/personName';
 import { supabase } from '../../lib/supabase';
-import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import {
+  fetchWorkTypes,
+  getMyCompanyId,
+  WORK_TYPES_NETWORK_DEFERRED_CODE,
+} from '../../lib/workTypes';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -75,6 +79,7 @@ import {
   searchCompanyObjectsForOrder,
 } from '../../src/features/objects/api';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import { useRequestExecutors } from '../../src/features/requests/queries';
 import { parseClientPrefillFromSearch } from '../../src/features/clients/prefillFromSearch';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import {
@@ -118,6 +123,11 @@ import {
 import { buildAutoRequestTitle, resolveRequestTitle } from '../../src/features/requests/title';
 import { buildAssigneeSelectItems } from '../../src/features/requests/assigneeSelect';
 import { registerBottomNavigationGuard } from '../../src/shared/navigation/bottomNavigationGuard';
+import {
+  canRunDeferredNetworkWork,
+  useOfflineSnapshot,
+} from '../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
 
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: false },
@@ -126,7 +136,24 @@ const DEFAULT_FIELDS = [
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 
 const AUTO_FILLED_ORDER_FIELDS = new Set(['title']);
+const OPTIONAL_CREATE_ORDER_FIELDS = new Set(['comment']);
 const OBJECT_SEARCH_DEBOUNCE_MS = 150;
+const ADVISORY_DUPLICATE_LOOKUP_TIMEOUT_MS = 2_500;
+
+async function findAdvisoryCompanyObjectMatches(params) {
+  if (!canRunDeferredNetworkWork()) return [];
+  return withReadDeadline(
+    async (signal) => {
+      const exactMatches = await findExactCompanyObjectForOrder(params, signal);
+      if (exactMatches.length) return exactMatches;
+      return searchCompanyObjectsForOrder({ ...params, limit: 1 }, signal);
+    },
+    {
+      label: 'Advisory duplicate object lookup',
+      timeoutMs: ADVISORY_DUPLICATE_LOOKUP_TIMEOUT_MS,
+    },
+  );
+}
 
 const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
   'fio',
@@ -141,7 +168,6 @@ const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
   'floor',
   'entrance',
   'apartment',
-  'comment',
   'geo_lat',
   'geo_lng',
 ]);
@@ -218,7 +244,12 @@ function sanitizeVisibleText(value, fallback = '') {
 function normalizeCreateOrderField(field) {
   if (!field) return field;
   const fieldKey = String(field.field_key || '').trim();
-  if (!AUTO_FILLED_ORDER_FIELDS.has(fieldKey)) return field;
+  if (
+    !AUTO_FILLED_ORDER_FIELDS.has(fieldKey) &&
+    !OPTIONAL_CREATE_ORDER_FIELDS.has(fieldKey)
+  ) {
+    return field;
+  }
   return {
     ...field,
     required: false,
@@ -275,6 +306,8 @@ function CreateOrderContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { profile, user } = useAuthContext();
+  const offlineSnapshot = useOfflineSnapshot();
+  const canRefreshWorkTypes = canRunDeferredNetworkWork(offlineSnapshot);
   const queryClient = useQueryClient();
   const navigation = useNavigation();
   const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
@@ -330,8 +363,6 @@ function CreateOrderContent() {
   const [suggestedMatchingSource, setSuggestedMatchingSource] = useState(null);
   const [ignoredMatchSignature, setIgnoredMatchSignature] = useState('');
   const [urgent, setUrgent] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [usersLoading, setUsersLoading] = useState(false);
   const [toFeed, setToFeed] = useState(false);
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
@@ -358,6 +389,27 @@ function CreateOrderContent() {
   const [draftRestoreVisible, setDraftRestoreVisible] = useState(false);
   const [savedDraft, setSavedDraft] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
+  const executorsQuery = useRequestExecutors({
+    companyId,
+    enabled: !!companyId && has('canCreateOrders'),
+    // Preserve cached rows during a same-company refresh without ever using
+    // a previous company's rows as placeholder data.
+    placeholderData: () => undefined,
+  });
+  const users = useMemo(() => {
+    const scopedCompanyId = String(companyId || '').trim();
+    if (!scopedCompanyId) return [];
+    return (Array.isArray(executorsQuery.data) ? executorsQuery.data : [])
+      .filter((profileItem) =>
+        ['worker', 'dispatcher', 'admin'].includes(String(profileItem?.role || '').trim()),
+      )
+      .map((profileItem) => ({
+        ...profileItem,
+        company_id: String(profileItem?.company_id || '').trim() || scopedCompanyId,
+      }))
+      .sort((left, right) => formatPersonName(left).localeCompare(formatPersonName(right)));
+  }, [companyId, executorsQuery.data]);
+  const usersLoading = executorsQuery.isLoading && users.length === 0;
   const statusSystem = useCompanyOrderStatuses(companyId);
   const { departments } = useDepartmentsHook({
     companyId,
@@ -1057,15 +1109,14 @@ function CreateOrderContent() {
     clearBanner();
     setFieldErrors({});
 
-    if (draftClientObject && !selectedClientId && hasEnoughObjectSearchInput(globalDraftSearchParams)) {
+    if (
+      draftClientObject &&
+      !selectedClientId &&
+      hasEnoughObjectSearchInput(globalDraftSearchParams) &&
+      canRunDeferredNetworkWork()
+    ) {
       try {
-        const exactMatches = await findExactCompanyObjectForOrder(globalDraftSearchParams);
-        const searchResults = exactMatches.length
-          ? exactMatches
-          : await searchCompanyObjectsForOrder({
-              ...globalDraftSearchParams,
-              limit: 1,
-            });
+        const searchResults = await findAdvisoryCompanyObjectMatches(globalDraftSearchParams);
         const matchingObject = searchResults[0] || null;
         const matchSignature = matchingObject
           ? `global:${matchingObject.clientId}:${matchingObject.objectId}:${globalDraftSearchParams.query}:${globalDraftSearchParams.street}:${globalDraftSearchParams.house}`
@@ -1422,26 +1473,6 @@ function CreateOrderContent() {
       });
     })();
 
-    const loadUsers = async () => {
-      if (!companyId) {
-        if (mounted) setUsers([]);
-        return;
-      }
-      if (mounted) setUsersLoading(true);
-      try {
-        const { data: userList, error } = await supabase
-          .from('profiles')
-          .select('id, first_name, middle_name, last_name, role, department_id, email, is_admin_blocked, license_state')
-          .eq('company_id', companyId)
-          .in('role', ['worker', 'dispatcher', 'admin'])
-          .order('full_name', { ascending: true, nullsFirst: false });
-        if (!error && mounted) setUsers(userList || []);
-      } finally {
-        if (mounted) setUsersLoading(false);
-      }
-    };
-    loadUsers();
-
     // Prompt to restore a local draft after initial screen setup.
     (async () => {
       const draft = await loadDraft();
@@ -1476,12 +1507,19 @@ function CreateOrderContent() {
     let alive = true;
     (async () => {
       try {
-        const cid = await getMyCompanyId();
+        const cachedCompanyId = String(companyId || profile?.company_id || '').trim();
+        const cid = cachedCompanyId || (canRefreshWorkTypes ? await getMyCompanyId() : '');
         if (!alive) return;
         if (cid) {
-          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid, {
+            deferNetworkWhenConstrained: true,
+          });
           if (!alive) return;
-          setUseWorkTypesFlag(!!flag);
+          setUseWorkTypesFlag(
+            typeof companySettings?.use_work_types === 'boolean'
+              ? companySettings.use_work_types
+              : !!flag,
+          );
           setWorkTypes(types || []);
           setWorkTypeId((prev) => {
             if (!flag || !prev) return null;
@@ -1489,13 +1527,14 @@ function CreateOrderContent() {
           });
         }
       } catch (e) {
+        if (e?.code === WORK_TYPES_NETWORK_DEFERRED_CODE) return;
         console.warn('[CreateOrder] workTypes bootstrap failed:', e?.message || e);
       }
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [canRefreshWorkTypes, companyId, companySettings?.use_work_types, profile?.company_id]);
 
   const renderTextField = useCallback(
     ({
@@ -1879,7 +1918,7 @@ function CreateOrderContent() {
             placeholder: t('create_order_placeholder_description'),
             value: description,
             onChangeText: setDescription,
-            multiline: false,
+            multiline: true,
             required: isFieldRequired('comment'),
           });
         case 'start_price':
@@ -2878,16 +2917,11 @@ function CreateOrderContent() {
       };
       if (
         clientObjectEditorMode !== 'update' &&
-        hasEnoughObjectSearchInput(objectSearchParams)
+        hasEnoughObjectSearchInput(objectSearchParams) &&
+        canRunDeferredNetworkWork()
       ) {
         try {
-          const exactMatches = await findExactCompanyObjectForOrder(objectSearchParams);
-          const searchResults = exactMatches.length
-            ? exactMatches
-            : await searchCompanyObjectsForOrder({
-                ...objectSearchParams,
-                limit: 1,
-              });
+          const searchResults = await findAdvisoryCompanyObjectMatches(objectSearchParams);
           const matchingObject = searchResults.find(
             (item) => String(item?.objectId || '') !== String(selectedClientObjectId || ''),
           );

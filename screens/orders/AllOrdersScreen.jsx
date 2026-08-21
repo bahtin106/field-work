@@ -90,13 +90,12 @@ import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
 import { matchesSearch } from '../../src/shared/search/matching';
 import { buildRequestSearchIndex } from '../../src/features/requests/search';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { useOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
+import { withReadDeadline } from '../../src/shared/network/readDeadline';
 import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
-import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 
 const EMPTY_ARRAY = [];
-const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
-const PERM_TTL_MS = 10 * 60 * 1000;
 const ALL_ORDERS_PERMISSION_KEY = 'canViewAllOrders';
 const ALL_ORDERS_ROUTE = '/orders/all-orders';
 const ORDERS_HOME_ROUTE = '/orders';
@@ -200,40 +199,6 @@ const ORDER_FILTER_DEFAULTS = {
   sumMin: '',
   sumMax: '',
 };
-
-async function checkCanViewAll() {
-  try {
-    const { data: userRes } = await supabase.auth.getUser();
-    const uid = userRes?.user?.id;
-    if (!uid) return false;
-
-    const { data: me, error: profileError } = await supabase
-      .from('profiles')
-      .select('role, company_id')
-      .eq('id', uid)
-      .maybeSingle();
-    if (profileError || !me?.role || !me?.company_id) return null;
-
-    const { data: perm, error: permError } = await supabase
-      .from('app_role_permissions')
-      .select('value')
-      .eq('company_id', me.company_id)
-      .eq('role', me.role)
-      .eq('key', ALL_ORDERS_PERMISSION_KEY)
-      .maybeSingle();
-    if (permError) return null;
-
-    if (perm?.value === null || perm?.value === undefined) return true;
-    if (typeof perm.value === 'boolean') return perm.value;
-    if (typeof perm.value === 'number') return perm.value === 1;
-    if (typeof perm.value === 'string') {
-      return ['1', 'true', 't', 'yes', 'y'].includes(perm.value.trim().toLowerCase());
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 function createOrderFilterDefaults() {
   return {
@@ -477,33 +442,23 @@ function buildScopedStorageKey(prefix, scopeKey) {
 function AllOrdersContent() {
   trackRender(ALL_ORDERS_SCREEN_KEY, ALL_ORDERS_RENDER_WARN_THRESHOLD);
 
-  const [allowed, setAllowed] = useState(() => {
-    const rec = PERM_CACHE.canViewAll;
-    return rec && Date.now() - (rec.ts || 0) < PERM_TTL_MS ? rec.value : null;
-  });
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const ok = await checkCanViewAll();
-        if (!alive) return;
-        setAllowed(ok);
-        PERM_CACHE.canViewAll = { value: ok, ts: Date.now() };
-      } catch {}
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const { theme } = useTheme();
   const { width: windowWidth } = useWindowDimensions();
   const { t, locale } = useTranslation();
-  const { has, loading: permLoading } = usePermissions();
+  const {
+    has,
+    loading: permLoading,
+    role: permissionRole,
+    roleAuthoritative,
+    source: permissionSource,
+  } = usePermissions();
   const { profile, user } = useAuthContext();
+  const offlineSnapshot = useOfflineSnapshot();
+  const networkRefreshable =
+    offlineSnapshot.isNetworkKnown &&
+    offlineSnapshot.isOnline &&
+    !offlineSnapshot.isPoorConnection;
   const queryClient = useQueryClient();
-  const offlineMode = !getOfflineSnapshot().isOnline;
   const authAccountType = String(user?.user_metadata?.account_type || '').trim().toLowerCase();
   const isSoloAdmin =
     String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
@@ -514,16 +469,14 @@ function AllOrdersContent() {
     () => new Set(getStatusDbAliases('feed').map((value) => String(value).trim())),
     [],
   );
-  const permissionByRole = !permLoading ? has(ALL_ORDERS_PERMISSION_KEY) : null;
-  const isExplicitlyDeniedOnline =
-    !offlineMode && allowed === false && permissionByRole === false;
-  const effectiveAllowed = offlineMode
-    ? true
-    : allowed === true || permissionByRole === true
-      ? true
-      : isExplicitlyDeniedOnline
-        ? false
-        : null;
+  const hasScopedPermissionDecision =
+    permissionSource === 'cache' || permissionSource === 'cloud';
+  const effectiveAllowed = permLoading
+    ? null
+    : hasScopedPermissionDecision ||
+        (roleAuthoritative && permissionRole === 'admin')
+      ? has(ALL_ORDERS_PERMISSION_KEY)
+      : false;
 
   useEffect(() => {
     markScreenMount(ALL_ORDERS_SCREEN_KEY);
@@ -1005,6 +958,8 @@ function AllOrdersContent() {
     fetchNextPage,
     isFetchingNextPage,
     isError: requestsError,
+    isSuccess: requestsSuccess,
+    isPlaceholderData: requestsPlaceholder,
   } = useAllRequests(allRequestsParams, { enabled: requestsEnabled });
 
   const previousStatusFilterRef = useRef(effectiveStatusFilter);
@@ -1021,10 +976,17 @@ function AllOrdersContent() {
     !isSoloAdmin &&
     effectiveAllowed === true &&
     (orders.length > 0 || requestItems.some((item) => String(item?.assigned_to || '').trim()));
-  const { data: executorsData } = useRequestExecutors({ enabled: filterDataEnabled || shouldLoadExecutorsForCards });
+  const { data: executorsData } = useRequestExecutors({
+    companyId,
+    enabled: Boolean(companyId && (filterDataEnabled || shouldLoadExecutorsForCards)),
+    placeholderData: () => undefined,
+  });
   const executors = useMemo(() => executorsData ?? EMPTY_ARRAY, [executorsData]);
 
-  useRequestRealtimeSync({ enabled: !isSoloAdmin && effectiveAllowed === true, companyId });
+  useRequestRealtimeSync({
+    enabled: networkRefreshable && !isSoloAdmin && effectiveAllowed === true,
+    companyId,
+  });
   const listLoading = loading || !requestsEnabled;
 
   useEffect(() => {
@@ -1058,15 +1020,30 @@ function AllOrdersContent() {
     const executorsSignature = Array.isArray(executors)
       ? executors.map((item) => `${item?.id || ''}:${item?.full_name || ''}:${item?.email || ''}`).join('|')
       : '';
-    const signature = `${requestsSignature}::${executorsSignature}`;
-    if (lastItemsSignatureRef.current !== signature) {
+    const signature = `${JSON.stringify(allRequestsQueryKey)}::${requestsSignature}::${executorsSignature}`;
+    // Keep the instant persisted snapshot visible while the exact query is
+    // pending or has failed on a constrained link. An empty list is
+    // authoritative only after this exact, non-placeholder query succeeds.
+    const canApplyRequestItems =
+      !requestsPlaceholder && (requestItems.length > 0 || requestsSuccess);
+    if (canApplyRequestItems && lastItemsSignatureRef.current !== signature) {
       lastItemsSignatureRef.current = signature;
       setOrders(enrichOrdersWithKnownExecutorRows(requestItems, executors));
     }
-    setLoading(requestsLoading && requestItems.length === 0);
+    setLoading(requestsLoading && requestItems.length === 0 && orders.length === 0);
     setHasMore(!!hasNextPage);
     setLoadingMore(isFetchingNextPage);
-  }, [executors, hasNextPage, isFetchingNextPage, requestItems, requestsLoading]);
+  }, [
+    allRequestsQueryKey,
+    executors,
+    hasNextPage,
+    isFetchingNextPage,
+    orders.length,
+    requestItems,
+    requestsLoading,
+    requestsPlaceholder,
+    requestsSuccess,
+  ]);
 
   const firstContentMarkedRef = useRef(false);
   useEffect(() => {
@@ -1235,8 +1212,10 @@ function AllOrdersContent() {
     if (!isFeedFeatureEnabled) return undefined;
     if (!isFocused) return undefined;
     if (effectiveAllowed !== true) return undefined;
+    if (!networkRefreshable) return undefined;
     if (loading && orders.length === 0) return undefined;
 
+    const controller = new AbortController();
     const prefetchFeed = async () => {
       const cachedRows = scopedFeedIndicatorCache.rows;
       if (Array.isArray(cachedRows)) {
@@ -1245,7 +1224,10 @@ function AllOrdersContent() {
 
       let uid = String(user?.id || profile?.id || '').trim();
       if (!uid) {
-        const { data: sessionData } = await supabase.auth.getSession();
+        const { data: sessionData } = await withReadDeadline(
+          supabase.auth.getSession(),
+          { label: 'All orders feed session', signal: controller.signal },
+        );
         uid = String(sessionData?.session?.user?.id || '').trim();
       }
       if (!uid) return;
@@ -1254,14 +1236,24 @@ function AllOrdersContent() {
       feedMetaRequestSeqRef.current = requestSeq;
       try {
         const [data, exactCount] = await Promise.all([
-          listRequests({
-            scope: 'all',
-            status: 'feed',
-            userId: uid,
-            page: 1,
-            pageSize: ALL_ORDERS_FEED_PREVIEW_SIZE,
-          }),
-          fetchAccessibleFeedCount().catch(() => null),
+          withReadDeadline(
+            (signal) =>
+              listRequests(
+                {
+                  scope: 'all',
+                  status: 'feed',
+                  userId: uid,
+                  page: 1,
+                  pageSize: ALL_ORDERS_FEED_PREVIEW_SIZE,
+                },
+                signal,
+              ),
+            { label: 'All orders feed preview', signal: controller.signal },
+          ),
+          withReadDeadline(
+            (signal) => fetchAccessibleFeedCount(signal),
+            { label: 'All orders feed count', signal: controller.signal },
+          ).catch(() => null),
         ]);
         if (feedMetaRequestSeqRef.current !== requestSeq) return;
         scopedFeedIndicatorCache.rows = data;
@@ -1280,6 +1272,7 @@ function AllOrdersContent() {
       });
     }, ALL_ORDERS_FEED_PREFETCH_DELAY_MS);
     return () => {
+      controller.abort();
       clearTimeout(timer);
       try {
         task?.cancel?.();
@@ -1290,6 +1283,7 @@ function AllOrdersContent() {
     isFeedFeatureEnabled,
     isFocused,
     loading,
+    networkRefreshable,
     orders.length,
     profile?.id,
     scopedFeedIndicatorCache,
@@ -1867,7 +1861,11 @@ function AllOrdersContent() {
     [feedTotalCount],
   );
   const ordersFacetCounts = useOrderFacetCounts(filteredOrders, panelStatusOptions, {
-    enabled: requestsEnabled && effectiveAllowed === true && !statusSystem.isLoading,
+    enabled:
+      networkRefreshable &&
+      requestsEnabled &&
+      effectiveAllowed === true &&
+      !statusSystem.isLoading,
     scope: 'all',
     scopeKey: initialAllOrdersScopeKey,
     statusOverrides: allOrdersFeedFacetOverride,

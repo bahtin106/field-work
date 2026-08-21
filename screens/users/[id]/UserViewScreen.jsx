@@ -39,6 +39,7 @@ import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useOfflineSnapshot } from '../../../src/shared/offline/offlineStatus';
 import { useSubscriptionGuard } from '../../../hooks/useSubscriptionGuard';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
+import { useSuperAdminAccess } from '../../../hooks/useSuperAdminAccess';
 import { useTheme } from '../../../theme';
 
 function withAlpha(color, a) {
@@ -56,7 +57,7 @@ function withAlpha(color, a) {
   return `rgba(0,0,0,${a})`;
 }
 
-export default function UserView() {
+export default function UserView({ privilegedAdminAccess = false }) {
   const { theme } = useTheme();
   const s = React.useMemo(() => styles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
@@ -64,6 +65,10 @@ export default function UserView() {
   const toast = useToast();
   const { isOnline } = useOfflineSnapshot();
   const { user: authUser, profile: authProfile } = useAuthContext();
+  const {
+    isSuperAdmin: hasSuperAdminAccess,
+    isLoading: superAdminAccessLoading,
+  } = useSuperAdminAccess();
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
   const router = useRouter();
@@ -86,6 +91,7 @@ export default function UserView() {
     refetch: refetchUser,
   } = useEmployee(userId, {
     enabled: !!userId,
+    privilegedAdminAccess,
     staleTime: 2 * 60 * 1000,
     refetchOnMount: false,
   });
@@ -167,6 +173,26 @@ export default function UserView() {
   const isOwnProfile = [authProfileId, authUserId, myUid]
     .filter(Boolean)
     .some((candidate) => candidate === targetProfileId || candidate === targetUserId);
+  const authCompanyId = String(authProfile?.company_id || '').trim();
+  const targetCompanyId = String(companyId || '').trim();
+  const legacyCrossCompanyAdminData = Boolean(
+    !privilegedAdminAccess &&
+      userData?.meIsSuperAdmin === true &&
+      !isOwnProfile &&
+      (!authCompanyId || !targetCompanyId || authCompanyId !== targetCompanyId),
+  );
+  const requiresSuperAdminAccess = privilegedAdminAccess || legacyCrossCompanyAdminData;
+  const privilegedAccessBlocked =
+    requiresSuperAdminAccess && (superAdminAccessLoading || !hasSuperAdminAccess);
+  React.useEffect(() => {
+    if (!requiresSuperAdminAccess || superAdminAccessLoading || hasSuperAdminAccess) return;
+    router.replace('/orders');
+  }, [
+    hasSuperAdminAccess,
+    requiresSuperAdminAccess,
+    router,
+    superAdminAccessLoading,
+  ]);
   const canEdit = meIsAdmin || isOwnProfile;
   const authAccountType = String(authUser?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin =
@@ -180,8 +206,12 @@ export default function UserView() {
       );
       return;
     }
-    router.push(`/users/${userId}/edit`);
-  }, [isReadOnlyBySubscription, router, t, toast, userId]);
+    router.push(
+      privilegedAdminAccess
+        ? `/admin/users/${userId}/edit`
+        : `/users/${userId}/edit`,
+    );
+  }, [isReadOnlyBySubscription, privilegedAdminAccess, router, t, toast, userId]);
 
   // Copy helpers
   const onCopyEmail = React.useCallback(async () => {
@@ -330,7 +360,7 @@ export default function UserView() {
   }, [getRelativeTime, isOnlineNow, lastSeenAt, parsePgTs, t]);
   const isPresenceOnline = isOnlineNow(lastSeenAt);
 
-  if (loading) {
+  if (privilegedAccessBlocked || loading) {
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.colors.background }}

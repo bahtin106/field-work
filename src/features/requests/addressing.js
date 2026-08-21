@@ -30,9 +30,9 @@ const ORDER_ADDRESS_OBJECT_FIELD_KEY_MAP = Object.freeze({
 });
 
 export function normalizeOrderAddressMode(value) {
-  return String(value || '').trim().toLowerCase() === ORDER_ADDRESS_MODE.CUSTOM
-    ? ORDER_ADDRESS_MODE.CUSTOM
-    : ORDER_ADDRESS_MODE.OBJECT;
+  return String(value || '').trim().toLowerCase() === ORDER_ADDRESS_MODE.OBJECT
+    ? ORDER_ADDRESS_MODE.OBJECT
+    : ORDER_ADDRESS_MODE.CUSTOM;
 }
 
 export function extractOrderAddress(source) {

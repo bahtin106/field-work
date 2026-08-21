@@ -5,11 +5,12 @@ import { configureQueryEnvironment, persistOptions, persister, queryClient } fro
 
 const shouldPersistQueryCache = true;
 
-export function QueryProvider({ children }) {
-  useEffect(() => {
-    configureQueryEnvironment();
-  }, []);
+// TanStack Query assumes `online` until the host tells it otherwise. Register
+// React Native connectivity before any child query mounts so a cold offline or
+// constrained-network start cannot launch avoidable requests first.
+configureQueryEnvironment();
 
+export function QueryProvider({ children }) {
   useEffect(() => {
     if (shouldPersistQueryCache) return;
     Promise.resolve(persister.removeClient?.()).catch(() => {});
