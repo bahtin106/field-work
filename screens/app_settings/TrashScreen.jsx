@@ -404,7 +404,7 @@ export default function TrashScreen() {
           style={({ pressed }) => [styles.cardContent, pressed && styles.cardPressed]}
         >
           {thumbnailSource ? (
-            <Image source={thumbnailSource} onError={() => setFailedThumbIds((current) => new Set(current).add(id))} style={styles.thumb} contentFit="cover" />
+            <Image source={thumbnailSource} cachePolicy="none" onError={() => setFailedThumbIds((current) => new Set(current).add(id))} style={styles.thumb} contentFit="cover" />
           ) : (
             <View style={styles.thumbEmpty}><Feather name="trash-2" size={22} color={theme.colors.danger} /></View>
           )}

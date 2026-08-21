@@ -23,7 +23,9 @@ function inferMimeFromUri(uri: string) {
   const raw = String(uri || '').trim().toLowerCase();
   if (raw.endsWith('.png')) return 'image/png';
   if (raw.endsWith('.webp')) return 'image/webp';
-  if (raw.endsWith('.heic') || raw.endsWith('.heif')) return 'image/heic';
+  if (raw.endsWith('.heic')) return 'image/heic';
+  if (raw.endsWith('.heif')) return 'image/heif';
+  if (raw.endsWith('.gif')) return 'image/gif';
   return 'image/jpeg';
 }
 

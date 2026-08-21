@@ -36,6 +36,7 @@ import {
 import ListSeparator from '../../../components/ui/ListSeparator';
 import SeparatedList from '../../../components/ui/SeparatedList';
 import ToastProvider, { useToast } from '../../../components/ui/ToastProvider';
+import { isProtectedMediaThumbnailUrl } from '../../../src/shared/media/thumbnailUrl';
 
 const VIEWER_BG = '#000000';
 const VIEWER_FG = '#FFFFFF';
@@ -136,7 +137,7 @@ function createEdgeBackResponder(direction, onClose) {
 
 const measureImage = (uri) =>
   new Promise((resolve) => {
-    if (!uri) {
+    if (!uri || isProtectedMediaThumbnailUrl(uri)) {
       resolve(null);
       return;
     }
@@ -173,7 +174,8 @@ const GalleryPhoto = memo(function GalleryPhoto({
   const retryScheduledRef = useRef(false);
   const refreshAttemptedRef = useRef(false);
   const refreshRequestRef = useRef(0);
-  const { resolution } = useImageResolution({ uri: activeUri });
+  const activeUriIsProtected = isProtectedMediaThumbnailUrl(activeUri);
+  const { resolution } = useImageResolution({ uri: activeUriIsProtected ? '' : activeUri });
 
   const clearLoadTimeout = useCallback(() => {
     if (!loadTimeoutRef.current) return;
@@ -185,14 +187,18 @@ const GalleryPhoto = memo(function GalleryPhoto({
     if (loadState === 'ready' || retryScheduledRef.current) return;
     clearLoadTimeout();
     const safeFallback = String(fallbackUri || '').trim();
-    if (safeFallback && safeFallback !== activeUri) {
+    if (safeFallback && safeFallback !== activeUri && !isProtectedMediaThumbnailUrl(safeFallback)) {
       setActiveUri(safeFallback);
       setRetryAttempt(0);
       setLoadState('loading');
       onFallbackActivated?.(safeFallback);
       return;
     }
-    if (/^https?:\/\//i.test(String(activeUri || '')) && retryAttempt < MAX_IMAGE_RETRY_ATTEMPTS) {
+    if (
+      !activeUriIsProtected &&
+      /^https?:\/\//i.test(String(activeUri || '')) &&
+      retryAttempt < MAX_IMAGE_RETRY_ATTEMPTS
+    ) {
       retryScheduledRef.current = true;
       const nextAttempt = retryAttempt + 1;
       retryTimerRef.current = setTimeout(() => {
@@ -223,7 +229,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
           }
           retryScheduledRef.current = false;
           const refreshedUri = String(value || '').trim();
-          if (!refreshedUri) {
+          if (!refreshedUri || isProtectedMediaThumbnailUrl(refreshedUri)) {
             setLoadState('error');
             return;
           }
@@ -245,6 +251,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
     setLoadState('error');
   }, [
     activeUri,
+    activeUriIsProtected,
     clearLoadTimeout,
     fallbackUri,
     loadState,
@@ -289,6 +296,10 @@ const GalleryPhoto = memo(function GalleryPhoto({
   }, [activeUri, clearLoadTimeout, restartLoadTimeout, retryAttempt]);
 
   useEffect(() => {
+    if (activeUriIsProtected) handleLoadFailure();
+  }, [activeUriIsProtected, handleLoadFailure]);
+
+  useEffect(() => {
     onLoadStateChange?.(uri, loadState);
   }, [loadState, onLoadStateChange, uri]);
 
@@ -315,19 +326,21 @@ const GalleryPhoto = memo(function GalleryPhoto({
 
   return (
     <View style={[styles.galleryPhoto, fittedSize]}>
-      <ExpoImage
-        key={`${activeUri}:${retryAttempt}`}
-        source={{ uri: activeUri }}
-        contentFit="contain"
-        cachePolicy={retryAttempt > 0 ? 'none' : 'memory-disk'}
-        priority="high"
-        transition={0}
-        recyclingKey={`${activeUri}:${retryAttempt}`}
-        onDisplay={handleDisplayed}
-        onError={handleLoadFailure}
-        onProgress={restartLoadTimeout}
-        style={StyleSheet.absoluteFill}
-      />
+      {!activeUriIsProtected ? (
+        <ExpoImage
+          key={`${activeUri}:${retryAttempt}`}
+          source={{ uri: activeUri }}
+          contentFit="contain"
+          cachePolicy={retryAttempt > 0 ? 'none' : 'memory-disk'}
+          priority="high"
+          transition={0}
+          recyclingKey={`${activeUri}:${retryAttempt}`}
+          onDisplay={handleDisplayed}
+          onError={handleLoadFailure}
+          onProgress={restartLoadTimeout}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
       {loadState === 'loading' ? (
         <View
           pointerEvents="none"
@@ -756,7 +769,8 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       localFallbackImages[currentIndex + 1],
       localFallbackImages[currentIndex - 1],
     ].filter(Boolean);
-    const uniqueCandidates = [...new Set(candidates)];
+    const uniqueCandidates = [...new Set(candidates)]
+      .filter((uri) => !isProtectedMediaThumbnailUrl(uri));
 
     (async () => {
       for (const uri of uniqueCandidates) {
@@ -845,6 +859,10 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     }
 
     if (!REMOTE_URI_RE.test(source)) return source;
+
+    if (isProtectedMediaThumbnailUrl(source)) {
+      throw new Error('Protected thumbnail requires an authorized full-size URL');
+    }
 
     const downloaded = await downloadAsync(source, dest);
     const status = Number(downloaded?.status);

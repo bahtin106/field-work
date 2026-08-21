@@ -1,0 +1,10 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Монитор",
+    "NSCameraUsageDescription": "Разрешите приложению «Монитор» доступ к камере для съёмки фотографий заявок",
+    "NSPhotoLibraryAddUsageDescription": "Разрешите приложению «Монитор» сохранять выбранные фотографии в медиатеку"
+  },
+  "android": {
+    "app_name": "Монитор"
+  }
+}

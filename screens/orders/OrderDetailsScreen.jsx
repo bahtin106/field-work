@@ -5111,13 +5111,16 @@ function OrderDetailsContent() {
     (photos, index, category, label) => {
       if (!Array.isArray(photos) || !photos.length) return false;
       const pairs = photos
-        .map((raw, originalIndex) => ({
-          raw,
-          originalIndex,
-          display: orderMedia.getDisplayUrl(raw) || orderMedia.getThumbnailUrl(raw),
-          fallback: orderMedia.getRemoteDisplayUrl(raw),
-          metadata: orderMedia.getMediaInfo(raw),
-        }))
+        .map((raw, originalIndex) => {
+          const remoteDisplay = orderMedia.getRemoteDisplayUrl(raw);
+          return {
+            raw,
+            originalIndex,
+            display: orderMedia.getDisplayUrl(raw) || remoteDisplay,
+            fallback: remoteDisplay,
+            metadata: orderMedia.getMediaInfo(raw),
+          };
+        })
         .filter((p) => p.display);
       if (!pairs.length) return false;
       const nextIndex = pairs.findIndex((p) => p.originalIndex === index);

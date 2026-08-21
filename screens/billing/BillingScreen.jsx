@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dimensions, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
@@ -886,7 +886,7 @@ export default function BillingScreen() {
       headerOptions={{
         headerShown: !manageFilters.visible,
         title: isSoloAdmin
-          ? t('billing_title_solo')
+          ? t(Platform.OS === 'ios' ? 'billing_title_solo_ios' : 'billing_title_solo')
           : t('routes.billing/index') || t('routes.billing'),
       }}
     >
@@ -1013,7 +1013,9 @@ export default function BillingScreen() {
                   {showLicensesSection ? (
                     <Button title={t('billing_manage_button')} onPress={() => { setScreenError(''); setManageVisible(true); }} variant="primary" disabled={savingChanges} />
                   ) : null}
-                  <Button title={t('company_web_cabinet_button')} onPress={openBillingPortal} variant="secondary" disabled={savingChanges} />
+                  {Platform.OS !== 'ios' ? (
+                    <Button title={t('company_web_cabinet_button')} onPress={openBillingPortal} variant="secondary" disabled={savingChanges} />
+                  ) : null}
                 </View>
               </>
             ) : (

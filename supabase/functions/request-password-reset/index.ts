@@ -8,6 +8,8 @@ const corsHeaders = {
 
 const PASSWORD_RESET_COOLDOWN_SECONDS = 60;
 const PASSWORD_RESET_CODE_TTL_SECONDS = 10 * 60;
+const PASSWORD_RESET_MIN_RESPONSE_MS = 900;
+const PASSWORD_RESET_RESPONSE_JITTER_MS = 200;
 const inMemoryCooldownMap = (globalThis as any).__PWD_RESET_COOLDOWN_MAP__ || new Map<string, number>();
 (globalThis as any).__PWD_RESET_COOLDOWN_MAP__ = inMemoryCooldownMap;
 
@@ -29,15 +31,37 @@ function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function generateTempPassword(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
-  const bytes = new Uint8Array(18);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+function isValidNewPassword(value: string): boolean {
+  return (
+    value.length >= 8 &&
+    value.length <= 128 &&
+    /^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?`~]+$/.test(value) &&
+    /[A-Z]/.test(value) &&
+    /[a-z]/.test(value) &&
+    /\d/.test(value)
+  );
 }
 
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
+}
+
+async function waitForInitialResponseFloor(startedAt: number): Promise<void> {
+  const random = new Uint16Array(1);
+  crypto.getRandomValues(random);
+  const targetMs = PASSWORD_RESET_MIN_RESPONSE_MS + (random[0] % (PASSWORD_RESET_RESPONSE_JITTER_MS + 1));
+  const remainingMs = targetMs - (Date.now() - startedAt);
+  if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, remainingMs));
+}
+
+async function genericInitialResponse(startedAt: number): Promise<Response> {
+  await waitForInitialResponseFloor(startedAt);
+  return json({
+    ok: true,
+    cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
+    expires_in_seconds: PASSWORD_RESET_CODE_TTL_SECONDS,
+    message: 'Если аккаунт существует, код подтверждения отправлен на email',
+  });
 }
 
 function getClient() {
@@ -69,18 +93,12 @@ function getEmailServiceUrl(): string {
   return value;
 }
 
-function normalizeVerifyErrorCode(raw: unknown): string {
-  const code = String(raw || '').trim().toUpperCase();
-  if (!code) return 'VERIFY_FAILED';
-  if (code === 'INVALID_CODE' || code === 'CODE_EXPIRED' || code === 'TOO_MANY_ATTEMPTS') return code;
-  return 'VERIFY_FAILED';
-}
-
-function normalizeVerifyErrorMessage(code: string): string {
-  if (code === 'INVALID_CODE') return 'Неверный код подтверждения';
-  if (code === 'CODE_EXPIRED') return 'Срок действия кода истёк. Запросите новый';
-  if (code === 'TOO_MANY_ATTEMPTS') return 'Слишком много попыток. Запросите новый код';
-  return 'Не удалось проверить код подтверждения';
+function invalidRecoveryProofResponse(): Response {
+  return json({
+    ok: false,
+    code: 'INVALID_CODE',
+    message: 'Неверный или истёкший код подтверждения',
+  }, 400);
 }
 
 export async function handleRequestPasswordReset(req: Request): Promise<Response> {
@@ -90,7 +108,9 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
   const forwardedFor = req.headers.get('x-forwarded-for') || '';
   const ipAddress = forwardedFor.split(',')[0]?.trim() || req.headers.get('x-real-ip') || null;
   const userAgent = req.headers.get('user-agent') || null;
+  const startedAt = Date.now();
   let requestLogId: number | null = null;
+  let isInitialRequest = false;
 
   try {
     const rawBody = await req.json().catch(() => ({} as any));
@@ -111,32 +131,20 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return {} as ResetRequestBody;
     })();
     const email = normalizeEmail(body?.email);
-    const resetMode = String(body?.mode || '').trim();
     const code = String(body?.code || '').trim();
     const nextPassword = String(body?.new_password || body?.newPassword || body?.password || '').trim();
+    isInitialRequest = !code && !nextPassword;
 
     if (!isValidEmail(email)) {
       return json({ ok: false, code: 'INVALID_EMAIL', message: 'Введите корректный e-mail' });
     }
 
-    const admin = getClient();
-    const { data: profileRows, error: profileError } = await admin
-      .from('profiles')
-      .select('id, first_name, last_name, email')
-      .ilike('email', email)
-      .limit(1);
-    if (profileError) throw profileError;
-    const profile = Array.isArray(profileRows) ? profileRows[0] : null;
-
     if (code && nextPassword) {
       if (!/^\d{6}$/.test(code)) {
         return json({ ok: false, code: 'INVALID_CODE', message: 'Неверный код подтверждения' });
       }
-      if (nextPassword.length < 8) {
-        return json({ ok: false, code: 'INVALID_PASSWORD', message: 'Пароль должен быть не короче 8 символов' });
-      }
-      if (!profile?.id) {
-        return json({ ok: false, code: 'INVALID_CODE', message: 'Неверный код подтверждения' });
+      if (!isValidNewPassword(nextPassword)) {
+        return json({ ok: false, code: 'INVALID_PASSWORD', message: 'Пароль не соответствует требованиям безопасности' });
       }
 
       const emailServiceUrl = getEmailServiceUrl();
@@ -147,13 +155,12 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       });
       const verifyPayload = await verifyRes.json().catch(() => ({}));
       if (!verifyRes.ok || verifyPayload?.ok !== true) {
-        const errCode = normalizeVerifyErrorCode(verifyPayload?.code);
-        return json({ ok: false, code: errCode, message: normalizeVerifyErrorMessage(errCode) }, errCode === 'TOO_MANY_ATTEMPTS' ? 429 : 400);
+        return invalidRecoveryProofResponse();
       }
 
       const proofToken = String(verifyPayload?.registration_token || '').trim();
       if (!proofToken) {
-        return json({ ok: false, code: 'VERIFY_FAILED', message: 'Не удалось проверить код подтверждения' }, 500);
+        return invalidRecoveryProofResponse();
       }
 
       const consumeRes = await fetch(`${emailServiceUrl}/registration/consume-token`, {
@@ -163,8 +170,21 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       });
       const consumePayload = await consumeRes.json().catch(() => ({}));
       if (!consumeRes.ok || consumePayload?.ok !== true) {
-        return json({ ok: false, code: 'TOKEN_INVALID', message: 'Код подтверждения недействителен. Запросите новый код' }, 400);
+        return invalidRecoveryProofResponse();
       }
+
+      // Resolve the account only after the one-time recovery proof has been
+      // verified and consumed. Invalid codes therefore cannot be used as an
+      // account-existence oracle through status, body, or lookup timing.
+      const admin = getClient();
+      const { data: profileRows, error: profileError } = await admin
+        .from('profiles')
+        .select('id')
+        .ilike('email', email)
+        .limit(1);
+      if (profileError) throw profileError;
+      const profile = Array.isArray(profileRows) ? profileRows[0] : null;
+      if (!profile?.id) return invalidRecoveryProofResponse();
 
       const { error: updateError } = await admin.auth.admin.updateUserById(String(profile.id), {
         password: nextPassword,
@@ -189,10 +209,20 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return json({ ok: false, code: 'INVALID_INPUT', message: 'Для подтверждения нужны и код, и новый пароль' }, 400);
     }
 
+    const admin = getClient();
+    const { data: profileRows, error: profileError } = await admin
+      .from('profiles')
+      .select('id')
+      .ilike('email', email)
+      .limit(1);
+    if (profileError) throw profileError;
+    const profile = Array.isArray(profileRows) ? profileRows[0] : null;
+
     const nowMs = Date.now();
     const inMemoryUntil = Number(inMemoryCooldownMap.get(email) || 0);
     if (inMemoryUntil > nowMs) {
       const retryAfter = Math.max(1, Math.ceil((inMemoryUntil - nowMs) / 1000));
+      await waitForInitialResponseFloor(startedAt);
       return json({
         ok: false,
         code: 'RATE_LIMIT',
@@ -222,6 +252,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
         status: 'rate_limited',
         error_message: `retry_after_${retryAfter}`,
       });
+      await waitForInitialResponseFloor(startedAt);
       return json({
         ok: false,
         code: 'RATE_LIMIT',
@@ -250,14 +281,12 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       if (requestLogId != null) {
         await admin.from('password_reset_requests').update({ status: 'user_not_found' }).eq('id', requestLogId);
       }
-      return json({
-        ok: false,
-        code: 'USER_NOT_FOUND',
-        message: 'Пользователь с таким email не найден',
-      });
+      return genericInitialResponse(startedAt);
     }
 
-    if (resetMode === 'profile-change') {
+    let sendSucceeded = false;
+    let sendFailureMessage = '';
+    try {
       const emailServiceUrl = getEmailServiceUrl();
       const sendRes = await fetch(`${emailServiceUrl}/registration/send-code`, {
         method: 'POST',
@@ -266,89 +295,28 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       });
       const sendPayload = await sendRes.json().catch(() => ({}));
       if (!sendRes.ok || sendPayload?.ok !== true) {
-        const retryAfter = Math.max(1, Number(sendPayload?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
-        if (sendPayload?.code === 'RATE_LIMITED') {
-          return json({
-            ok: false,
-            code: 'RATE_LIMIT',
-            message: 'Повторная отправка пока недоступна',
-            retry_after_seconds: retryAfter,
-          });
-        }
         throw new Error(`EMAIL_SEND_FAILED: ${String(sendPayload?.message || sendRes.status)}`);
       }
-
-      if (requestLogId != null) {
-        await admin
-          .from('password_reset_requests')
-          .update({ status: 'sent', user_id: String(profile.id), error_message: null })
-          .eq('id', requestLogId);
-      }
-
-      return json({
-        ok: true,
-        cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
-        expires_in_seconds: Number(sendPayload?.expires_in_seconds) || PASSWORD_RESET_CODE_TTL_SECONDS,
-        message: 'Код отправлен на email',
-      });
+      sendSucceeded = true;
+    } catch (sendError) {
+      sendFailureMessage = String((sendError as Error)?.message || 'EMAIL_SEND_FAILED').slice(0, 500);
+      console.error('[request-password-reset] Recovery code delivery failed:', sendFailureMessage);
     }
-
-    const tempPassword = generateTempPassword();
-    const { error: updateError } = await admin.auth.admin.updateUserById(String(profile.id), {
-      password: tempPassword,
-    });
-    if (updateError) throw new Error(`Auth update failed: ${updateError.message}`);
-
-    const emailServiceUrl = getEmailServiceUrl();
-    const sendRes = await fetch(`${emailServiceUrl}/send-email`, {
-      method: 'POST',
-      headers: emailServiceHeaders(),
-      body: JSON.stringify({
-        type: 'password-reset',
-        source: 'self-service',
-        email,
-        firstName: String(profile.first_name || '').trim(),
-        lastName: String(profile.last_name || '').trim(),
-        tempPassword,
-      }),
-    });
-    const sendPayload = await sendRes.json().catch(() => ({}));
-    if (!sendRes.ok || sendPayload?.success !== true) {
-      const retryAfter = Math.max(1, Number(sendPayload?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
-      if (sendPayload?.code === 'RATE_LIMITED') {
-        return json({
-          ok: false,
-          code: 'RATE_LIMIT',
-          message: 'Повторная отправка пока недоступна',
-          retry_after_seconds: retryAfter,
-        });
-      }
-      throw new Error(`EMAIL_SEND_FAILED: ${String(sendPayload?.message || sendRes.status)}`);
-    }
-
-    try {
-      await admin.rpc('upsert_password_change_log', {
-        p_user_id: String(profile.id),
-        p_changed_by: String(profile.id),
-        p_ip_address: ipAddress,
-        p_user_agent: userAgent,
-        p_source: 'edge:request-password-reset:temporary-password',
-        p_window_seconds: 180,
-      });
-    } catch {}
 
     if (requestLogId != null) {
       await admin
         .from('password_reset_requests')
-        .update({ status: 'sent', user_id: String(profile.id), error_message: null })
+        .update({
+          status: sendSucceeded ? 'sent' : 'failed',
+          user_id: String(profile.id),
+          error_message: sendSucceeded ? null : sendFailureMessage,
+        })
         .eq('id', requestLogId);
     }
 
-    return json({
-      ok: true,
-      cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
-      message: 'Письмо с новым паролем отправлено',
-    });
+    // Initial requests always return the same response. Delivery state remains
+    // available in the private audit table without exposing account existence.
+    return genericInitialResponse(startedAt);
   } catch (error) {
     const message = String((error as Error)?.message || 'Unknown error');
     try {
@@ -360,12 +328,14 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
           .eq('id', requestLogId);
       }
     } catch {}
+    if (isInitialRequest) {
+      console.error('[request-password-reset] Initial recovery request failed:', message);
+      return genericInitialResponse(startedAt);
+    }
     return json({
       ok: false,
-      code: message.includes('EMAIL_SEND_FAILED') ? 'EMAIL_SEND_FAILED' : 'INTERNAL_ERROR',
-      message: message.includes('EMAIL_SEND_FAILED')
-        ? 'Не удалось отправить письмо. Обратитесь в поддержку.'
-        : 'Не удалось восстановить пароль. Обратитесь в поддержку.',
+      code: 'INTERNAL_ERROR',
+      message: 'Не удалось восстановить пароль. Обратитесь в поддержку.',
     });
   }
 }

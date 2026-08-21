@@ -114,7 +114,7 @@ export default function TrashDetailScreen() {
         import('expo-media-library'),
       ]);
       const fileSystem = fileSystemModule?.default?.downloadAsync ? fileSystemModule.default : fileSystemModule;
-      const permission = await mediaLibrary.requestPermissionsAsync();
+      const permission = await mediaLibrary.requestPermissionsAsync(true);
       if (!permission?.granted) throw new Error('MEDIA_LIBRARY_PERMISSION_DENIED');
       if (!fileSystem?.cacheDirectory) throw new Error('DOWNLOAD_FAILED');
       const token = accessToken || await getCachedSupabaseAccessToken();
@@ -195,7 +195,7 @@ export default function TrashDetailScreen() {
       <TrashReadOnlyNotice item={detail} itemTitle={displayTitle(detail)} />
 
       {mediaSource ? (
-        <Image source={mediaSource} onError={() => setThumbnailFailed(true)} style={styles.hero} contentFit="cover" />
+        <Image source={mediaSource} cachePolicy="none" onError={() => setThumbnailFailed(true)} style={styles.hero} contentFit="cover" />
       ) : detail.entity_type === 'media' ? (
         <View style={styles.heroFallback}><Feather name="image" size={42} color={theme.colors.textSecondary} /></View>
       ) : null}

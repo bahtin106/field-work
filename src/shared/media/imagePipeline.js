@@ -2,7 +2,7 @@ import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { FileSystemUploadType, uploadAsync as uploadFileAsync } from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
+import { isProtectedMediaThumbnailUrl } from './thumbnailUrl';
 
 export const DEFAULT_MEDIA_MIME = 'image/jpeg';
 export const DEFAULT_MEDIA_MAX_WIDTH = 1280;
@@ -19,16 +19,10 @@ export function getImagePickerMediaTypesImages() {
 }
 
 export async function ensureImageLibraryPermission() {
-  // Android's system photo picker grants access only to the files selected by the
-  // user. Requesting broad media-library access here breaks clean installs where
-  // READ_MEDIA_IMAGES is intentionally excluded from the app manifest.
-  if (Platform.OS !== 'ios') return true;
-
-  let permission = await ImagePicker.getMediaLibraryPermissionsAsync();
-  if (!permission?.granted) {
-    permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  }
-  return permission?.granted === true || permission?.accessPrivileges === 'limited';
+  // The native photo pickers on supported Android and iOS versions grant access
+  // only to the assets selected by the user. A broad library permission is not
+  // needed and would violate the app's least-privilege media model.
+  return true;
 }
 
 export async function ensureCameraPermission() {
@@ -185,7 +179,12 @@ export async function prefetchMediaUrls(urls, { cachePolicy = 'memory-disk', bat
     new Set(
       (Array.isArray(urls) ? urls : [urls])
         .map((url) => String(url || '').trim())
-        .filter((url) => url && (/^https?:\/\//i.test(url) || /^file:\/\//i.test(url))),
+        .filter(
+          (url) =>
+            url &&
+            (/^https?:\/\//i.test(url) || /^file:\/\//i.test(url)) &&
+            !isProtectedMediaThumbnailUrl(url),
+        ),
     ),
   );
   if (!targets.length) return false;

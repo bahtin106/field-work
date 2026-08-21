@@ -1495,7 +1495,7 @@ export default function CompanySettings() {
                 <SelectField
                   label={
                     isSoloWorkMode
-                      ? t('settings_company_billing_solo')
+                      ? t(Platform.OS === 'ios' ? 'settings_company_billing_solo_ios' : 'settings_company_billing_solo')
                       : t('settings_company_billing')
                   }
                   labelAccessory={<HelpInfoButton topicId="billing" size={22} />}

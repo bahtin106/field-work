@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import {
   buildBegetPublicUrl,
   createBegetPresignedGetUrl,
@@ -8,6 +8,17 @@ import {
   listBegetKeys,
   putBegetObject,
 } from '../_shared/beget-s3.ts';
+import {
+  MEDIA_UPLOAD_MAX_BYTES,
+  assertBase64MediaUploadSize,
+  assertCommittedMediaUpload,
+  assertMediaUploadSize,
+  assertOwnedMediaUploadPath,
+  getMediaFileExtension,
+  normalizeMediaUploadMime,
+} from '../_shared/media-upload-policy.mjs';
+
+type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -119,17 +130,6 @@ function parentKeyPrefix(key: string) {
   return value.replace(/\/[^/]+$/, '');
 }
 
-function getFileExtensionByMime(mime: string) {
-  const value = String(mime || '').toLowerCase();
-  if (value.includes('png')) return 'png';
-  if (value.includes('webp')) return 'webp';
-  if (value.includes('heic')) return 'heic';
-  if (value.includes('pdf')) return 'pdf';
-  if (value.includes('mp4')) return 'mp4';
-  if (value.includes('quicktime') || value.includes('mov')) return 'mov';
-  return 'jpg';
-}
-
 function toBase64UrlSafeName() {
   const arr = new Uint8Array(8);
   crypto.getRandomValues(arr);
@@ -168,14 +168,18 @@ function buildFinanceEntryLabel(entry: { id: string; title?: string | null }) {
   return `${title}_${shortId}`;
 }
 
-async function getCallerContext(admin: ReturnType<typeof createClient>, token: string) {
+async function getCallerContext(
+  admin: SupabaseAdminClient,
+  callerDb: SupabaseAdminClient,
+  token: string,
+) {
   const {
     data: { user },
     error,
   } = await admin.auth.getUser(token);
   if (error || !user) throw new Error('Unauthorized');
 
-  const { data: profile, error: profileErr } = await admin
+  const { data: profile, error: profileErr } = await callerDb
     .from('profiles')
     .select('id, company_id')
     .eq('id', user.id)
@@ -189,26 +193,32 @@ async function getCallerContext(admin: ReturnType<typeof createClient>, token: s
 }
 
 async function getCallerAndFinanceEntryContext(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
+  callerDb: SupabaseAdminClient,
   token: string,
   financeEntryId: string,
 ) {
-  const caller = await getCallerContext(admin, token);
+  const caller = await getCallerContext(admin, callerDb, token);
 
-  const { data: entry, error: entryErr } = await admin
+  const { data: entry, error: entryErr } = await callerDb
     .from('order_finance_entries')
     .select('id, company_id, order_id, title')
     .eq('id', financeEntryId)
     .maybeSingle();
-  if (entryErr || !entry) throw new Error('Finance entry not found');
+  if (entryErr || !entry) throw new Error('Forbidden');
   if (String(entry.company_id || '') !== caller.companyId) throw new Error('Forbidden');
 
-  const { data: order, error: orderErr } = await admin
+  const { data: order, error: orderErr } = await callerDb
     .from('orders')
     .select('id, title, created_at, time_window_start, object:client_objects(name, city, street, house)')
     .eq('id', entry.order_id)
     .maybeSingle();
-  if (orderErr || !order) throw new Error('Order not found');
+  if (orderErr || !order) throw new Error('Forbidden');
+
+  const orderObjectRelation = order.object as unknown;
+  const orderObject = (
+    Array.isArray(orderObjectRelation) ? orderObjectRelation[0] : orderObjectRelation
+  ) as { name?: string | null; city?: string | null; street?: string | null; house?: string | null } | null | undefined;
 
   const { data: company, error: companyErr } = await admin
     .from('companies')
@@ -230,8 +240,8 @@ async function getCallerAndFinanceEntryContext(
       title: order.title || null,
       created_at: order.created_at || null,
       time_window_start: order.time_window_start || null,
-      object_name: order.object?.name || null,
-      object_summary: buildObjectAddressSummary(order.object || {}) || null,
+      object_name: orderObject?.name || null,
+      object_summary: buildObjectAddressSummary(orderObject || {}) || null,
     },
     companyName: String(company.name || '').trim() || 'Компания',
     mediaProvider: String(company.media_provider || 'beget_s3'),
@@ -239,7 +249,7 @@ async function getCallerAndFinanceEntryContext(
 }
 
 async function appendFinanceEntryPhotoUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   financeEntryId: string,
   companyId: string,
   url: string,
@@ -260,7 +270,7 @@ async function appendFinanceEntryPhotoUrlAtomic(
 }
 
 async function removeFinanceEntryPhotoUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   financeEntryId: string,
   companyId: string,
   url: string,
@@ -281,7 +291,7 @@ async function removeFinanceEntryPhotoUrlAtomic(
 }
 
 async function removeFinanceEntryPhotoUrlAtomicCanonical(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   financeEntryId: string,
   companyId: string,
   url: string,
@@ -325,7 +335,7 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
 }
 
 async function removeFinanceEntryPhotoUrlFallback(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   financeEntryId: string,
   companyId: string,
   url: string,
@@ -371,7 +381,7 @@ async function removeFinanceEntryPhotoUrlFallback(
   };
 }
 
-function buildFinanceEntryMediaKey(
+function buildFinanceEntryMediaFolder(
   ctx: {
     companyId: string;
     companyName: string;
@@ -388,15 +398,21 @@ function buildFinanceEntryMediaKey(
       title?: string | null;
     };
   },
-  mime: string,
 ) {
-  const ext = getFileExtensionByMime(mime);
   const monthDir = formatMonthBucket(ctx.order.time_window_start || ctx.order.created_at || null);
   const companyShort = String(ctx.companyId || '').slice(0, 8) || 'company';
   const companyDir = toAsciiSlug(ctx.companyName || `company-${companyShort}`, `company-${companyShort}`);
   const orderDir = buildOrderLabel(ctx.order);
   const financeDir = buildFinanceEntryLabel(ctx.financeEntry);
-  return `companies/${companyDir}/${companyShort}/orders/${monthDir}/${orderDir}/finance/${financeDir}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  return `companies/${companyDir}/${companyShort}/orders/${monthDir}/${orderDir}/finance/${financeDir}`;
+}
+
+function buildFinanceEntryMediaKey(
+  ctx: Parameters<typeof buildFinanceEntryMediaFolder>[0],
+  mime: string,
+) {
+  const ext = getMediaFileExtension(mime);
+  return `${buildFinanceEntryMediaFolder(ctx)}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
 }
 
 async function prepareBegetFinanceUpload(
@@ -435,7 +451,7 @@ async function prepareBegetFinanceUpload(
 }
 
 async function purgeBegetFinanceEntryOrphans(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   args: {
     companyId: string;
     financeEntryId: string;
@@ -486,6 +502,14 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
 
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
     if (!token) return json(401, { success: false, message: 'Unauthorized' });
+    const callerDb = createClient(
+      supabaseUrl,
+      String(Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('ANON_KEY') || serviceRole),
+      {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      },
+    );
 
     const body = (await req.json().catch(() => ({}))) as {
       action?: string;
@@ -504,7 +528,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       return json(400, { success: false, message: 'Missing action or finance_entry_id' });
     }
 
-    const ctx = await getCallerAndFinanceEntryContext(admin, token, financeEntryId);
+    const ctx = await getCallerAndFinanceEntryContext(admin, callerDb, token, financeEntryId);
     if ((action === 'prepare_upload' || action === 'upload') && ctx.mediaProvider !== 'beget_s3') {
       return json(400, { success: false, message: 'Media provider is not Beget S3' });
     }
@@ -582,7 +606,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
     }
 
     if (action === 'prepare_upload') {
-      const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
+      const mime = normalizeMediaUploadMime(body.mime);
       const prepared = await prepareBegetFinanceUpload(ctx, mime);
       return json(200, {
         success: true,
@@ -592,38 +616,44 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
         upload_headers: prepared.uploadHeaders as unknown as Json,
         object_key: prepared.objectKey,
         public_url: prepared.publicUrl,
+        max_size_bytes: MEDIA_UPLOAD_MAX_BYTES,
       });
     }
 
     if (action === 'commit_upload') {
       const objectKey = String(body.object_key || '').trim();
-      const publicUrl = String(body.public_url || '').trim() || buildBegetPublicUrl(objectKey);
       if (!objectKey) return json(400, { success: false, message: 'object_key is required' });
 
-      const headResult = await headBegetObject(objectKey);
-      const fileSizeBytes = Number(headResult?.ContentLength || 0);
+      const expectedFolder = buildFinanceEntryMediaFolder(ctx);
+      const ownedObjectKey = assertOwnedMediaUploadPath(objectKey, { expectedFolder });
+      const headResult = await headBegetObject(ownedObjectKey);
+      const committed = assertCommittedMediaUpload(
+        {
+          path: ownedObjectKey,
+          contentLength: headResult?.ContentLength,
+          contentType: headResult?.ContentType,
+        },
+        { expectedFolder },
+      );
+      const fileSizeBytes = committed.size;
+      const publicUrl = buildBegetPublicUrl(committed.path);
 
-      try {
-        const { error: mapErr } = await admin.from('finance_entry_media_external_map').upsert(
-          {
-            company_id: ctx.companyId,
-            order_id: ctx.orderId,
-            finance_entry_id: ctx.financeEntryId,
-            provider: 'beget_s3',
-            source_url: publicUrl,
-            external_path: objectKey,
-            display_url: publicUrl,
-            display_url_updated_at: new Date().toISOString(),
-            created_by: ctx.userId,
-            file_size_bytes: fileSizeBytes,
-          },
-          { onConflict: 'finance_entry_id,external_path' },
-        );
-        if (mapErr) throw mapErr;
-      } catch (error) {
-        await deleteBegetKeys([objectKey]).catch(() => null);
-        throw error;
-      }
+      const { error: mapErr } = await admin.from('finance_entry_media_external_map').upsert(
+        {
+          company_id: ctx.companyId,
+          order_id: ctx.orderId,
+          finance_entry_id: ctx.financeEntryId,
+          provider: 'beget_s3',
+          source_url: publicUrl,
+          external_path: committed.path,
+          display_url: publicUrl,
+          display_url_updated_at: new Date().toISOString(),
+          created_by: ctx.userId,
+          file_size_bytes: fileSizeBytes,
+        },
+        { onConflict: 'finance_entry_id,external_path' },
+      );
+      if (mapErr) throw mapErr;
 
       const atomic = await appendFinanceEntryPhotoUrlAtomic(
         admin,
@@ -646,8 +676,10 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       const b64 = b64raw.includes(',') ? b64raw.split(',').pop() || '' : b64raw;
       if (!b64) return json(400, { success: false, message: 'file_base64 is required' });
 
-      const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
-      const bytes = Uint8Array.from(atob(b64), (char) => char.charCodeAt(0));
+      const mime = normalizeMediaUploadMime(body.mime);
+      const compactBase64 = assertBase64MediaUploadSize(b64);
+      const bytes = Uint8Array.from(atob(compactBase64), (char) => char.charCodeAt(0));
+      assertMediaUploadSize(bytes.length);
       const objectKey = buildFinanceEntryMediaKey(ctx, mime);
       const publicUrl = buildBegetPublicUrl(objectKey);
 

@@ -21,6 +21,7 @@ import {
   restoreVerifiedBackgroundQueryContext,
   setActiveQueryCacheOwner,
 } from '../query/queryClient';
+import { didBackgroundSyncComplete } from './backgroundSyncOutcome.mjs';
 
 export const OFFLINE_BACKGROUND_SYNC_TASK = 'monitor-offline-background-sync-v1';
 const BACKGROUND_BOOTSTRAP_TIMEOUT_MS = 2_500;
@@ -111,14 +112,16 @@ async function runBackgroundSync() {
       return false;
     }
   }
-  return results.every((result) => result.status === 'fulfilled');
+  return didBackgroundSyncComplete(results);
 }
 
 if (!TaskManager.isTaskDefined(OFFLINE_BACKGROUND_SYNC_TASK)) {
   TaskManager.defineTask(OFFLINE_BACKGROUND_SYNC_TASK, async () => {
     try {
-      await runBackgroundSync();
-      return BackgroundTask.BackgroundTaskResult.Success;
+      const completed = await runBackgroundSync();
+      return completed
+        ? BackgroundTask.BackgroundTaskResult.Success
+        : BackgroundTask.BackgroundTaskResult.Failed;
     } catch {
       return BackgroundTask.BackgroundTaskResult.Failed;
     }

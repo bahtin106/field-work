@@ -59,11 +59,9 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       if (!sourceUrl) return '';
       const resolved = String(resolvedUrls[sourceUrl] || '').trim();
       if (resolved && !isSignedMediaUrlStale(resolved)) return resolved;
-      const thumbnail = String(thumbUrls[sourceUrl] || '').trim();
-      if (thumbnail && !isSignedMediaUrlStale(thumbnail)) return thumbnail;
       return isLikelyYandexLink(sourceUrl) ? '' : sourceUrl;
     },
-    [resolvedUrls, thumbUrls],
+    [resolvedUrls],
   );
 
   const getThumbnailUrl = useCallback(

@@ -204,6 +204,9 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
                and t.table_name = c.table_name
               where c.table_schema = 'public'
                 and c.column_name = 'company_id'
+                -- Preserve the authoritative privacy queue until its service-role
+                -- lifecycle is completed after profile/company deletion.
+                and c.table_name <> 'account_deletion_requests'
                 and t.table_type = 'BASE TABLE'
               group by c.table_schema, c.table_name
             loop
@@ -230,6 +233,9 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
                 on t.table_schema = c.table_schema
                and t.table_name = c.table_name
               where c.table_schema = 'public'
+                -- The request must survive every user-scoped cleanup column;
+                -- its user/company FKs intentionally become NULL on deletion.
+                and c.table_name <> 'account_deletion_requests'
                 and c.column_name in (
                   'user_id',
                   'owner_id',

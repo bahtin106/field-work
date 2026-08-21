@@ -6,7 +6,7 @@ try {
   if (cfg?.APP_DEFAULTS) APP_DEFAULTS = { ...APP_DEFAULTS, ...cfg.APP_DEFAULTS };
 } catch {}
 const __NOTIF = (APP_DEFAULTS && APP_DEFAULTS.notifications) || {};
-export const ANDROID_CHANNEL_ID = __NOTIF.ANDROID_CHANNEL_ID || 'app-notify';
+export const ANDROID_CHANNEL_ID = __NOTIF.ANDROID_CHANNEL_ID || 'app-notify-private-v2';
 export function getAndroidChannelName(t) {
   return t('notifications_channel_name');
 }

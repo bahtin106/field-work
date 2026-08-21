@@ -59,6 +59,12 @@ function readSha1(output) {
   return String(match?.[1] || '').trim().toUpperCase();
 }
 
+function hasProductionUpdatesChannel(manifestSource) {
+  return /<meta-data\b(?=[^>]*android:name="expo\.modules\.updates\.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY")(?=[^>]*android:value="\{&quot;expo-channel-name&quot;:&quot;production&quot;\}")[^>]*\/?\s*>/.test(
+    manifestSource,
+  );
+}
+
 function runKeytool(args) {
   const result = spawnSync(keytoolCommand(), args, { encoding: 'utf8', windowsHide: true });
   if (result.status !== 0) {
@@ -130,6 +136,9 @@ function verifyAndroidCompatibility() {
     throw new Error(
       `Refusing to publish: packaged manifest still contains ${unsupportedLargeScreenAttribute}`,
     );
+  }
+  if (!hasProductionUpdatesChannel(packagedManifest)) {
+    throw new Error('Refusing to publish: compiled release is not pinned to the production EAS Update channel.');
   }
 
   if (!existsSync(releaseBuildConfigPath)) {

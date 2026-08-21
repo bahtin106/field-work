@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import { headBegetObject, listBegetObjectsWithSize } from '../_shared/beget-s3.ts';
+import { hasExactBearerSecret } from '../_shared/edge-auth.mjs';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,7 +20,8 @@ const json = (status: number, body: Record<string, Json>) =>
  * Backfills file_size_bytes for all external media map entries where size is 0.
  * Uses HEAD requests to S3 to get actual file sizes.
  * 
- * Requires service_role or admin auth.
+ * Requires the service_role secret. This maintenance operation is intentionally
+ * unavailable to tenant administrators because it scans every company.
  */
 export async function handleBackfillMediaSizesRequest(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -32,24 +34,13 @@ export async function handleBackfillMediaSizesRequest(req: Request) {
       String(Deno.env.get('SERVICE_ROLE_KEY') || '').trim();
     if (!supabaseUrl || !serviceRole) throw new Error('Missing Supabase env');
 
+    if (!hasExactBearerSecret(req.headers.get('authorization'), serviceRole)) {
+      return json(401, { success: false, message: 'Unauthorized' });
+    }
+
     const admin = createClient(supabaseUrl, serviceRole, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-
-    // Verify caller is service_role or admin
-    const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
-    if (token && token !== serviceRole) {
-      const { data: { user }, error: authErr } = await admin.auth.getUser(token);
-      if (authErr || !user) return json(401, { success: false, message: 'Unauthorized' });
-      const { data: profile } = await admin
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle();
-      if (String(profile?.role || '').toLowerCase() !== 'admin') {
-        return json(403, { success: false, message: 'Admin access required' });
-      }
-    }
 
     const stats = { order_media: 0, profile_media: 0, finance_media: 0, errors: 0 };
 

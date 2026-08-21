@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import { createBegetPresignedGetUrl } from '../_shared/beget-s3.ts';
+import { extractBearerToken } from '../_shared/edge-auth.mjs';
 
 type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
@@ -28,11 +29,6 @@ function isHttpUrl(value: string) {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-}
-
-function bearerToken(req: Request) {
-  const authorization = String(req.headers.get('authorization') || '').trim();
-  return authorization.replace(/^Bearer\s+/i, '').trim();
 }
 
 function encodePlainSourceUrl(value: string) {
@@ -180,9 +176,11 @@ export async function handleMediaThumbnailRequest(req: Request) {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
   const serviceRole = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || '';
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || serviceRole;
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('ANON_KEY') || '';
   const imgproxyUrl = (Deno.env.get('IMGPROXY_URL') || 'http://imgproxy:5001').replace(/\/+$/, '');
-  if (!supabaseUrl || !serviceRole) return json(500, { success: false, message: 'Server is not configured' });
+  if (!supabaseUrl || !serviceRole || !anonKey) {
+    return json(500, { success: false, message: 'Server is not configured' });
+  }
 
   const url = new URL(req.url);
   const id = String(url.searchParams.get('id') || '').trim();
@@ -191,24 +189,26 @@ export async function handleMediaThumbnailRequest(req: Request) {
     return json(400, { success: false, message: 'Invalid media id' });
   }
 
+  const token = extractBearerToken(req.headers.get('authorization'));
+  if (!token) return json(401, { success: false, message: 'Authorization required' });
+
+  const caller = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: authData, error: authError } = await caller.auth.getUser(token);
+  if (authError || !authData?.user) {
+    return json(401, { success: false, message: 'Unauthorized' });
+  }
+
   const width = clampInt(url.searchParams.get('w'), 512, 64, 1024);
   const height = clampInt(url.searchParams.get('h'), width, 64, 1024);
   const fit = String(url.searchParams.get('fit') || 'fill').trim() === 'fit' ? 'fit' : 'fill';
   const raw = String(url.searchParams.get('raw') || '') === '1';
 
-  const admin = createClient(supabaseUrl, serviceRole, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
   let asset: any = null;
   let trashExternalPath = '';
   if (trashId) {
-    const token = bearerToken(req);
-    if (!token) return json(401, { success: false, message: 'Authorization required' });
-    const caller = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
     const { data: detail, error: detailError } = await caller.rpc('get_trash_item', { p_id: trashId });
     if (detailError || !detail || String(detail.entity_type || '') !== 'media') {
       return json(404, { success: false, message: 'Media not found' });
@@ -231,7 +231,7 @@ export async function handleMediaThumbnailRequest(req: Request) {
       storage_path: snapshot.storage_path || map.external_path,
     };
   } else {
-    const { data, error } = await admin
+    const { data, error } = await caller
       .from('media_assets')
       .select('id, company_id, entity_type, entity_id, category, source_url, display_url, thumb_url, status, provider, storage_path')
       .eq('id', id)
@@ -241,6 +241,12 @@ export async function handleMediaThumbnailRequest(req: Request) {
     asset = data;
   }
   if (!asset) return json(404, { success: false, message: 'Media not found' });
+
+  // The service-role client is created only after the caller has been
+  // authenticated and the requested asset has passed its RLS policy.
+  const admin = createClient(supabaseUrl, serviceRole, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 
   let sourceUrl = String(asset.thumb_url || asset.display_url || asset.source_url || '').trim();
   const storagePath = String(asset.storage_path || '').replace(/^\/+/, '').trim();
@@ -273,8 +279,8 @@ export async function handleMediaThumbnailRequest(req: Request) {
     }
     const headers = new Headers(corsHeaders);
     headers.set('Content-Type', upstream.headers.get('Content-Type') || 'application/octet-stream');
-    headers.set('Cache-Control', trashId ? 'private, max-age=300' : 'public, max-age=300');
-    if (trashId) headers.set('Vary', 'Authorization');
+    headers.set('Cache-Control', 'private, max-age=300');
+    headers.set('Vary', 'Accept, Authorization');
     return new Response(upstream.body, { status: 200, headers });
   }
 
@@ -293,8 +299,8 @@ export async function handleMediaThumbnailRequest(req: Request) {
   headers.set('Content-Type', upstream.headers.get('Content-Type') || 'image/webp');
   headers.set('Cache-Control', trashId
     ? 'private, max-age=300, stale-while-revalidate=3600'
-    : 'public, max-age=86400, stale-while-revalidate=604800');
-  headers.set('Vary', trashId ? 'Accept, Authorization' : 'Accept');
+    : 'private, max-age=86400, stale-while-revalidate=604800');
+  headers.set('Vary', 'Accept, Authorization');
   const etag = upstream.headers.get('ETag');
   if (etag) headers.set('ETag', etag);
 

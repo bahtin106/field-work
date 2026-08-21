@@ -13,6 +13,7 @@ import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
+import CachedImage from '../../../components/ui/CachedImage';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
@@ -1044,8 +1045,9 @@ export default function EditObjectScreen() {
               accessibilityHint={t('a11y_change_object_photo_hint')}
             >
               {photoAvatarUrl ? (
-                <ExpoImage
-                  source={{ uri: photoAvatarUrl }}
+                <CachedImage
+                  uri={photoAvatarUrl}
+                  fallbackUri={photoDisplayUrl && photoDisplayUrl !== photoAvatarUrl ? photoDisplayUrl : undefined}
                   style={styles.avatarImg}
                   contentFit="cover"
                   cachePolicy="none"

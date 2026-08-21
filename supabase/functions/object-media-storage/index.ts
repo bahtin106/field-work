@@ -8,6 +8,15 @@ import {
   headBegetObject,
   putBegetObject,
 } from '../_shared/beget-s3.ts';
+import {
+  MEDIA_UPLOAD_MAX_BYTES,
+  assertBase64MediaUploadSize,
+  assertCommittedMediaUpload,
+  assertMediaUploadSize,
+  assertOwnedMediaUploadPath,
+  getMediaFileExtension,
+  normalizeMediaUploadMime,
+} from '../_shared/media-upload-policy.mjs';
 import { ensureYandexFolderTreeCached } from '../_shared/yandex-folder-cache.ts';
 
 type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
@@ -110,17 +119,6 @@ function normalizeFolderPath(input: string | null | undefined) {
   return raw;
 }
 
-function getFileExtensionByMime(mime: string) {
-  const value = String(mime || '').toLowerCase();
-  if (value.includes('png')) return 'png';
-  if (value.includes('webp')) return 'webp';
-  if (value.includes('heic')) return 'heic';
-  if (value.includes('pdf')) return 'pdf';
-  if (value.includes('mp4')) return 'mp4';
-  if (value.includes('quicktime') || value.includes('mov')) return 'mov';
-  return 'jpg';
-}
-
 function toBase64UrlSafeName() {
   const arr = new Uint8Array(8);
   crypto.getRandomValues(arr);
@@ -215,6 +213,7 @@ function mapYandexApiError(status: number, payload: string) {
 
 async function getCallerAndObjectContext(
   admin: SupabaseAdminClient,
+  callerDb: SupabaseAdminClient,
   token: string,
   objectId: string,
 ) {
@@ -224,19 +223,19 @@ async function getCallerAndObjectContext(
   } = await admin.auth.getUser(token);
   if (error || !user) throw new Error('Unauthorized');
 
-  const { data: profile, error: profileErr } = await admin
+  const { data: profile, error: profileErr } = await callerDb
     .from('profiles')
     .select('id, role, company_id')
     .eq('id', user.id)
     .maybeSingle();
   if (profileErr || !profile?.company_id) throw new Error('Profile not found');
 
-  const { data: objectRow, error: objectErr } = await admin
+  const { data: objectRow, error: objectErr } = await callerDb
     .from('client_objects')
     .select('id, company_id, name, city, street, house, apartment, created_at')
     .eq('id', objectId)
     .maybeSingle();
-  if (objectErr || !objectRow) throw new Error('Object not found');
+  if (objectErr || !objectRow) throw new Error('Forbidden');
   if (String(objectRow.company_id || '') !== String(profile.company_id || '')) throw new Error('Forbidden');
 
   const { data: company, error: companyErr } = await admin
@@ -447,6 +446,23 @@ async function getPathDownloadUrl(accessToken: string, path: string) {
   return String(dl.href);
 }
 
+async function getYandexUploadMetadata(accessToken: string, path: string) {
+  const res = await fetch(
+    `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(path)}&fields=path,type,name,mime_type,size`,
+    { headers: { Authorization: `OAuth ${accessToken}` } },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    const mapped = mapYandexApiError(res.status, text);
+    throw new Error(mapped || `Read upload metadata failed: ${text}`);
+  }
+  const data = (await res.json()) as { type?: string; mime_type?: string; size?: number };
+  if (String(data?.type || '').trim().toLowerCase() !== 'file') {
+    throw new Error('Invalid media upload resource');
+  }
+  return data;
+}
+
 async function deleteYandexResourceSafe(accessToken: string, path: string) {
   const normalized = String(path || '').trim();
   if (!normalized) return;
@@ -468,31 +484,46 @@ function buildObjectLabel(objectRow: { id: string; name: string; summary: string
   return `${safeBase}_${shortId}`;
 }
 
-function buildObjectMediaKey(
+function buildObjectMediaFolder(
   ctx: { companyId: string; companyName: string; object: { id: string; name: string; summary: string } },
   category: string,
-  mime: string,
 ) {
-  const ext = getFileExtensionByMime(mime);
   const companyShort = String(ctx.companyId || '').slice(0, 8) || 'company';
   const companyDir = toAsciiSlug(ctx.companyName || `company-${companyShort}`, `company-${companyShort}`);
   const objectDir = buildObjectLabel(ctx.object);
   const categoryDir = CATEGORY_DIR[category] || toAsciiSlug(category, 'media');
-  return `companies/${companyDir}/${companyShort}/objects/${objectDir}/${categoryDir}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  return `companies/${companyDir}/${companyShort}/objects/${objectDir}/${categoryDir}`;
 }
 
-function buildObjectYandexPath(
+function buildObjectMediaKey(
+  ctx: Parameters<typeof buildObjectMediaFolder>[0],
+  category: string,
+  mime: string,
+) {
+  const ext = getMediaFileExtension(mime);
+  return `${buildObjectMediaFolder(ctx, category)}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+}
+
+function buildObjectYandexFolder(
   rootFolder: string,
   ctx: { companyName: string; object: { id: string; name: string; summary: string } },
   category: string,
-  mime: string,
 ) {
   const root = normalizeFolderPath(rootFolder).replace(/\/+$/, '');
   const companyDir = sanitizePathSegment(ctx.companyName || 'Компания', 'Компания');
   const objectDir = buildObjectLabel(ctx.object);
   const categoryDir = CATEGORY_DIR[category] || sanitizePathSegment(category, 'media');
-  const ext = getFileExtensionByMime(mime);
-  return `${root}/${companyDir}/${OBJECTS_ROOT_DIR}/${objectDir}/${categoryDir}/медиа_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  return `${root}/${companyDir}/${OBJECTS_ROOT_DIR}/${objectDir}/${categoryDir}`;
+}
+
+function buildObjectYandexPath(
+  rootFolder: string,
+  ctx: Parameters<typeof buildObjectYandexFolder>[1],
+  category: string,
+  mime: string,
+) {
+  const ext = getMediaFileExtension(mime);
+  return `${buildObjectYandexFolder(rootFolder, ctx, category)}/медиа_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
 }
 
 export async function handleObjectMediaStorageRequest(req: Request) {
@@ -511,6 +542,14 @@ export async function handleObjectMediaStorageRequest(req: Request) {
 
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
     if (!token) return json(401, { success: false, message: 'Unauthorized' });
+    const callerDb = createClient(
+      supabaseUrl,
+      String(Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('ANON_KEY') || serviceRole),
+      {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      },
+    );
 
     const body = (await req.json().catch(() => ({}))) as {
       action?: string;
@@ -531,7 +570,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
     if (!action || !objectId || !category) return json(400, { success: false, message: 'Missing action/object_id/category' });
     if (!ALLOWED_CATEGORIES.has(category)) return json(400, { success: false, message: 'Invalid category' });
 
-    const ctx = await getCallerAndObjectContext(admin, token, objectId);
+    const ctx = await getCallerAndObjectContext(admin, callerDb, token, objectId);
 
     if (action === 'inspect_urls') {
       const urls = Array.isArray(body.urls)
@@ -662,7 +701,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
     }
 
     if (action === 'prepare_upload') {
-      const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
+      const mime = normalizeMediaUploadMime(body.mime);
       if (ctx.mediaProvider === 'yandex_disk') {
         const yandex = await getValidAccessToken(admin, ctx.companyId);
         if (!yandex.accessToken) return json(400, { success: false, message: 'Yandex Disk not connected' });
@@ -703,6 +742,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
           upload_method: 'PUT',
           upload_headers: { 'Content-Type': mime },
           external_path: yandexPath,
+          max_size_bytes: MEDIA_UPLOAD_MAX_BYTES,
         });
       }
 
@@ -721,6 +761,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
         upload_headers: signed.headers as unknown as Json,
         object_key: objectKey,
         public_url: publicUrl,
+        max_size_bytes: MEDIA_UPLOAD_MAX_BYTES,
       });
     }
 
@@ -729,8 +770,22 @@ export async function handleObjectMediaStorageRequest(req: Request) {
       if (externalPath) {
         const yandex = await getValidAccessToken(admin, ctx.companyId);
         if (!yandex.accessToken) return json(400, { success: false, message: 'Yandex Disk not connected' });
-        const publicUrl = await publishAndGetPublicUrl(yandex.accessToken, externalPath);
-        const displayUrl = await getPathDownloadUrl(yandex.accessToken, externalPath).catch(() => publicUrl);
+        const expectedFolder = buildObjectYandexFolder(yandex.folderPath, ctx, category);
+        const ownedPath = assertOwnedMediaUploadPath(externalPath, {
+          expectedFolder,
+          filenamePrefixes: ['медиа'],
+        });
+        const metadata = await getYandexUploadMetadata(yandex.accessToken, ownedPath);
+        const committed = assertCommittedMediaUpload(
+          {
+            path: ownedPath,
+            contentLength: metadata.size,
+            contentType: metadata.mime_type,
+          },
+          { expectedFolder, filenamePrefixes: ['медиа'] },
+        );
+        const publicUrl = await publishAndGetPublicUrl(yandex.accessToken, committed.path);
+        const displayUrl = await getPathDownloadUrl(yandex.accessToken, committed.path).catch(() => publicUrl);
         try {
           const { error: mapErr } = await admin.from('object_media_external_map').upsert(
             {
@@ -739,10 +794,11 @@ export async function handleObjectMediaStorageRequest(req: Request) {
               category,
               provider: 'yandex_disk',
               source_url: publicUrl,
-              external_path: externalPath,
+              external_path: committed.path,
               display_url: displayUrl,
               display_url_updated_at: new Date().toISOString(),
               created_by: ctx.userId,
+              file_size_bytes: committed.size,
             },
             { onConflict: 'object_id,category,source_url' },
           );
@@ -757,17 +813,26 @@ export async function handleObjectMediaStorageRequest(req: Request) {
             object_updated_at: atomic.updated_at,
           });
         } catch (error) {
-          await deleteYandexResourceSafe(yandex.accessToken, externalPath).catch(() => null);
           await deleteObjectMediaMapForUrl(admin, ctx.object.id, ctx.companyId, category, publicUrl).catch(() => null);
           throw error;
         }
       }
 
       const objectKey = String(body.object_key || '').trim();
-      const publicUrl = String(body.public_url || '').trim() || buildBegetPublicUrl(objectKey);
       if (!objectKey) return json(400, { success: false, message: 'object_key is required' });
-      const headResult = await headBegetObject(objectKey);
-      const fileSizeBytes = Number(headResult?.ContentLength || 0);
+      const expectedFolder = buildObjectMediaFolder(ctx, category);
+      const ownedObjectKey = assertOwnedMediaUploadPath(objectKey, { expectedFolder });
+      const headResult = await headBegetObject(ownedObjectKey);
+      const committed = assertCommittedMediaUpload(
+        {
+          path: ownedObjectKey,
+          contentLength: headResult?.ContentLength,
+          contentType: headResult?.ContentType,
+        },
+        { expectedFolder },
+      );
+      const fileSizeBytes = committed.size;
+      const publicUrl = buildBegetPublicUrl(committed.path);
       try {
         const { error: mapErr } = await admin.from('object_media_external_map').upsert(
           {
@@ -776,7 +841,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
             category,
             provider: 'beget_s3',
             source_url: publicUrl,
-            external_path: objectKey,
+            external_path: committed.path,
             display_url: publicUrl,
             display_url_updated_at: new Date().toISOString(),
             created_by: ctx.userId,
@@ -794,7 +859,6 @@ export async function handleObjectMediaStorageRequest(req: Request) {
           object_updated_at: atomic.updated_at,
         });
       } catch (error) {
-        await deleteBegetKeys([objectKey]).catch(() => null);
         await deleteObjectMediaMapForUrl(admin, ctx.object.id, ctx.companyId, category, publicUrl).catch(() => null);
         throw error;
       }
@@ -804,8 +868,10 @@ export async function handleObjectMediaStorageRequest(req: Request) {
       const b64raw = String(body.file_base64 || '').trim();
       const b64 = b64raw.includes(',') ? b64raw.split(',').pop() || '' : b64raw;
       if (!b64) return json(400, { success: false, message: 'file_base64 is required' });
-      const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
-      const bytes = Uint8Array.from(atob(b64), (char) => char.charCodeAt(0));
+      const mime = normalizeMediaUploadMime(body.mime);
+      const compactBase64 = assertBase64MediaUploadSize(b64);
+      const bytes = Uint8Array.from(atob(compactBase64), (char) => char.charCodeAt(0));
+      assertMediaUploadSize(bytes.length);
 
       if (ctx.mediaProvider === 'yandex_disk') {
         const yandex = await getValidAccessToken(admin, ctx.companyId);

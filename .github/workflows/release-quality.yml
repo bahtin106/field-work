@@ -1,0 +1,79 @@
+name: Release quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "release/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://ci.invalid
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-public-anon-placeholder
+      EXPO_PUBLIC_EMAIL_SERVICE_URL: https://ci.invalid
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.5
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Scan client sources for secrets
+        run: npm run security:secrets
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Typecheck changed Edge Functions
+        run: |
+          deno check --node-modules-dir=none \
+            supabase/functions/admin-delete-company/index.ts \
+            supabase/functions/backfill-media-sizes/index.ts \
+            supabase/functions/finance-entry-media-storage/index.ts \
+            supabase/functions/media-thumbnail/index.ts \
+            supabase/functions/object-media-storage/index.ts \
+            supabase/functions/order-media-storage/index.ts \
+            supabase/functions/profile-media-storage/index.ts \
+            supabase/functions/push-send/index.ts \
+            supabase/functions/request-password-reset/index.ts
+
+      - name: Release regression suite
+        run: npm run test:release
+
+      - name: Verify generated iOS permissions and privacy manifest
+        run: npm run test:ios-config
+
+      - name: Expo project diagnostics
+        run: npm run doctor
+
+      - name: Compile Android native release bundle
+        working-directory: android
+        run: ./gradlew :app:bundleRelease --no-daemon
+
+      - name: Export Android production bundle
+        run: npx expo export --platform android --output-dir dist-ci-android
+
+      - name: Export iOS production bundle
+        run: npx expo export --platform ios --output-dir dist-ci-ios

@@ -646,12 +646,20 @@ function reconcileCommittedQueueItem(item, response, ownerContext) {
 }
 
 async function runQueueFlush(onItemSettled) {
-  if (!canRunOutboxSync()) return { completed: 0, failed: 0 };
   const ownerContext = await getOwnerContextWithLegacyClaim();
-  if (!ownerContext) return { completed: 0, failed: 0 };
+  if (!ownerContext) return { completed: 0, failed: 0, pending: 0 };
   const { owner } = ownerContext;
+  const countPending = async () => {
+    const current = await readOrderPhotoUploadQueue();
+    return current.filter((item) => isOfflineItemOwnedBy(item, owner)).length;
+  };
+  if (!canRunOutboxSync()) {
+    return { completed: 0, failed: 0, pending: await countPending() };
+  }
   const snapshot = await readOrderPhotoUploadQueue();
-  if (!isActiveOfflineOwnerContext(ownerContext)) return { completed: 0, failed: 0 };
+  if (!isActiveOfflineOwnerContext(ownerContext)) {
+    return { completed: 0, failed: 0, pending: await countPending() };
+  }
   const now = Date.now();
   const mine = snapshot.filter(
     (item) =>
@@ -712,12 +720,12 @@ async function runQueueFlush(onItemSettled) {
     }
   }
 
-  return { completed, failed };
+  return { completed, failed, pending: await countPending() };
 }
 
 export function flushOrderPhotoQueue(options = {}) {
   const ownerContext = getActiveOfflineOwnerContext();
-  if (!ownerContext) return Promise.resolve({ completed: 0, failed: 0 });
+  if (!ownerContext) return Promise.resolve({ completed: 0, failed: 0, pending: 0 });
   if (flushInFlight && flushInFlightEpoch === ownerContext.epoch) return flushInFlight;
   const run = runQueueFlush(options?.onItemSettled).finally(() => {
     if (flushInFlight !== run) return;

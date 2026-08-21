@@ -8,13 +8,23 @@ const root = process.cwd();
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 const json = (relativePath) => JSON.parse(read(relativePath));
 const failures = [];
+const legacySystemBarVisitorPath =
+  'android/buildSrc/src/main/groovy/com/monitorapp/buildlogic/LegacySystemBarColorApiVisitorFactory.groovy';
 
 function check(condition, message) {
   if (!condition) failures.push(message);
 }
 
+function hasProductionUpdatesChannel(manifestSource) {
+  return /<meta-data\b(?=[^>]*android:name="expo\.modules\.updates\.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY")(?=[^>]*android:value="\{&quot;expo-channel-name&quot;:&quot;production&quot;\}")[^>]*\/?\s*>/.test(
+    manifestSource,
+  );
+}
+
 const packageJson = json('package.json');
 const appJson = json('app.json').expo;
+const easIgnore = read('.easignore');
+const releaseWorkflow = read('.github/workflows/release-quality.yml');
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 const androidNetworkSecurityConfig = read(
   'android/app/src/main/res/xml/network_security_config.xml',
@@ -36,11 +46,16 @@ const gradleProperties = read('android/gradle.properties');
 const legacySystemBarCompat = read(
   'android/app/src/main/java/com/monitorapp/monitor/LegacySystemBarColorCompat.java',
 );
-const legacySystemBarVisitor = read(
-  'android/buildSrc/src/main/groovy/com/monitorapp/build/LegacySystemBarColorApiVisitorFactory.groovy',
+const legacySystemBarVisitor = read(legacySystemBarVisitorPath);
+const legacySystemBarVisitorTracked = spawnSync(
+  'git',
+  ['ls-files', '--error-unmatch', legacySystemBarVisitorPath],
+  { cwd: root, encoding: 'utf8' },
 );
 const mainActivity = read('android/app/src/main/java/com/monitorapp/monitor/MainActivity.kt');
 const systemBars = read('lib/systemBars.js');
+const notificationConfig = read('config/notifications.js');
+const rootConfig = read('config/index.js');
 const externalUrls = read('config/externalUrls.js');
 const appRuntime = read('config/appRuntime.js');
 const financeQueue = read('src/features/finance/queries.js');
@@ -68,6 +83,11 @@ const orderSort = read('src/features/orders/orderSort.js');
 const orderFacetCounts = read('src/features/orders/facetCounts.js');
 const filtersPanel = read('components/filters/FiltersPanel.jsx');
 const appSettingsScreen = read('screens/app_settings/AppSettingsScreen.jsx');
+const accountDeletionScreen = read('screens/app_settings/AccountDeletionScreen.jsx');
+const pushAutoSetup = read('lib/pushAutoSetup.js');
+const pushWorkerTick = read('scripts/push-worker-tick.sh');
+const pushWorkerBurst = read('scripts/push-worker-burst.sh');
+const pushWorkerRunbook = read('docs/push-worker-runbook.md');
 const adminHomeScreen = read('app/admin/index.jsx');
 const adminFeedbackDetailsScreen = read('app/admin/feedbacks/[id]/index.jsx');
 const trashScreen = read('screens/app_settings/TrashScreen.jsx');
@@ -121,6 +141,7 @@ const offlineStatus = read('src/shared/offline/offlineStatus.ts');
 const ownerBoundAuthorization = read('src/shared/security/ownerBoundAuthorization.ts');
 const offlineSync = read('src/shared/offline/useOfflineSync.ts');
 const backgroundSync = read('src/shared/offline/backgroundSync.js');
+const backgroundSyncOutcome = read('src/shared/offline/backgroundSyncOutcome.mjs');
 const queryProvider = read('src/shared/query/QueryProvider.tsx');
 const queryClient = read('src/shared/query/queryClient.ts');
 const prefetchRegistry = read('src/shared/query/prefetchRegistry.js');
@@ -132,6 +153,7 @@ const accessSnapshot = read('lib/accessSnapshot.js');
 const permissionsProvider = read('lib/permissions.js');
 const workTypes = read('lib/workTypes.js');
 const rootLayout = read('app/_layout.js');
+const rootErrorBoundary = read('components/feedback/ErrorBoundary.jsx');
 const photoQueue = read('src/shared/media/orderPhotoQueue.js');
 const orderMediaHook = read('hooks/useOrderMedia.js');
 const mediaStorageAction = read('lib/mediaStorageAction.js');
@@ -199,6 +221,58 @@ const trashClearMigration = read(trashClearMigrationPath);
 const trashClearRollbackPath =
   'supabase/rollback/20260720213000_add_atomic_empty_trash_rollback.sql';
 const trashClearRollback = read(trashClearRollbackPath);
+const accountDeletionMigrationPath =
+  'supabase/migrations/20260821220000_add_account_deletion_requests.sql';
+const accountDeletionRollbackPath =
+  'supabase/rollback/20260821220000_add_account_deletion_requests_rollback.sql';
+const accountDeletionMigration = read(accountDeletionMigrationPath);
+const accountDeletionRollback = read(accountDeletionRollbackPath);
+const adminDeleteCompanyFunction = read('supabase/functions/admin-delete-company/index.ts');
+const pushSendFunction = read('supabase/functions/push-send/index.ts');
+
+const easIgnorePatterns = new Set(
+  easIgnore
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#')),
+);
+for (const pattern of [
+  '.git/',
+  'node_modules/',
+  '.env',
+  '.env.*',
+  '.eas/',
+  '.easlrc',
+  '*.jks',
+  'credentials.json',
+  '*.agekey',
+  'supabase/.temp/',
+  'backup-secrets/',
+  '.codex-temp/',
+  'releases/',
+  'dist-ci-*/',
+  'android/app/.cxx/',
+  'android/buildSrc/.gradle/',
+  'modules/monitor-map-apps/android/build/',
+]) {
+  check(easIgnorePatterns.has(pattern), `EAS archive must exclude ${pattern}`);
+}
+check(
+  releaseWorkflow.includes('actions/checkout@11d5960a326750d5838078e36cf38b85af677262') &&
+    releaseWorkflow.includes('actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020') &&
+    releaseWorkflow.includes('denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed') &&
+    releaseWorkflow.includes('deno-version: v2.9.5') &&
+    releaseWorkflow.includes('deno check --node-modules-dir=none') &&
+    releaseWorkflow.includes('./gradlew :app:bundleRelease --no-daemon'),
+  'Release CI must pin third-party actions and compile both Edge and Android native sources',
+);
+
+check(
+  rootErrorBoundary.includes('OTA_RECOVERY_WINDOW_MS = 10_000') &&
+    rootErrorBoundary.includes('Updates.isEmbeddedLaunch === false') &&
+    rootErrorBoundary.includes('throw error;'),
+  'The root error boundary must delegate early downloaded-update failures to expo-updates rollback',
+);
 
 check(!packageJson.dependencies?.['expo-dev-client'], 'expo-dev-client must not be bundled in production dependencies');
 check(packageJson.dependencies?.['expo-background-task'], 'expo-background-task is required for deferred media delivery');
@@ -209,6 +283,12 @@ check(packageJson.dependencies?.['expo-file-system'] === '~19.0.24', 'expo-file-
 check(packageJson.dependencies?.['expo-updates'] === '~29.0.20', 'expo-updates must match the validated SDK 54 patch');
 check(packageJson.dependencies?.['@react-native-community/netinfo'] === '11.4.1', 'NetInfo must match Expo SDK 54');
 check(packageJson.dependencies?.['react-native-keyboard-controller'] === '1.18.5', 'Keyboard controller must match Expo SDK 54');
+check(packageJson.devDependencies?.pngjs === '3.4.0', 'Icon tooling must declare its direct pngjs dependency');
+check(
+  packageJson.devDependencies?.['expo-doctor'] === '1.20.2' &&
+    packageJson.scripts?.doctor === 'expo-doctor',
+  'Release diagnostics must use the locked expo-doctor dependency',
+);
 check(
   packageJson.devDependencies?.['@expo/image-utils'] === '0.8.8' &&
     packageJson.devDependencies?.['jimp-compact'] === '0.16.1',
@@ -221,6 +301,9 @@ for (const permission of [
   'android.permission.RECORD_AUDIO',
   'android.permission.READ_EXTERNAL_STORAGE',
   'android.permission.READ_MEDIA_IMAGES',
+  'android.permission.READ_MEDIA_VIDEO',
+  'android.permission.READ_MEDIA_AUDIO',
+  'android.permission.READ_MEDIA_VISUAL_USER_SELECTED',
 ]) {
   check(!permissions.has(permission), `${permission} must not be requested in app config`);
   check(blockedPermissions.has(permission), `${permission} must be blocked against transitive manifests`);
@@ -229,9 +312,25 @@ check(permissions.has('android.permission.READ_CONTACTS'), 'Contact picker requi
 check(blockedPermissions.has('android.permission.WRITE_CONTACTS'), 'Contact picker must not request contact write access');
 
 check(/RECORD_AUDIO"\s+tools:node="remove"/.test(manifest), 'Native manifest must remove RECORD_AUDIO');
-check(/READ_MEDIA_IMAGES"\s+tools:node="remove"/.test(manifest), 'Native manifest must remove READ_MEDIA_IMAGES');
+for (const permission of [
+  'READ_MEDIA_IMAGES',
+  'READ_MEDIA_VIDEO',
+  'READ_MEDIA_AUDIO',
+  'READ_MEDIA_VISUAL_USER_SELECTED',
+]) {
+  check(
+    new RegExp(`${permission}"\\s+tools:node="remove"`).test(manifest),
+    `Native manifest must remove ${permission}`,
+  );
+}
 check(/READ_CONTACTS"\s*\/>/.test(manifest), 'Native manifest must include READ_CONTACTS');
 check(/WRITE_CONTACTS"\s+tools:node="remove"/.test(manifest), 'Native manifest must remove WRITE_CONTACTS');
+check(
+  /WRITE_EXTERNAL_STORAGE"\s+android:maxSdkVersion="28"\s+tools:replace="android:maxSdkVersion"/.test(
+    manifest,
+  ),
+  'Legacy gallery writes must limit WRITE_EXTERNAL_STORAGE to Android 9 and older',
+);
 check(/android\.enableProguardInReleaseBuilds=true/.test(gradleProperties), 'Release minification must be enabled');
 check(/android\.enableShrinkResourcesInReleaseBuilds=true/.test(gradleProperties), 'Release resource shrinking must be enabled');
 check(
@@ -239,9 +338,9 @@ check(
     (plugin) =>
       Array.isArray(plugin) &&
       plugin[0] === 'expo-contacts' &&
-      String(plugin[1]?.contactsPermission || '').trim(),
+      plugin[1]?.contactsPermission === false,
   ),
-  'iOS contact picker permission description must stay configured',
+  'The permission-free iOS contact picker must explicitly remove full Contacts access',
 );
 check(
   phoneInput.includes('<ContactPhonePickerButton') &&
@@ -250,6 +349,7 @@ check(
     contactPhonePicker.includes('Contacts.presentContactPickerAsync()') &&
     contactPhonePicker.includes("Platform.OS === 'android'") &&
     contactPhonePicker.includes('Contacts.requestPermissionsAsync()') &&
+    contactPhonePicker.includes("Platform.OS === 'android' &&") &&
     contactPhonePicker.includes('options.length === 1') &&
     contactPhonePicker.includes('<SelectModal'),
   'Phone inputs must keep contact picking, safe phone clearing, Android permission handling, and multi-number selection',
@@ -264,7 +364,9 @@ check(
 
 const versionName = gradle.match(/versionName\s*=\s*["']([^"']+)["']/)?.[1];
 const versionCode = Number(gradle.match(/versionCode\s*=\s*(\d+)/)?.[1] || 0);
-const nativeRuntimeVersion = androidStrings.match(/name="expo_runtime_version">([^<]+)</)?.[1];
+const nativeRuntimeVersion = androidStrings.match(
+  /name="expo_runtime_version"[^>]*>([^<]+)</,
+)?.[1];
 check(packageJson.version === appJson.version, 'Package version must match Expo app version');
 check(versionName === appJson.version, `Native versionName (${versionName}) must match app version (${appJson.version})`);
 check(
@@ -274,6 +376,161 @@ check(
 check(
   nativeRuntimeVersion === appJson.android?.runtimeVersion,
   `Native runtime version (${nativeRuntimeVersion}) must match Expo Android runtimeVersion (${appJson.android?.runtimeVersion})`,
+);
+check(
+  /name="expo_runtime_version"\s+translatable="false">/.test(androidStrings),
+  'Android runtime version resource must not be changed by Play app-string translation',
+);
+check(
+  hasProductionUpdatesChannel(manifest),
+  'Native Android release must be pinned to the production EAS Update channel',
+);
+check(
+  /^[1-9]\d*$/.test(String(appJson.ios?.buildNumber || '')),
+  'iOS buildNumber must be an explicit positive integer and increase for every upload',
+);
+check(
+  appJson.ios?.infoPlist?.NSAppTransportSecurity?.NSAllowsArbitraryLoads === false &&
+    appJson.ios?.infoPlist?.NSAppTransportSecurity?.NSAllowsLocalNetworking === true,
+  'iOS App Transport Security must reject arbitrary remote cleartext traffic',
+);
+check(
+  appJson.ios?.config?.usesNonExemptEncryption === false,
+  'iOS export-compliance declaration must match the validated HTTPS/platform-crypto usage',
+);
+check(
+  appJson.ios?.privacyManifests?.NSPrivacyTracking === false &&
+    Array.isArray(appJson.ios?.privacyManifests?.NSPrivacyAccessedAPITypes) &&
+    appJson.ios.privacyManifests.NSPrivacyAccessedAPITypes.length >= 4,
+  'iOS privacy manifest must declare the validated required-reason APIs',
+);
+const expectedCollectedDataTypes = [
+  'NSPrivacyCollectedDataTypeName',
+  'NSPrivacyCollectedDataTypeEmailAddress',
+  'NSPrivacyCollectedDataTypePhoneNumber',
+  'NSPrivacyCollectedDataTypePhysicalAddress',
+  'NSPrivacyCollectedDataTypeOtherUserContactInfo',
+  'NSPrivacyCollectedDataTypeOtherFinancialInfo',
+  'NSPrivacyCollectedDataTypePhotosorVideos',
+  'NSPrivacyCollectedDataTypeCustomerSupport',
+  'NSPrivacyCollectedDataTypeOtherUserContent',
+  'NSPrivacyCollectedDataTypeUserID',
+  'NSPrivacyCollectedDataTypeDeviceID',
+  'NSPrivacyCollectedDataTypePurchaseHistory',
+  'NSPrivacyCollectedDataTypeProductInteraction',
+  'NSPrivacyCollectedDataTypeCrashData',
+  'NSPrivacyCollectedDataTypeOtherDiagnosticData',
+  'NSPrivacyCollectedDataTypeOtherDataTypes',
+];
+const collectedDataTypes = appJson.ios?.privacyManifests?.NSPrivacyCollectedDataTypes || [];
+check(
+  collectedDataTypes.length === expectedCollectedDataTypes.length &&
+    expectedCollectedDataTypes.every((dataType) =>
+      collectedDataTypes.some((entry) => entry.NSPrivacyCollectedDataType === dataType),
+    ) &&
+    collectedDataTypes.every(
+      (entry) =>
+        entry.NSPrivacyCollectedDataTypeLinked === true &&
+        entry.NSPrivacyCollectedDataTypeTracking === false &&
+        entry.NSPrivacyCollectedDataTypePurposes?.length === 1 &&
+        entry.NSPrivacyCollectedDataTypePurposes[0] ===
+          'NSPrivacyCollectedDataTypePurposeAppFunctionality',
+    ),
+  'iOS collected-data manifest must match the audited linked, non-tracking App Store privacy inventory',
+);
+check(
+  fs.existsSync(path.join(root, accountDeletionMigrationPath)) &&
+    fs.existsSync(path.join(root, accountDeletionRollbackPath)) &&
+    accountDeletionMigration.includes('create table if not exists public.account_deletion_requests') &&
+    accountDeletionMigration.includes('create or replace function public.request_account_deletion()') &&
+    accountDeletionMigration.includes('create or replace function public.transition_account_deletion_request(') &&
+    accountDeletionMigration.includes('security definer') &&
+    accountDeletionMigration.includes('for update') &&
+    accountDeletionMigration.includes('confirmation_sent_at') &&
+    accountDeletionMigration.includes("requested_email = case when p_next_status = 'completed' then null") &&
+    accountDeletionMigration.includes("user_id = case when p_next_status = 'completed' then null") &&
+    accountDeletionMigration.includes("company_id = case when p_next_status = 'completed' then null") &&
+    accountDeletionMigration.includes("and (p_next_status <> 'completed' or r.user_id is null)") &&
+    accountDeletionMigration.includes('set user_id = null,') &&
+    accountDeletionMigration.includes('company_id = null,') &&
+    accountDeletionMigration.includes('ACCOUNT_DELETION_FEEDBACK_PII_NOT_CLEARED') &&
+    accountDeletionMigration.includes('create or replace function public.account_deletion_requests_preserve_active_delete()') &&
+    accountDeletionMigration.includes("if old.status in ('pending', 'processing')") &&
+    accountDeletionMigration.includes('revoke all on table public.account_deletion_requests from service_role') &&
+    accountDeletionMigration.includes('grant select on table public.account_deletion_requests to authenticated, service_role') &&
+    accountDeletionMigration.includes('alter table public.account_deletion_requests enable row level security') &&
+    accountDeletionMigration.includes('grant execute on function public.request_account_deletion() to authenticated') &&
+    accountDeletionRollback.includes('ACCOUNT_DELETION_ROLLBACK_REFUSED') &&
+    accountDeletionRollback.includes('drop function if exists public.transition_account_deletion_request') &&
+    accountDeletionRollback.includes('drop function if exists public.request_account_deletion()') &&
+    accountDeletionRollback.includes('drop function if exists public.account_deletion_requests_preserve_active_delete()') &&
+    accountDeletionScreen.includes("supabase.rpc('request_account_deletion')") &&
+    accountDeletionScreen.includes(".from('account_deletion_requests')") &&
+    (adminDeleteCompanyFunction.match(/c\.table_name <> 'account_deletion_requests'/g) || []).length === 2 &&
+    !accountDeletionScreen.includes('createSupportRequest'),
+  'Account deletion must use the dedicated authenticated, RLS-protected request workflow with rollback',
+);
+check(
+  backgroundSync.includes('didBackgroundSyncComplete(results)') &&
+    backgroundSyncOutcome.includes('Number(photos.failed || 0) === 0') &&
+    backgroundSyncOutcome.includes('Number(photos.pending || 0) === 0') &&
+    photoQueue.includes('pending: await countPending()') &&
+    backgroundSyncOutcome.includes('Number(finance.pending || 0) === 0') &&
+    backgroundSyncOutcome.includes('Number(generic.pending || 0) === 0'),
+  'Background task result must reflect retryable photo, finance, and generic outbox work',
+);
+check(
+  /if \(isInitializing \|\| !isAuthenticated \|\| !user\?\.id\) return undefined;\s+let active = true;\s+let running = false;/.test(
+    rootLayout,
+  ) &&
+    rootLayout.includes('if (isInitializing || isAuthenticated) return;') &&
+    rootLayout.includes('unregisterOfflineBackgroundSync().catch(() => {})') &&
+    rootLayout.includes('}, [isAuthenticated, isInitializing]);'),
+  'Offline background work must register/unregister only after settled auth state',
+);
+check(
+  rootLayout.includes('<ErrorBoundary>') &&
+    rootErrorBoundary.includes("from 'react-native'") &&
+    rootErrorBoundary.includes('logClientError(error') &&
+    rootErrorBoundary.includes('Updates.reloadAsync()') &&
+    !rootErrorBoundary.includes('<div'),
+  'The native root must provide a production-safe crash recovery boundary',
+);
+check(
+  !pushAutoSetup.includes('AndroidNotificationVisibility.PUBLIC') &&
+    !appSettingsScreen.includes('AndroidNotificationVisibility.PUBLIC') &&
+    pushAutoSetup.includes('AndroidNotificationVisibility.PRIVATE') &&
+    notificationConfig.includes("'app-notify-private-v2'") &&
+    rootConfig.includes("ANDROID_CHANNEL_ID: 'app-notify-private-v2'") &&
+    manifest.includes(
+      'com.google.firebase.messaging.default_notification_channel_id" android:value="app-notify-private-v2"',
+    ) &&
+    appJson.plugins?.some(
+      (plugin) =>
+        Array.isArray(plugin) &&
+        plugin[0] === 'expo-notifications' &&
+        plugin[1]?.defaultChannel === 'app-notify-private-v2',
+    ) &&
+    pushSendFunction.includes("'app-notify-private-v2'") &&
+    /await ensureAndroidNotificationChannel\(Notifications\);[\s\S]{0,160}const \{ status: existing \} = await Notifications\.getPermissionsAsync\(\);/.test(
+      pushAutoSetup,
+    ),
+  'Sensitive notifications must migrate to the versioned PRIVATE channel before Android permission requests',
+);
+check(
+  pushWorkerTick.includes(': "${PUSH_WORKER_KEY:?PUSH_WORKER_KEY is required}"') &&
+    pushWorkerTick.includes("stat -c '%a %U:%G'") &&
+    pushWorkerTick.includes('curl --fail --silent --show-error --config -') &&
+    pushWorkerTick.includes('must use HTTPS unless it targets the local loopback interface') &&
+    !pushWorkerTick.includes('-H "x-worker-key: ${PUSH_WORKER_KEY}"') &&
+    pushWorkerBurst.includes(': "${PUSH_WORKER_KEY:?PUSH_WORKER_KEY is required}"') &&
+    pushWorkerBurst.includes('timeout --signal=TERM') &&
+    pushWorkerBurst.includes('bash /root/push-worker-tick.sh') &&
+    pushWorkerBurst.includes("logger -t monitorapp-push-worker 'push catch-up tick failed'") &&
+    pushWorkerRunbook.includes('install -o root -g root -m 0700') &&
+    pushWorkerRunbook.includes('owned by `root:root` with mode') &&
+    pushWorkerRunbook.includes('## Atomic key rotation'),
+  'Push worker source must fail closed, protect its secret, and retry through the bounded fallback',
 );
 check(appJson.android?.runtimeVersion === appJson.version, 'Android runtimeVersion must match app version');
 check(appJson.ios?.runtimeVersion === appJson.version, 'iOS runtimeVersion must match app version');
@@ -355,6 +612,8 @@ check(
 );
 check(
   gradle.includes('LegacySystemBarColorApiVisitorFactory') &&
+    gradle.includes('com.monitorapp.buildlogic.LegacySystemBarColorApiVisitorFactory') &&
+    legacySystemBarVisitorTracked.status === 0 &&
     gradle.includes('InstrumentationScope.ALL') &&
     legacySystemBarCompat.includes('Build.VERSION.SDK_INT >= EDGE_TO_EDGE_ENFORCED_API') &&
     legacySystemBarVisitor.includes("'getStatusBarColor()I'") &&
@@ -654,7 +913,8 @@ check(
     offlineStatus.includes('if (!canRunOutboxSync()) break;') &&
     financeQueue.includes('return onlineManager.isOnline() && canRunOutboxSync(snapshot)') &&
     financeQueue.includes('if (!canRunOutboxSync()) break;') &&
-    photoQueue.includes('if (!canRunOutboxSync()) return { completed: 0, failed: 0 }') &&
+    photoQueue.includes('if (!canRunOutboxSync()) {') &&
+    photoQueue.includes('pending: await countPending()') &&
     photoQueue.includes('if (!canRunOutboxSync()) break;') &&
     backgroundSync.includes('if (!canRunOutboxSync()) return true;') &&
     orderDetailsScreen.includes('const canRunDeferredSync = canRunOutboxSync(offlineSnapshot)') &&
@@ -797,10 +1057,10 @@ check(
   'Offline object search must preserve scoped cached suggestions without persisting a false empty success',
 );
 check(
-  imageSizeSecurityPatch.includes('if (boxSize < 8)') &&
+    imageSizeSecurityPatch.includes('if (boxSize < 8)') &&
     imageSizeSecurityPatch.includes('assertValidImageEntry') &&
     packageJson.scripts?.['test:security-regressions'] ===
-      'node scripts/test-image-size-security.mjs',
+      'node scripts/test-image-size-security.mjs && node scripts/test-edge-security-regressions.mjs && node scripts/test-media-upload-policy.mjs',
   'The Metro image parser DoS mitigation and its isolated regression test must remain reproducible',
 );
 check(
@@ -1047,10 +1307,12 @@ check(photoQueue.includes('ownerUserId') && photoQueue.includes('flushOrderPhoto
 check(
   !cachedImage.includes('__img_retry') &&
     !cachedImage.includes('fallbackUriRef') &&
-    cachedImage.includes('const imageSource = useMemo(() => ({ uri: sourceUri }), [sourceUri])') &&
+    cachedImage.includes('uri: sourceUri') &&
     cachedImage.includes('source={imageSource}') &&
-    cachedImage.includes("retryAttempt > 0 ? 'none' : cachePolicy"),
-  'Image retries must preserve signed URLs exactly and bypass a failed cache entry',
+    cachedImage.includes("const effectiveCachePolicy = requiresProtectedAuth ? 'none' : cachePolicy") &&
+    cachedImage.includes("cachePolicy={retryAttempt > 0 ? 'none' : effectiveCachePolicy}") &&
+    cachedImage.includes('Authorization: `Bearer ${protectedAccessToken}`'),
+  'Image retries must preserve signed URLs while protected thumbnails stay authenticated and uncached',
 );
 check(
   photoGrid.includes('key: buildPhotoKey(uploadedUrl || visibleUri, visibleUri') &&

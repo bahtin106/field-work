@@ -24,6 +24,7 @@ import { useToast } from '../../components/ui/ToastProvider';
 import { useAuthLogin } from '../../hooks/useAuthLogin';
 import { consumeAuthBlockNotice } from '../../lib/authBlockNotice';
 import { getAppVersion } from '../../lib/appVersion';
+import { isValidPassword } from '../../lib/authValidation';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
@@ -39,6 +40,16 @@ function isValidEmail(value) {
   const normalized = normalizeEmail(value);
   if (!normalized) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
+async function resolveFunctionPayload(data, invokeError) {
+  if (!invokeError) return data;
+  const response = invokeError?.context;
+  if (response && typeof response.json === 'function') {
+    const payload = await response.json().catch(() => null);
+    if (payload && typeof payload === 'object') return payload;
+  }
+  throw invokeError;
 }
 
 const createStyles = (theme) => {
@@ -131,6 +142,9 @@ const createStyles = (theme) => {
     modalScroll: {
       maxHeight: 360,
     },
+    recoverModalScroll: {
+      maxHeight: 460,
+    },
     modalContent: {
       gap: theme.spacing.sm,
       paddingBottom: theme.spacing.xs,
@@ -181,9 +195,15 @@ function LoginScreenContent() {
   const [recoverModalVisible, setRecoverModalVisible] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
   const [recoverSending, setRecoverSending] = useState(false);
+  const [recoverConfirming, setRecoverConfirming] = useState(false);
   const [recoverFeedback, setRecoverFeedback] = useState(null);
   const [recoverSentOnce, setRecoverSentOnce] = useState(false);
+  const [recoverRequestedEmail, setRecoverRequestedEmail] = useState('');
   const [recoverCooldownUntil, setRecoverCooldownUntil] = useState(0);
+  const [recoverCodeRequested, setRecoverCodeRequested] = useState(false);
+  const [recoverCode, setRecoverCode] = useState('');
+  const [recoverNewPassword, setRecoverNewPassword] = useState('');
+  const [recoverConfirmPassword, setRecoverConfirmPassword] = useState('');
   const [, forceCooldownTick] = useState(0);
   const [supportModalVisible, setSupportModalVisible] = useState(false);
   const [supportEmail, setSupportEmail] = useState('');
@@ -255,7 +275,8 @@ function LoginScreenContent() {
     0,
     Math.ceil((Number(recoverCooldownUntil) - Date.now()) / 1000),
   );
-  const canSendRecover = !recoverSending && recoverCooldownLeft <= 0;
+  const recoverBusy = recoverSending || recoverConfirming;
+  const canSendRecover = !recoverBusy && recoverCooldownLeft <= 0;
 
   useEffect(() => {
     if (!recoverModalVisible || recoverCooldownLeft <= 0) return undefined;
@@ -267,10 +288,20 @@ function LoginScreenContent() {
 
   const openRecoverModal = useCallback(() => {
     const nextEmail = normalizeEmail(email);
+    const canResumeRequest = recoverSentOnce && recoverRequestedEmail === nextEmail;
     setRecoverEmail(nextEmail);
+    setRecoverCodeRequested(canResumeRequest);
+    if (!canResumeRequest) {
+      setRecoverSentOnce(false);
+      setRecoverRequestedEmail('');
+      setRecoverCooldownUntil(0);
+    }
+    setRecoverCode('');
+    setRecoverNewPassword('');
+    setRecoverConfirmPassword('');
     setRecoverFeedback(null);
     setRecoverModalVisible(true);
-  }, [email]);
+  }, [email, recoverRequestedEmail, recoverSentOnce]);
 
   const openSupportModal = useCallback(() => {
     setSupportEmail(normalizeEmail(recoverEmail || email));
@@ -281,10 +312,10 @@ function LoginScreenContent() {
   }, [email, recoverEmail]);
 
   const closeRecoverModal = useCallback(() => {
-    if (recoverSending) return;
+    if (recoverBusy) return;
     setRecoverModalVisible(false);
     setRecoverFeedback(null);
-  }, [recoverSending]);
+  }, [recoverBusy]);
 
   const sendRecover = useCallback(async () => {
     const normalizedEmail = normalizeEmail(recoverEmail);
@@ -298,33 +329,31 @@ function LoginScreenContent() {
       setRecoverFeedback(null);
 
       const { data, error: invokeError } = await supabase.functions.invoke('request-password-reset', {
-        body: { email: normalizedEmail },
+        body: { email: normalizedEmail, mode: 'profile-change' },
       });
-
-      if (invokeError) throw invokeError;
-
-      const ok = data?.ok === true;
+      const payload = await resolveFunctionPayload(data, invokeError);
+      const ok = payload?.ok === true;
       if (!ok) {
-        const code = String(data?.code || '');
-        if (code === 'USER_NOT_FOUND') {
-          setRecoverFeedback({ type: 'warning', message: t('login_recover_user_not_found') });
-          return;
-        }
+        const code = String(payload?.code || '');
         if (code === 'RATE_LIMIT') {
-          const retryAfter = Math.max(1, Number(data?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
+          const retryAfter = Math.max(1, Number(payload?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
           setRecoverCooldownUntil(Date.now() + retryAfter * 1000);
           setRecoverSentOnce(true);
+          setRecoverRequestedEmail(normalizedEmail);
+          setRecoverCodeRequested(true);
           setRecoverFeedback({
             type: 'warning',
             message: t('login_recover_rate_limit').replace('{n}', String(retryAfter)),
           });
           return;
         }
-        throw new Error(String(data?.message || 'reset_failed'));
+        throw new Error(String(payload?.message || 'reset_failed'));
       }
 
-      const cooldownSeconds = Math.max(1, Number(data?.cooldown_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
+      const cooldownSeconds = Math.max(1, Number(payload?.cooldown_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
       setRecoverSentOnce(true);
+      setRecoverRequestedEmail(normalizedEmail);
+      setRecoverCodeRequested(true);
       setRecoverCooldownUntil(Date.now() + cooldownSeconds * 1000);
       setRecoverFeedback({ type: 'success', message: t('login_recover_sent_hint') });
     } catch (e) {
@@ -334,6 +363,77 @@ function LoginScreenContent() {
       setRecoverSending(false);
     }
   }, [recoverEmail, t]);
+
+  const confirmRecover = useCallback(async () => {
+    const normalizedEmail = normalizeEmail(recoverRequestedEmail);
+    const normalizedCode = String(recoverCode || '').replace(/\D/g, '').slice(0, 6);
+    if (!isValidEmail(normalizedEmail)) {
+      setRecoverFeedback({ type: 'warning', message: t('err_email') });
+      return;
+    }
+    if (!/^\d{6}$/.test(normalizedCode)) {
+      setRecoverFeedback({ type: 'warning', message: t('register_code_invalid') });
+      return;
+    }
+    if (!isValidPassword(recoverNewPassword)) {
+      setRecoverFeedback({ type: 'warning', message: t('err_password_requirements') });
+      return;
+    }
+    if (recoverNewPassword !== recoverConfirmPassword) {
+      setRecoverFeedback({ type: 'warning', message: t('err_password_mismatch') });
+      return;
+    }
+
+    try {
+      setRecoverConfirming(true);
+      setRecoverFeedback(null);
+      const { data, error: invokeError } = await supabase.functions.invoke('request-password-reset', {
+        body: {
+          email: normalizedEmail,
+          code: normalizedCode,
+          new_password: recoverNewPassword,
+        },
+      });
+      const payload = await resolveFunctionPayload(data, invokeError);
+      if (payload?.ok !== true) {
+        const errorCode = String(payload?.code || '').toUpperCase();
+        if (errorCode === 'INVALID_CODE' || errorCode === 'TOKEN_INVALID') {
+          setRecoverFeedback({ type: 'warning', message: t('register_code_invalid') });
+          return;
+        }
+        if (errorCode === 'CODE_EXPIRED') {
+          setRecoverFeedback({ type: 'warning', message: t('register_code_expired') });
+          return;
+        }
+        if (errorCode === 'TOO_MANY_ATTEMPTS') {
+          setRecoverFeedback({ type: 'warning', message: t('register_code_too_many_attempts') });
+          return;
+        }
+        if (errorCode === 'INVALID_PASSWORD') {
+          setRecoverFeedback({ type: 'warning', message: t('err_password_requirements') });
+          return;
+        }
+        throw new Error(String(payload?.message || 'reset_failed'));
+      }
+
+      setEmail(normalizedEmail);
+      setRecoverModalVisible(false);
+      setRecoverFeedback(null);
+      setRecoverCodeRequested(false);
+      setRecoverSentOnce(false);
+      setRecoverRequestedEmail('');
+      setRecoverCooldownUntil(0);
+      setRecoverCode('');
+      setRecoverNewPassword('');
+      setRecoverConfirmPassword('');
+      toast.success(t('set_password_success'));
+    } catch (e) {
+      const message = String(e?.message || '').trim() || t('login_recover_send_error');
+      setRecoverFeedback({ type: 'error', message });
+    } finally {
+      setRecoverConfirming(false);
+    }
+  }, [recoverCode, recoverConfirmPassword, recoverNewPassword, recoverRequestedEmail, setEmail, t, toast]);
 
   const sendSupport = useCallback(async () => {
     const normalizedEmail = normalizeEmail(supportEmail);
@@ -601,7 +701,7 @@ function LoginScreenContent() {
         visible={recoverModalVisible}
         onClose={closeRecoverModal}
         title={t('login_recover_modal_title')}
-        maxHeightRatio={0.64}
+        maxHeightRatio={0.82}
         presentation="sheet"
         feedback={recoverFeedback}
         footer={
@@ -611,23 +711,23 @@ function LoginScreenContent() {
                 title={t('btn_cancel')}
                 variant="secondary"
                 onPress={closeRecoverModal}
-                disabled={recoverSending}
+                disabled={recoverBusy}
               />
             </View>
             <View style={styles.modalFooterBtn}>
               <Button
-                title={recoverSendTitle}
-                onPress={sendRecover}
+                title={recoverCodeRequested ? t('register_code_confirm_button') : recoverSendTitle}
+                onPress={recoverCodeRequested ? confirmRecover : sendRecover}
                 formSubmit
-                loading={recoverSending}
-                disabled={!canSendRecover}
+                loading={recoverCodeRequested ? recoverConfirming : recoverSending}
+                disabled={recoverCodeRequested ? recoverBusy : !canSendRecover}
               />
             </View>
           </View>
         }
       >
         <KeyboardAwareScrollView
-          style={styles.modalScroll}
+          style={styles.recoverModalScroll}
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={SMOOTH_KEYBOARD_DISMISS_MODE}
@@ -641,8 +741,53 @@ function LoginScreenContent() {
             keyboardType="email-address"
             autoCapitalize="none"
             returnKeyType="done"
-            editable={!recoverSending}
+            editable={!recoverBusy && !recoverCodeRequested}
           />
+          {recoverCodeRequested ? (
+            <>
+              <TextField
+                value={recoverCode}
+                onChangeText={(value) => setRecoverCode(String(value || '').replace(/\D/g, '').slice(0, 6))}
+                placeholder={t('register_code_screen_otp_label')}
+                keyboardType="number-pad"
+                maxLength={6}
+                returnKeyType="next"
+                editable={!recoverBusy}
+              />
+              <TextField
+                value={recoverNewPassword}
+                onChangeText={setRecoverNewPassword}
+                placeholder={t('placeholder_new_password')}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                returnKeyType="next"
+                editable={!recoverBusy}
+              />
+              <TextField
+                value={recoverConfirmPassword}
+                onChangeText={setRecoverConfirmPassword}
+                placeholder={t('set_password_confirm_placeholder')}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                returnKeyType="done"
+                onSubmitEditing={confirmRecover}
+                editable={!recoverBusy}
+              />
+              <Button
+                title={recoverSendTitle}
+                variant="secondary"
+                onPress={sendRecover}
+                loading={recoverSending}
+                disabled={!canSendRecover}
+              />
+            </>
+          ) : null}
           {recoverFeedback?.type === 'error' ? (
             <Pressable onPress={openSupportModal}>
               <Text style={styles.supportLinkText}>{t('login_recover_contact_support')}</Text>

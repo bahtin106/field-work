@@ -6,6 +6,8 @@ import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import Feather from '@expo/vector-icons/Feather';
 import { useTheme } from '../../theme';
+import { getCachedSupabaseAccessToken } from '../../lib/supabaseSessionCache';
+import { isProtectedMediaThumbnailUrl } from '../../src/shared/media/thumbnailUrl';
 
 const BLURHASH_PLACEHOLDER = 'L6PZfSi_.AyE_3t7t7R**0o#DgR4';
 const MAX_IMAGE_RETRY_ATTEMPTS = 2;
@@ -25,6 +27,7 @@ const IMAGE_LOAD_TIMEOUT_MS = 15_000;
  * @param {() => void} [props.onError]    – called on load error
  * @param {string} [props.placeholder]    – blurhash or thumbhash placeholder
  * @param {string} [props.accessibilityLabel]
+ * @param {object} [props.headers]         - explicit headers for the image origin
  */
 export default function CachedImage({
   uri,
@@ -43,6 +46,7 @@ export default function CachedImage({
   showLoadingIndicator = false,
   loadTimeoutMs = IMAGE_LOAD_TIMEOUT_MS,
   accessibilityLabel,
+  headers,
   ...rest
 }) {
   const { theme } = useTheme();
@@ -50,6 +54,8 @@ export default function CachedImage({
   const [activeUri, setActiveUri] = useState(uri || '');
   const [isLoading, setIsLoading] = useState(!!uri);
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const [protectedAccessToken, setProtectedAccessToken] = useState('');
+  const [protectedAuthReady, setProtectedAuthReady] = useState(false);
   const retryTimerRef = useRef(null);
   const loadTimeoutRef = useRef(null);
   const loadedUriRef = useRef('');
@@ -163,6 +169,51 @@ export default function CachedImage({
   }, []);
 
   const sourceUri = activeUri || uri || '';
+  const requiresProtectedAuth = isProtectedMediaThumbnailUrl(sourceUri);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!requiresProtectedAuth) {
+      setProtectedAccessToken('');
+      setProtectedAuthReady(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setProtectedAuthReady(false);
+    getCachedSupabaseAccessToken()
+      .then((token) => {
+        if (cancelled) return;
+        setProtectedAccessToken(String(token || '').trim());
+        setProtectedAuthReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProtectedAccessToken('');
+        setProtectedAuthReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requiresProtectedAuth, retryAttempt, sourceUri]);
+
+  useEffect(() => {
+    if (!requiresProtectedAuth || !protectedAuthReady || protectedAccessToken) return;
+    const fallback = String(fallbackUri || '').trim();
+    if (fallback && fallback !== sourceUri && !isProtectedMediaThumbnailUrl(fallback)) {
+      setActiveUri(fallback);
+      setHasError(false);
+      setIsLoading(true);
+      setRetryAttempt(0);
+      loadedUriRef.current = '';
+      return;
+    }
+    setIsLoading(false);
+    setHasError(true);
+  }, [fallbackUri, protectedAccessToken, protectedAuthReady, requiresProtectedAuth, sourceUri]);
+
+  const canLoadSource = !requiresProtectedAuth || (protectedAuthReady && Boolean(protectedAccessToken));
 
   const restartLoadTimeout = useCallback(() => {
     if (loadTimeoutRef.current) {
@@ -171,6 +222,7 @@ export default function CachedImage({
     }
     if (
       !sourceUri ||
+      !canLoadSource ||
       hasError ||
       loadedUriRef.current === sourceUri ||
       !Number.isFinite(loadTimeoutMs) ||
@@ -180,7 +232,7 @@ export default function CachedImage({
       loadTimeoutRef.current = null;
       handleError(new Error('Image load timed out'));
     }, loadTimeoutMs);
-  }, [handleError, hasError, loadTimeoutMs, sourceUri]);
+  }, [canLoadSource, handleError, hasError, loadTimeoutMs, sourceUri]);
 
   const handleProgress = useCallback(
     (event) => {
@@ -200,7 +252,22 @@ export default function CachedImage({
     };
   }, [restartLoadTimeout, retryAttempt]);
 
-  const imageSource = useMemo(() => ({ uri: sourceUri }), [sourceUri]);
+  const imageSource = useMemo(() => {
+    const sourceHeaders = {
+      ...(headers && typeof headers === 'object' ? headers : {}),
+      ...(requiresProtectedAuth && protectedAccessToken
+        ? { Authorization: `Bearer ${protectedAccessToken}` }
+        : {}),
+    };
+    return {
+      uri: sourceUri,
+      ...(Object.keys(sourceHeaders).length ? { headers: sourceHeaders } : {}),
+    };
+  }, [headers, protectedAccessToken, requiresProtectedAuth, sourceUri]);
+  // Expo's native cache key is URL-based and does not isolate entries by the
+  // Authorization header. Do not persist or reuse protected bytes across an
+  // in-process account switch.
+  const effectiveCachePolicy = requiresProtectedAuth ? 'none' : cachePolicy;
   const sizeStyle = useMemo(
     () => ({
       ...(width != null ? { width } : {}),
@@ -209,7 +276,7 @@ export default function CachedImage({
     [width, height],
   );
 
-  if (!sourceUri || hasError) {
+  if (!sourceUri || hasError || !canLoadSource) {
     return (
       <View
         style={[
@@ -231,7 +298,7 @@ export default function CachedImage({
         source={imageSource}
         style={StyleSheet.absoluteFill}
         contentFit={contentFit}
-        cachePolicy={retryAttempt > 0 ? 'none' : cachePolicy}
+        cachePolicy={retryAttempt > 0 ? 'none' : effectiveCachePolicy}
         recyclingKey={recyclingKey != null ? `${String(recyclingKey)}:${retryAttempt}` : `${sourceUri}:${retryAttempt}`}
         transition={transition}
         placeholder={placeholder ? { blurhash: placeholder } : undefined}

@@ -1,10 +1,12 @@
 {
   "cli": {
-    "version": ">= 2.0.0",
+    "version": ">= 20.5.1",
+    "requireCommit": true,
     "appVersionSource": "local"
   },
   "build": {
     "development": {
+      "channel": "development",
       "developmentClient": true,
       "distribution": "internal",
       "android": {
@@ -15,12 +17,14 @@
       }
     },
     "preview": {
+      "channel": "preview",
       "environment": "preview",
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
+      "channel": "production",
       "environment": "production",
       "android": {
         "buildType": "app-bundle"

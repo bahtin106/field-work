@@ -10,6 +10,9 @@ import {
   generateImageBackgroundAsync,
 } from '@expo/image-utils';
 import Jimp from 'jimp-compact';
+import pngjs from 'pngjs';
+
+const { PNG } = pngjs;
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const canonicalArtwork = path.join(root, 'assets/icon.png');
@@ -78,9 +81,22 @@ async function createOpaqueIosIcon() {
     backgroundColor: adaptiveBackgroundColor,
     resizeMode: 'cover',
   });
-  return compositeImagesAsync({
+  const composited = await compositeImagesAsync({
     background,
     foreground: await resizeArtwork(1024),
+  });
+  const opaque = await Jimp.read(composited);
+  opaque.scanQuiet(0, 0, opaque.bitmap.width, opaque.bitmap.height, (_x, _y, index) => {
+    opaque.bitmap.data[index + 3] = 255;
+  });
+  const rgbaPng = await opaque.getBufferAsync(Jimp.MIME_PNG);
+  const decoded = PNG.sync.read(rgbaPng);
+  // Apple rejects icons whose PNG contains an alpha channel even when every
+  // alpha value is 255. Encode an RGB (PNG color type 2) file explicitly.
+  return PNG.sync.write(decoded, {
+    colorType: 2,
+    inputColorType: 6,
+    inputHasAlpha: true,
   });
 }
 

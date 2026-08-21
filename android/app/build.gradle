@@ -1,7 +1,7 @@
 import groovy.json.JsonSlurper
 import com.android.build.api.instrumentation.FramesComputationMode
 import com.android.build.api.instrumentation.InstrumentationScope
-import com.monitorapp.build.LegacySystemBarColorApiVisitorFactory
+import com.monitorapp.buildlogic.LegacySystemBarColorApiVisitorFactory
 
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
@@ -99,8 +99,8 @@ android {
         applicationId = 'com.monitorapp.monitor'
         minSdk = rootProject.ext.minSdkVersion
         targetSdk = rootProject.ext.targetSdkVersion
-        versionCode = 11
-        versionName = "1.1.0"
+        versionCode = 12
+        versionName = "1.1.1"
         externalNativeBuild {
             cmake {
                 // Keep object paths under Windows MAX_PATH without over-constraining CMake.

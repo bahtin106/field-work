@@ -103,6 +103,23 @@ function mutateFinanceOutbox(mutator) {
   return operation;
 }
 
+function summarizeFinanceOutbox(items, owner) {
+  const mine = (Array.isArray(items) ? items : []).filter((item) =>
+    isOfflineItemOwnedBy(item, owner),
+  );
+  return {
+    pending: mine.filter((item) => String(item?.status || 'pending') !== 'failed').length,
+    failed: mine.filter((item) => String(item?.status || '') === 'failed').length,
+  };
+}
+
+async function getFinanceOutboxSummary(ownerContext = getActiveOfflineOwnerContext()) {
+  if (!ownerContext) return { pending: 0, failed: 0 };
+  const items = await readFinanceOutbox();
+  if (!isActiveOfflineOwnerContext(ownerContext)) return { pending: 0, failed: 0 };
+  return summarizeFinanceOutbox(items, ownerContext.owner);
+}
+
 function requireFinanceOwnerContext() {
   const context = getActiveOfflineOwnerContext();
   if (!context) {
@@ -248,14 +265,14 @@ function mergeOutboxEntries(baseEntries, outbox, orderId, owner) {
 }
 
 async function runFinanceOutboxSync(queryClient) {
-  if (!canRunOutboxSync()) return;
+  if (!canRunOutboxSync()) return getFinanceOutboxSummary();
   const ownerContext = getActiveOfflineOwnerContext();
-  if (!ownerContext) return;
+  if (!ownerContext) return { pending: 0, failed: 0 };
   const { owner } = ownerContext;
   await claimLegacyFinanceOutbox(ownerContext, queryClient);
-  if (!isActiveOfflineOwnerContext(ownerContext)) return;
+  if (!isActiveOfflineOwnerContext(ownerContext)) return { pending: 0, failed: 0 };
   const snapshot = await readFinanceOutbox();
-  if (!isActiveOfflineOwnerContext(ownerContext)) return;
+  if (!isActiveOfflineOwnerContext(ownerContext)) return { pending: 0, failed: 0 };
   const mine = snapshot.filter((item) => isOfflineItemOwnedBy(item, owner));
   for (const item of mine) {
     if (!canRunOutboxSync()) break;
@@ -349,11 +366,12 @@ async function runFinanceOutboxSync(queryClient) {
       }));
     }
   }
+  return getFinanceOutboxSummary(ownerContext);
 }
 
 export async function syncOfflineFinanceOutbox(queryClient, _orderId = null) {
   const ownerContext = getActiveOfflineOwnerContext();
-  if (!ownerContext) return;
+  if (!ownerContext) return { pending: 0, failed: 0 };
   if (financeSyncInFlight && financeSyncEpoch === ownerContext.epoch) return financeSyncInFlight;
   const run = runFinanceOutboxSync(queryClient).finally(() => {
     if (financeSyncInFlight !== run) return;

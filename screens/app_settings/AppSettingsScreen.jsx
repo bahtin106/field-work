@@ -193,6 +193,22 @@ async function getNotifications() {
   return __NotificationsMod;
 }
 
+async function ensureAndroidNotificationChannel(Notifications) {
+  if (Platform.OS !== 'android') return;
+  try {
+    await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
+      name: getAndroidChannelName(T),
+      importance: Notifications.AndroidImportance.MAX,
+      sound: 'default',
+      lightColor: '#0A84FF',
+      vibrationPattern: [0, 250, 150, 250],
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    });
+  } catch (e) {
+    __devLog('setNotificationChannelAsync failed:', e?.message || e);
+  }
+}
+
 async function getSystemPushPermission() {
   try {
     if (Platform.OS === 'web') {
@@ -232,20 +248,7 @@ async function getPushTokenIfGranted() {
     }
 
     const Notifications = await getNotifications();
-    if (Platform.OS === 'android') {
-      try {
-        await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
-          name: getAndroidChannelName(T),
-          importance: Notifications.AndroidImportance.MAX,
-          sound: 'default',
-          lightColor: '#0A84FF',
-          vibrationPattern: [0, 250, 150, 250],
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-        });
-      } catch (e) {
-        __devLog('setNotificationChannelAsync failed:', e?.message || e);
-      }
-    }
+    await ensureAndroidNotificationChannel(Notifications);
 
     let token = null;
     let reason = null;
@@ -278,6 +281,9 @@ async function ensurePushPermission() {
       let canAskAgain = permission.canAskAgain;
       if (canAskAgain) {
         const Notifications = await getNotifications();
+        // Android 13 only presents the runtime notification permission after
+        // the app has created at least one channel.
+        await ensureAndroidNotificationChannel(Notifications);
         const requested = await Notifications.requestPermissionsAsync();
         const grantedAfterRequest = requested?.status === 'granted';
         canAskAgain = requested?.canAskAgain !== false;
@@ -995,7 +1001,7 @@ export default function AppSettings() {
       if (sectionKey === 'quiet' && itemKey === 'quiet_reset') return onResetQuietTimes;
       if (sectionKey === 'legal' && itemKey === 'privacy-policy') return openExternalPage(LEGAL_LINKS.privacy);
       if (sectionKey === 'legal' && itemKey === 'terms') return openExternalPage(LEGAL_LINKS.offer);
-      if (sectionKey === 'legal' && itemKey === 'delete-account') return openExternalPage(LEGAL_LINKS.dataDeletion);
+      if (sectionKey === 'legal' && itemKey === 'delete-account') return () => router.push('/app_settings/account-deletion');
       return undefined;
     };
 

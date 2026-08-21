@@ -8,7 +8,8 @@ const SUPABASE_URL =
   '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const PUSH_WORKER_KEY = Deno.env.get('PUSH_WORKER_KEY') || '';
-const PUSH_ANDROID_CHANNEL_ID = Deno.env.get('PUSH_ANDROID_CHANNEL_ID') || 'app-notify';
+const PUSH_ANDROID_CHANNEL_ID =
+  Deno.env.get('PUSH_ANDROID_CHANNEL_ID') || 'app-notify-private-v2';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_PUSH_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const SUPPORT_PUSH_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -776,11 +777,14 @@ export async function handlePushSendRequest(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return new Response('POST only', { status: 405, headers: corsHeaders });
 
-  if (PUSH_WORKER_KEY) {
-    const incoming = req.headers.get('x-worker-key') || '';
-    if (incoming !== PUSH_WORKER_KEY) {
-      return new Response('Unauthorized', { status: 401, headers: corsHeaders });
-    }
+  if (!PUSH_WORKER_KEY) {
+    console.error('[push-send] PUSH_WORKER_KEY is not configured; refusing worker request');
+    return new Response('Worker is not configured', { status: 503, headers: corsHeaders });
+  }
+
+  const incoming = req.headers.get('x-worker-key') || '';
+  if (incoming !== PUSH_WORKER_KEY) {
+    return new Response('Unauthorized', { status: 401, headers: corsHeaders });
   }
 
   try {

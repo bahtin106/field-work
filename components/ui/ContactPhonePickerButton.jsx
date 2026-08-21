@@ -108,7 +108,11 @@ export default function ContactPhonePickerButton({ value, onSelect, disabled = f
       let contact = await Contacts.presentContactPickerAsync();
       if (!contact) return;
 
-      if ((!contact.phoneNumbers || contact.phoneNumbers.length === 0) && contact.id) {
+      if (
+        Platform.OS === 'android' &&
+        (!contact.phoneNumbers || contact.phoneNumbers.length === 0) &&
+        contact.id
+      ) {
         try {
           const details = await Contacts.getContactByIdAsync(contact.id, [Contacts.Fields.PhoneNumbers]);
           if (details) contact = { ...contact, ...details };

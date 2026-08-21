@@ -23,6 +23,7 @@ LogBox.ignoreLogs([
 ]);
 
 import BottomNav from '../components/navigation/BottomNav';
+import ErrorBoundary from '../components/feedback/ErrorBoundary';
 import { renderNavigationScreen } from '../components/navigation/NavigationCommitBoundary';
 import ToastProvider from '../components/ui/ToastProvider';
 import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
@@ -64,6 +65,7 @@ import {
   registerOfflineBackgroundSync,
   recoverInterruptedOrderPhotoQueue,
   runBackgroundSync,
+  unregisterOfflineBackgroundSync,
 } from '../src/shared/offline/backgroundSync';
 import { withReadDeadline } from '../src/shared/network/readDeadline';
 import QueryProvider from '../src/shared/query/QueryProvider';
@@ -269,7 +271,7 @@ function RootLayoutInner() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.id) return undefined;
+    if (isInitializing || !isAuthenticated || !user?.id) return undefined;
 
     const expectedUserId = String(user.id);
     let active = true;
@@ -322,7 +324,7 @@ function RootLayoutInner() {
       controller?.abort?.();
       unsubscribeNetwork();
     };
-  }, [isAuthenticated, isAuthenticatedUserCurrent, user?.id]);
+  }, [isAuthenticated, isAuthenticatedUserCurrent, isInitializing, user?.id]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -418,7 +420,7 @@ function RootLayoutInner() {
   }, [hideSplash]);
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.id) return undefined;
+    if (isInitializing || !isAuthenticated || !user?.id) return undefined;
     let active = true;
     let running = false;
     let initialized = false;
@@ -458,7 +460,12 @@ function RootLayoutInner() {
       appStateSubscription.remove();
       clearInterval(retryTimer);
     };
-  }, [isAuthenticated, user?.id]);
+  }, [isAuthenticated, isInitializing, user?.id]);
+
+  useEffect(() => {
+    if (isInitializing || isAuthenticated) return;
+    unregisterOfflineBackgroundSync().catch(() => {});
+  }, [isAuthenticated, isInitializing]);
 
   const enforceAccess = useCallback(async () => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
@@ -950,6 +957,10 @@ function RootLayoutInner() {
                     options={{ title: t('routes.app_settings/AppSettings') }}
                   />
                   <Stack.Screen
+                    name="app_settings/account-deletion"
+                    options={{ title: t('account_deletion_title') }}
+                  />
+                  <Stack.Screen
                     name="company_settings/index"
                     options={{ title: t('routes.company_settings/index') }}
                   />
@@ -1023,23 +1034,25 @@ function RootLayoutInner() {
 
 export default function RootLayout() {
   return (
-    <QueryProvider>
-      <SafeAreaProvider>
-        <KeyboardProvider>
-          <ThemeProvider>
-            <ToastProvider>
-              <FeedbackProvider>
-                <SimpleAuthProvider>
-                  <HelpCenterProvider>
-                    <RootLayoutInner />
-                  </HelpCenterProvider>
-                </SimpleAuthProvider>
-              </FeedbackProvider>
-            </ToastProvider>
-          </ThemeProvider>
-        </KeyboardProvider>
-      </SafeAreaProvider>
-    </QueryProvider>
+    <ErrorBoundary>
+      <QueryProvider>
+        <SafeAreaProvider>
+          <KeyboardProvider>
+            <ThemeProvider>
+              <ToastProvider>
+                <FeedbackProvider>
+                  <SimpleAuthProvider>
+                    <HelpCenterProvider>
+                      <RootLayoutInner />
+                    </HelpCenterProvider>
+                  </SimpleAuthProvider>
+                </FeedbackProvider>
+              </ToastProvider>
+            </ThemeProvider>
+          </KeyboardProvider>
+        </SafeAreaProvider>
+      </QueryProvider>
+    </ErrorBoundary>
   );
 }
 

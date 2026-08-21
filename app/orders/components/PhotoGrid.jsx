@@ -16,6 +16,7 @@ import {
   canRunDeferredNetworkWork,
   useOfflineSnapshot,
 } from '../../../src/shared/offline/offlineStatus';
+import { isProtectedMediaThumbnailUrl } from '../../../src/shared/media/thumbnailUrl';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const NUM_COLUMNS = 3;
@@ -333,7 +334,7 @@ function PhotoGrid({
       .filter((item) => !item.isPending && !item.issueMessage)
       .slice(0, 12)
       .map((item) => item.displayUri || item.uri)
-      .filter(Boolean);
+      .filter((url) => url && !isProtectedMediaThumbnailUrl(url));
     if (displayUrls.length) {
       ExpoImage.prefetch(displayUrls, 'memory-disk').catch(() => {});
     }

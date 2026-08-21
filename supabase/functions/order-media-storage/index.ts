@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import {
   buildBegetPublicUrl,
   createBegetPresignedGetUrl,
@@ -9,7 +9,18 @@ import {
   listBegetKeys,
   putBegetObject,
 } from '../_shared/beget-s3.ts';
+import {
+  MEDIA_UPLOAD_MAX_BYTES,
+  assertBase64MediaUploadSize,
+  assertCommittedMediaUpload,
+  assertMediaUploadSize,
+  assertOwnedMediaUploadPath,
+  getMediaFileExtension,
+  normalizeMediaUploadMime,
+} from '../_shared/media-upload-policy.mjs';
 import { handleFinanceEntryMediaStorageRequest } from '../finance-entry-media-storage/index.ts';
+
+type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -196,7 +207,7 @@ function parentKeyPrefix(key: string) {
 }
 
 async function purgeBegetCategoryOrphans(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   args: {
     companyId: string;
     orderId: string;
@@ -231,17 +242,6 @@ async function purgeBegetCategoryOrphans(
   return orphanKeys.length;
 }
 
-function getFileExtensionByMime(mime: string) {
-  const value = String(mime || '').toLowerCase();
-  if (value.includes('png')) return 'png';
-  if (value.includes('webp')) return 'webp';
-  if (value.includes('heic')) return 'heic';
-  if (value.includes('pdf')) return 'pdf';
-  if (value.includes('mp4')) return 'mp4';
-  if (value.includes('quicktime') || value.includes('mov')) return 'mov';
-  return 'jpg';
-}
-
 function toBase64UrlSafeName() {
   const arr = new Uint8Array(8);
   crypto.getRandomValues(arr);
@@ -250,14 +250,18 @@ function toBase64UrlSafeName() {
     .join('');
 }
 
-async function getCallerContext(admin: ReturnType<typeof createClient>, token: string) {
+async function getCallerContext(
+  admin: SupabaseAdminClient,
+  callerDb: SupabaseAdminClient,
+  token: string,
+) {
   const {
     data: { user },
     error,
   } = await admin.auth.getUser(token);
   if (error || !user) throw new Error('Unauthorized');
 
-  const { data: profile, error: profileErr } = await admin
+  const { data: profile, error: profileErr } = await callerDb
     .from('profiles')
     .select('id, role, company_id')
     .eq('id', user.id)
@@ -272,7 +276,7 @@ async function getCallerContext(admin: ReturnType<typeof createClient>, token: s
 }
 
 async function assertOrderMediaActionAllowed(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   caller: { companyId: string; role: string },
   action: string,
 ) {
@@ -301,15 +305,25 @@ async function assertOrderMediaActionAllowed(
   if (!allowed) throw new Error('Forbidden');
 }
 
-async function getCallerAndOrderContext(admin: ReturnType<typeof createClient>, token: string, orderId: string) {
-  const caller = await getCallerContext(admin, token);
-  const { data: order, error: orderErr } = await admin
+async function getCallerAndOrderContext(
+  admin: SupabaseAdminClient,
+  callerDb: SupabaseAdminClient,
+  token: string,
+  orderId: string,
+) {
+  const caller = await getCallerContext(admin, callerDb, token);
+  const { data: order, error: orderErr } = await callerDb
     .from('orders')
     .select('id, company_id, title, created_at, time_window_start, object:client_objects(name, city, street, house)')
     .eq('id', orderId)
     .maybeSingle();
-  if (orderErr || !order) throw new Error('Order not found');
+  if (orderErr || !order) throw new Error('Forbidden');
   if (String(order.company_id || '') !== caller.companyId) throw new Error('Forbidden');
+
+  const orderObjectRelation = order.object as unknown;
+  const orderObject = (
+    Array.isArray(orderObjectRelation) ? orderObjectRelation[0] : orderObjectRelation
+  ) as { name?: string | null; city?: string | null; street?: string | null; house?: string | null } | null | undefined;
 
   const { data: company, error: companyErr } = await admin
     .from('companies')
@@ -323,10 +337,10 @@ async function getCallerAndOrderContext(admin: ReturnType<typeof createClient>, 
     orderId: String(order.id),
     order: {
       ...order,
-      object: order?.object
+      object: orderObject
         ? {
-            name: order.object.name || null,
-            summary: buildObjectAddressSummary(order.object),
+            name: orderObject.name || null,
+            summary: buildObjectAddressSummary(orderObject),
           }
         : null,
     },
@@ -336,7 +350,7 @@ async function getCallerAndOrderContext(admin: ReturnType<typeof createClient>, 
 }
 
 async function appendOrderMediaUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   orderId: string,
   companyId: string,
   category: string,
@@ -357,7 +371,7 @@ async function appendOrderMediaUrlAtomic(
 }
 
 async function removeOrderMediaUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   orderId: string,
   companyId: string,
   category: string,
@@ -400,7 +414,7 @@ function buildOrderLabel(order: {
   return `${safeBase}_${shortId}`;
 }
 
-function buildOrderMediaKey(
+function buildOrderMediaFolder(
   ctx: {
     companyId: string;
     orderId: string;
@@ -414,15 +428,22 @@ function buildOrderMediaKey(
     companyName: string;
   },
   category: string,
-  mime: string,
 ) {
-  const ext = getFileExtensionByMime(mime);
   const monthDir = formatMonthBucket(ctx.order.time_window_start || ctx.order.created_at || null);
   const companyShort = String(ctx.companyId || '').slice(0, 8) || 'company';
   const companyDir = toAsciiSlug(ctx.companyName || `company-${companyShort}`, `company-${companyShort}`);
   const orderDir = buildOrderLabel(ctx.order);
   const categoryDir = CATEGORY_DIR[category] || toAsciiSlug(category, 'media');
-  return `companies/${companyDir}/${companyShort}/orders/${monthDir}/${orderDir}/${categoryDir}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  return `companies/${companyDir}/${companyShort}/orders/${monthDir}/${orderDir}/${categoryDir}`;
+}
+
+function buildOrderMediaKey(
+  ctx: Parameters<typeof buildOrderMediaFolder>[0],
+  category: string,
+  mime: string,
+) {
+  const ext = getMediaFileExtension(mime);
+  return `${buildOrderMediaFolder(ctx, category)}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
 }
 
 async function prepareBegetOrderUpload(
@@ -474,6 +495,14 @@ export async function handleOrderMediaStorageRequest(req: Request) {
 
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
     if (!token) return json(401, { success: false, message: 'Unauthorized' });
+    const callerDb = createClient(
+      supabaseUrl,
+      String(Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('ANON_KEY') || serviceRole),
+      {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      },
+    );
 
     const body = (await req.json().catch(() => ({}))) as {
       action?: string;
@@ -513,7 +542,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
     if (!action || !orderId) return json(400, { success: false, message: 'Missing action or order_id' });
 
     if (!financeEntryId && isLegacyFinanceCategory && action === 'delete') {
-      const ctx = await getCallerAndOrderContext(admin, token, orderId);
+      const ctx = await getCallerAndOrderContext(admin, callerDb, token, orderId);
       const sourceUrl = String(body.url || '').trim();
       if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
 
@@ -539,10 +568,9 @@ export async function handleOrderMediaStorageRequest(req: Request) {
         if (candidatesErr) throw candidatesErr;
         const needle = canonicalUrl(sourceUrl);
         const candidate = (candidates || []).find((entry) => {
-          const urls = Array.isArray((entry as { photo_urls?: unknown[] })?.photo_urls)
-            ? (entry as { photo_urls?: unknown[] }).photo_urls
-                .map((value) => String(value || '').trim())
-                .filter(Boolean)
+          const photoUrls = (entry as { photo_urls?: unknown[] } | undefined)?.photo_urls;
+          const urls = Array.isArray(photoUrls)
+            ? photoUrls.map((value) => String(value || '').trim()).filter(Boolean)
             : [];
           return urls.some((value) => value === sourceUrl || (needle && canonicalUrl(value) === needle));
         });
@@ -569,7 +597,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
     const category = normalizeMediaCategory(body.category);
     if (String(body.category || '').trim() && !category) {
       if (action === 'delete') {
-        const ctx = await getCallerAndOrderContext(admin, token, orderId);
+        const ctx = await getCallerAndOrderContext(admin, callerDb, token, orderId);
         const sourceUrl = String(body.url || '').trim();
         if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
 
@@ -595,10 +623,9 @@ export async function handleOrderMediaStorageRequest(req: Request) {
           if (candidatesErr) throw candidatesErr;
           const needle = canonicalUrl(sourceUrl);
           const candidate = (candidates || []).find((entry) => {
-            const urls = Array.isArray((entry as { photo_urls?: unknown[] })?.photo_urls)
-              ? (entry as { photo_urls?: unknown[] }).photo_urls
-                  .map((value) => String(value || '').trim())
-                  .filter(Boolean)
+            const photoUrls = (entry as { photo_urls?: unknown[] } | undefined)?.photo_urls;
+            const urls = Array.isArray(photoUrls)
+              ? photoUrls.map((value) => String(value || '').trim()).filter(Boolean)
               : [];
             return urls.some((value) => value === sourceUrl || (needle && canonicalUrl(value) === needle));
           });
@@ -622,7 +649,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
       return json(400, { success: false, message: 'Invalid category' });
     }
 
-    const ctx = await getCallerAndOrderContext(admin, token, orderId);
+    const ctx = await getCallerAndOrderContext(admin, callerDb, token, orderId);
     await assertOrderMediaActionAllowed(admin, ctx, action);
     const isBegetOnlyAction = action === 'prepare_upload' || action === 'upload';
     if (isBegetOnlyAction && ctx.mediaProvider !== 'beget_s3') {
@@ -716,7 +743,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
 
     if (action === 'prepare_upload') {
       if (!category) return json(400, { success: false, message: 'Invalid category' });
-      const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
+      const mime = normalizeMediaUploadMime(body.mime);
       const prepared = await prepareBegetOrderUpload(ctx, category, mime);
       return json(200, {
         success: true,
@@ -726,40 +753,46 @@ export async function handleOrderMediaStorageRequest(req: Request) {
         upload_headers: prepared.uploadHeaders as unknown as Json,
         object_key: prepared.objectKey,
         public_url: prepared.publicUrl,
+        max_size_bytes: MEDIA_UPLOAD_MAX_BYTES,
       });
     }
 
     if (action === 'commit_upload') {
       if (!category) return json(400, { success: false, message: 'Invalid category' });
       const objectKey = String(body.object_key || '').trim();
-      const publicUrl = String(body.public_url || '').trim() || buildBegetPublicUrl(objectKey);
       if (!objectKey) return json(400, { success: false, message: 'object_key is required' });
 
-      const headResult = await headBegetObject(objectKey);
-      const fileSizeBytes = Number(headResult?.ContentLength || 0);
+      const expectedFolder = buildOrderMediaFolder(ctx, category);
+      const ownedObjectKey = assertOwnedMediaUploadPath(objectKey, { expectedFolder });
+      const headResult = await headBegetObject(ownedObjectKey);
+      const committed = assertCommittedMediaUpload(
+        {
+          path: ownedObjectKey,
+          contentLength: headResult?.ContentLength,
+          contentType: headResult?.ContentType,
+        },
+        { expectedFolder },
+      );
+      const fileSizeBytes = committed.size;
+      const publicUrl = buildBegetPublicUrl(committed.path);
 
-      try {
-        const { error: mapErr } = await admin.from('order_media_external_map').upsert(
-          {
-            company_id: ctx.companyId,
-            order_id: ctx.orderId,
-            category,
-            provider: 'beget_s3',
-            source_url: publicUrl,
-            external_path: objectKey,
-            display_url: publicUrl,
-            display_url_updated_at: new Date().toISOString(),
-            created_by: ctx.userId,
-            file_size_bytes: fileSizeBytes,
-            media_metadata: clientMediaMetadata,
-          },
-          { onConflict: 'order_id,category,source_url' },
-        );
-        if (mapErr) throw mapErr;
-      } catch (error) {
-        await deleteBegetKeys([objectKey]).catch(() => null);
-        throw error;
-      }
+      const { error: mapErr } = await admin.from('order_media_external_map').upsert(
+        {
+          company_id: ctx.companyId,
+          order_id: ctx.orderId,
+          category,
+          provider: 'beget_s3',
+          source_url: publicUrl,
+          external_path: committed.path,
+          display_url: publicUrl,
+          display_url_updated_at: new Date().toISOString(),
+          created_by: ctx.userId,
+          file_size_bytes: fileSizeBytes,
+          media_metadata: clientMediaMetadata,
+        },
+        { onConflict: 'order_id,category,source_url' },
+      );
+      if (mapErr) throw mapErr;
 
       const atomic = await appendOrderMediaUrlAtomic(admin, ctx.orderId, ctx.companyId, category, publicUrl);
       return json(200, {
@@ -778,8 +811,10 @@ export async function handleOrderMediaStorageRequest(req: Request) {
       const b64 = b64raw.includes(',') ? b64raw.split(',').pop() || '' : b64raw;
       if (!b64) return json(400, { success: false, message: 'file_base64 is required' });
 
-      const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
-      const bytes = Uint8Array.from(atob(b64), (char) => char.charCodeAt(0));
+      const mime = normalizeMediaUploadMime(body.mime);
+      const compactBase64 = assertBase64MediaUploadSize(b64);
+      const bytes = Uint8Array.from(atob(compactBase64), (char) => char.charCodeAt(0));
+      assertMediaUploadSize(bytes.length);
       const objectKey = buildOrderMediaKey(ctx, category, mime);
       const publicUrl = buildBegetPublicUrl(objectKey);
 

@@ -58,6 +58,7 @@ export default function EntityPhotoPreview({
           {hasImage ? (
             <CachedImage
               uri={displayUrl}
+              fallbackUri={fullUrl && fullUrl !== displayUrl ? fullUrl : undefined}
               style={imageStyle || styles.image}
               contentFit={contentFit}
               cachePolicy={cachePolicy}
