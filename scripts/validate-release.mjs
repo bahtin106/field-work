@@ -30,6 +30,7 @@ function hasProductionUpdatesChannel(manifestSource) {
 
 const packageJson = json('package.json');
 const appJson = json('app.json').expo;
+const easJson = json('eas.json');
 const ruLocale = json('assets/locales/ru.json');
 const enLocale = json('assets/locales/en.json');
 const easIgnore = read('.easignore');
@@ -451,6 +452,10 @@ check(
 check(
   appJson.ios?.config?.usesNonExemptEncryption === false,
   'iOS export-compliance declaration must match the validated HTTPS/platform-crypto usage',
+);
+check(
+  easJson.submit?.production?.ios?.ascAppId === '6804066615',
+  'Production iOS submission must target the reviewed App Store Connect application',
 );
 check(
   appJson.ios?.privacyManifests?.NSPrivacyTracking === false &&
