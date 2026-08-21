@@ -2220,7 +2220,7 @@ export default function CompanySettings() {
                   try {
                     setConfirmLoading(true);
                     await performCurrencyChange(needsRecalc);
-                  } catch {
+                  } catch (err) {
                     toast.show(err?.message || t('toast_error'), 'error');
                   } finally {
                     setConfirmLoading(false);

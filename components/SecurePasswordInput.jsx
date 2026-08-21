@@ -1,6 +1,7 @@
 import React, { useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import { deriveNextPasswordValue } from '../lib/passwordInputMasking';
 import { getFieldValidationState } from '../src/shared/forms/fieldValidation';
 import { TEXT_INPUT_LIMITS } from '../src/shared/input/limits';
 import { useTranslation } from '../src/i18n/useTranslation';

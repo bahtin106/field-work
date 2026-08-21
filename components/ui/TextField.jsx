@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { deriveNextPasswordValue } from '../../lib/passwordInputMasking';
 import { t as T } from '../../src/i18n';
 import {
   normalizeNumericInput,

@@ -1333,7 +1333,6 @@ function OrderDetailsContent() {
     setOrderReady(!id);
     setCompanyId(null);
     setSelectedFinanceEntry(null);
-    setPendingFinanceEntryEdit(null);
     setPendingFinanceEntryKind(null);
     setFinanceEntryModalVisible(false);
     setFinanceEntryDiscardConfirmVisible(false);
