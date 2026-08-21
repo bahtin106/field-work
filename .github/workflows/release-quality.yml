@@ -70,7 +70,10 @@ jobs:
 
       - name: Compile Android native release bundle
         working-directory: android
-        run: ./gradlew :app:bundleRelease --no-daemon
+        # The repository is maintained from Windows, so gradlew is tracked as
+        # 0644. Invoking it through bash is portable without mutating checkout
+        # permissions in CI.
+        run: bash ./gradlew :app:bundleRelease --no-daemon
 
       - name: Export Android production bundle
         run: npx expo export --platform android --output-dir dist-ci-android
