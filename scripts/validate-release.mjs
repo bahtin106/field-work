@@ -8,6 +8,11 @@ const root = process.cwd();
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 const json = (relativePath) => JSON.parse(read(relativePath));
 const failures = [];
+const approvedActionPins = new Map([
+  ['actions/checkout', '3d3c42e5aac5ba805825da76410c181273ba90b1'],
+  ['actions/setup-node', '820762786026740c76f36085b0efc47a31fe5020'],
+  ['denoland/setup-deno', '22d081ff2d3a40755e97629de92e3bcbfa7cf2ed'],
+]);
 const legacySystemBarVisitorPath =
   'android/buildSrc/src/main/groovy/com/monitorapp/buildlogic/LegacySystemBarColorApiVisitorFactory.groovy';
 
@@ -25,6 +30,14 @@ const packageJson = json('package.json');
 const appJson = json('app.json').expo;
 const easIgnore = read('.easignore');
 const releaseWorkflow = read('.github/workflows/release-quality.yml');
+const workflowDirectory = path.join(root, '.github/workflows');
+const workflowSources = fs
+  .readdirSync(workflowDirectory)
+  .filter((fileName) => /\.ya?ml$/i.test(fileName))
+  .map((fileName) => [
+    fileName,
+    fs.readFileSync(path.join(workflowDirectory, fileName), 'utf8'),
+  ]);
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 const androidNetworkSecurityConfig = read(
   'android/app/src/main/res/xml/network_security_config.xml',
@@ -257,10 +270,41 @@ for (const pattern of [
 ]) {
   check(easIgnorePatterns.has(pattern), `EAS archive must exclude ${pattern}`);
 }
+
+for (const [fileName, workflowSource] of workflowSources) {
+  for (const match of workflowSource.matchAll(
+    /^\s*(?:-\s*)?uses:\s*['"]?([^'"\s#]+)['"]?/gm,
+  )) {
+    const actionReference = match[1];
+    if (actionReference.startsWith('./') || actionReference.startsWith('docker://')) continue;
+    check(
+      /^[^@\s]+@[0-9a-f]{40}$/.test(actionReference),
+      `${fileName} must pin ${actionReference} to an immutable 40-character commit SHA`,
+    );
+
+    const separatorIndex = actionReference.lastIndexOf('@');
+    const actionName = actionReference.slice(0, separatorIndex);
+    const actionSha = actionReference.slice(separatorIndex + 1);
+    const approvedSha = approvedActionPins.get(actionName);
+    if (approvedSha) {
+      check(
+        actionSha === approvedSha,
+        `${fileName} must use the reviewed ${actionName}@${approvedSha} pin`,
+      );
+    }
+  }
+
+  for (const match of workflowSource.matchAll(
+    /^\s*node-version:\s*['"]?([^'"\s#]+)['"]?/gm,
+  )) {
+    check(match[1] === '24', `${fileName} must use the maintained Node.js 24 release line`);
+  }
+}
+
 check(
-  releaseWorkflow.includes('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1') &&
-    releaseWorkflow.includes('actions/setup-node@820762786026740c76f36085b0efc47a31fe5020') &&
-    releaseWorkflow.includes('denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed') &&
+  [...approvedActionPins].every(([actionName, actionSha]) =>
+    releaseWorkflow.includes(`${actionName}@${actionSha}`),
+  ) &&
     releaseWorkflow.includes('deno-version: v2.9.5') &&
     releaseWorkflow.includes('deno check --node-modules-dir=none') &&
     releaseWorkflow.includes('./gradlew :app:bundleRelease --no-daemon'),
