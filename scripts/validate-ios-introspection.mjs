@@ -33,10 +33,11 @@ const ios = config.ios || {};
 const info = ios.infoPlist || {};
 const privacy = ios.privacyManifests || {};
 const forbiddenUsageKeys = [
-  'NSContactsUsageDescription',
   'NSMicrophoneUsageDescription',
   'NSPhotoLibraryUsageDescription',
 ];
+const expectedContactsUsageDescription =
+  'Доступ к контактам нужен, чтобы по вашему выбору подставлять номера телефонов в заявки и карточки клиентов. Приложение не изменяет контакты.';
 
 check(ios.bundleIdentifier === 'com.monitorapp.monitor', 'Unexpected iOS bundle identifier');
 check(/^\d+$/.test(String(ios.buildNumber || '')), 'iOS build number is missing');
@@ -48,6 +49,10 @@ check(
 check(info.ITSAppUsesNonExemptEncryption === false, 'Export compliance flag is inconsistent');
 check(Boolean(info.NSCameraUsageDescription), 'Camera usage description is missing');
 check(Boolean(info.NSPhotoLibraryAddUsageDescription), 'Photo-add usage description is missing');
+check(
+  info.NSContactsUsageDescription === expectedContactsUsageDescription,
+  'Contacts usage description is missing or does not explain the phone-number picker',
+);
 for (const key of forbiddenUsageKeys) {
   check(!Object.hasOwn(info, key), `${key} must not be emitted by config plugins`);
 }

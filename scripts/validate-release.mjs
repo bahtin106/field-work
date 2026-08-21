@@ -8,6 +8,8 @@ const root = process.cwd();
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 const json = (relativePath) => JSON.parse(read(relativePath));
 const failures = [];
+const expectedContactsUsageDescription =
+  'Доступ к контактам нужен, чтобы по вашему выбору подставлять номера телефонов в заявки и карточки клиентов. Приложение не изменяет контакты.';
 const approvedActionPins = new Map([
   ['actions/checkout', '3d3c42e5aac5ba805825da76410c181273ba90b1'],
   ['actions/setup-node', '820762786026740c76f36085b0efc47a31fe5020'],
@@ -28,6 +30,8 @@ function hasProductionUpdatesChannel(manifestSource) {
 
 const packageJson = json('package.json');
 const appJson = json('app.json').expo;
+const ruLocale = json('assets/locales/ru.json');
+const enLocale = json('assets/locales/en.json');
 const easIgnore = read('.easignore');
 const releaseWorkflow = read('.github/workflows/release-quality.yml');
 const workflowDirectory = path.join(root, '.github/workflows');
@@ -382,9 +386,15 @@ check(
     (plugin) =>
       Array.isArray(plugin) &&
       plugin[0] === 'expo-contacts' &&
-      plugin[1]?.contactsPermission === false,
+      plugin[1]?.contactsPermission === expectedContactsUsageDescription,
   ),
-  'The permission-free iOS contact picker must explicitly remove full Contacts access',
+  'The iOS contacts module must emit the reviewed App Store purpose string',
+);
+check(
+  ruLocale.ios?.NSContactsUsageDescription === expectedContactsUsageDescription &&
+    typeof enLocale.ios?.NSContactsUsageDescription === 'string' &&
+    enLocale.ios.NSContactsUsageDescription.length >= 40,
+  'Localized iOS contacts purpose strings are incomplete',
 );
 check(
   phoneInput.includes('<ContactPhonePickerButton') &&

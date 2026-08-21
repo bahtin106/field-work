@@ -72,6 +72,7 @@ Expected data families to review and declare where applicable:
 - Usage data: account activity/last-seen and feature interaction needed for app operation and support.
 - Diagnostics: crash/error details and limited technical context, with client-side secret/PII redaction.
 - Contacts: only the single contact explicitly selected in the system picker; the full iOS address book is not requested or uploaded.
+- Keep a localized `NSContactsUsageDescription` in every binary: Apple static analysis requires it because `expo-contacts` links protected Contacts APIs, even though the current iOS runtime uses the permission-free single-contact picker and never requests full address-book access.
 
 For each declared type, verify: linked-to-user status, app-functionality/developer-communication purpose, retention and deletion. Do not declare tracking, advertising or data-broker use unless the product changes. Set the required privacy policy URL to `https://monitorapp.ru/privacy` and keep App Store Connect, `PrivacyInfo.xcprivacy` and the public policy consistent.
 

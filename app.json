@@ -111,7 +111,7 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": false
+          "contactsPermission": "Доступ к контактам нужен, чтобы по вашему выбору подставлять номера телефонов в заявки и карточки клиентов. Приложение не изменяет контакты."
         }
       ],
       "expo-background-task"
@@ -129,7 +129,7 @@
     "ios": {
       "icon": "./assets/branding/app-icon-ios.png",
       "bundleIdentifier": "com.monitorapp.monitor",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "supportsTablet": false,
       "runtimeVersion": "1.1.1",
       "config": {

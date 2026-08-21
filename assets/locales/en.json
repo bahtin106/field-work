@@ -2,7 +2,8 @@
   "ios": {
     "CFBundleDisplayName": "Monitor",
     "NSCameraUsageDescription": "Allow Monitor to use the camera to take work-request photos",
-    "NSPhotoLibraryAddUsageDescription": "Allow Monitor to save selected photos to your library"
+    "NSPhotoLibraryAddUsageDescription": "Allow Monitor to save selected photos to your library",
+    "NSContactsUsageDescription": "Contacts access lets you choose phone numbers to fill work requests and client records. Monitor does not modify your contacts."
   },
   "android": {
     "app_name": "Monitor"
