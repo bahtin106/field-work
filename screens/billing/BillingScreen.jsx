@@ -290,9 +290,8 @@ export default function BillingScreen() {
   }));
 
   const isMemberLicenseActive = React.useCallback((member) => {
-    if (member?.role === ROLE.ADMIN) return false;
     if (member?.admin_blocked) return false;
-    return member?.has_seat === true && member?.license_state !== 'blocked_by_license';
+    return member?.has_seat === true;
   }, []);
 
   const mergedMembers = React.useMemo(() => {
@@ -397,10 +396,7 @@ export default function BillingScreen() {
     asIntOrNull(access?.used_seats) ?? asIntOrNull(entitlements?.used_seats) ?? 0;
   const freeSeatsFromAccess = asIntOrNull(access?.free_seats);
   const freeSeatsTotal = freeSeatsFromAccess ?? Math.max(0, paidSeatsTotal - usedSeatsTotal);
-  const licenseMembers = React.useMemo(
-    () => mergedMembers.filter((member) => member?.role !== ROLE.ADMIN),
-    [mergedMembers],
-  );
+  const licenseMembers = mergedMembers;
   const hasStorageUsage = !!storageUsage && typeof storageUsage === 'object';
   const storageLimitBytes = Number(storageUsage?.limit_bytes || STORAGE_LIMITS.COMPANY_TOTAL_BYTES);
   const usedStorageBytes = Number(storageUsage?.total_bytes ?? 0);

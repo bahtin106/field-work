@@ -40,6 +40,14 @@ function parseDate(value) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_SUBSCRIPTION_ADJUSTMENT_DAYS = 36500;
 const SUBSCRIPTION_DAY_STEPS = Object.freeze([1, 7, 30, 365]);
+const ACTIVE_REQUESTS_CONFIRMATION_REQUIRED = 'ACTIVE_REQUESTS_CONFIRMATION_REQUIRED';
+
+function createCompanyDeleteError(payload, fallbackMessage) {
+  const error = new Error(String(payload?.message || fallbackMessage));
+  error.code = String(payload?.code || '');
+  error.requestCount = toSafeInt(payload?.request_count, 0);
+  return error;
+}
 
 function toPickerDate(value) {
   return parseDate(value);
@@ -206,6 +214,7 @@ export default function AdminCompanyDetailsScreen() {
   const [paidSeatsVisible, setPaidSeatsVisible] = React.useState(false);
   const [confirmVisible, setConfirmVisible] = React.useState(false);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = React.useState(false);
+  const [activeRequestsDeleteConfirm, setActiveRequestsDeleteConfirm] = React.useState(null);
 
   const [daysInput, setDaysInput] = React.useState('0');
   const [paidSeatsInput, setPaidSeatsInput] = React.useState('0');
@@ -378,37 +387,44 @@ export default function AdminCompanyDetailsScreen() {
   });
 
   const deleteCompanyMutation = useMutation({
-    mutationFn: async () => {
-      const { data: body, error: invokeError } = await supabase.functions.invoke('admin-delete-company', {
-        body: {
-          company_id: companyId,
-          confirm: true,
+    mutationFn: async ({ forceActiveRequests = false } = {}) => {
+      const { data: body, error: invokeError } = await supabase.functions.invoke(
+        'admin-delete-company',
+        {
+          body: {
+            company_id: companyId,
+            confirm: true,
+            force_active_requests: !!forceActiveRequests,
+          },
         },
-      });
+      );
       if (invokeError) {
         const context = invokeError?.context;
-        let errorMessage = String(invokeError?.message || t('admin_unknown_error'));
+        let errorPayload = null;
         if (context && typeof context.clone === 'function') {
           try {
             const txt = await context.clone().text();
             if (txt) {
               try {
-                const parsed = JSON.parse(txt);
-                errorMessage = String(parsed?.message || errorMessage);
+                errorPayload = JSON.parse(txt);
               } catch {
-                errorMessage = String(txt);
+                errorPayload = { message: String(txt) };
               }
             }
           } catch {}
         }
-        throw new Error(errorMessage);
+        throw createCompanyDeleteError(
+          errorPayload,
+          invokeError?.message || t('admin_unknown_error'),
+        );
       }
       if (body?.success !== true) {
-        throw new Error(String(body?.message || t('admin_unknown_error')));
+        throw createCompanyDeleteError(body, t('admin_unknown_error'));
       }
       return body;
     },
     onSuccess: async () => {
+      setActiveRequestsDeleteConfirm(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['adminCompanies'] }),
         queryClient.invalidateQueries({ queryKey: companyKey }),
@@ -421,6 +437,10 @@ export default function AdminCompanyDetailsScreen() {
       } catch {}
     },
     onError: (e) => {
+      if (String(e?.code || '') === ACTIVE_REQUESTS_CONFIRMATION_REQUIRED) {
+        setActiveRequestsDeleteConfirm({ requestCount: toSafeInt(e?.requestCount, 0) });
+        return;
+      }
       toast.error(String(e?.message || t('admin_unknown_error')));
     },
   });
@@ -979,7 +999,23 @@ export default function AdminCompanyDetailsScreen() {
         loading={deleteCompanyMutation.isPending}
         onClose={() => setDeleteConfirmVisible(false)}
         onConfirm={async () => {
-          await deleteCompanyMutation.mutateAsync();
+          await deleteCompanyMutation.mutateAsync({ forceActiveRequests: false }).catch(() => {});
+        }}
+      />
+
+      <ConfirmModal
+        visible={!!activeRequestsDeleteConfirm}
+        title={t('admin_company_delete_requests_warning_title')}
+        message={t('admin_company_delete_requests_warning_message').replace(
+          '{count}',
+          String(activeRequestsDeleteConfirm?.requestCount || 0),
+        )}
+        confirmLabel={t('admin_company_delete_requests_warning_confirm')}
+        confirmVariant="destructive"
+        loading={deleteCompanyMutation.isPending}
+        onClose={() => setActiveRequestsDeleteConfirm(null)}
+        onConfirm={async () => {
+          await deleteCompanyMutation.mutateAsync({ forceActiveRequests: true }).catch(() => {});
         }}
       />
     </Screen>

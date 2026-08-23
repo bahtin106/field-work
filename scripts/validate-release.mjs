@@ -245,6 +245,15 @@ const accountDeletionRollbackPath =
   'supabase/rollback/20260821220000_add_account_deletion_requests_rollback.sql';
 const accountDeletionMigration = read(accountDeletionMigrationPath);
 const accountDeletionRollback = read(accountDeletionRollbackPath);
+const adminLicenseMigrationPath =
+  'supabase/migrations/20260823234500_count_company_admin_license.sql';
+const adminLicenseMigration = read(adminLicenseMigrationPath);
+const workTypeTrashMigrationPath =
+  'supabase/migrations/20260823213000_skip_trashed_orders_on_work_type_visibility_change.sql';
+const workTypeTrashMigration = read(workTypeTrashMigrationPath);
+const trashAuditMigrationPath =
+  'supabase/migrations/20260823223000_fix_trash_purge_audit_foreign_keys.sql';
+const trashAuditMigration = read(trashAuditMigrationPath);
 const adminDeleteCompanyFunction = read('supabase/functions/admin-delete-company/index.ts');
 const pushSendFunction = read('supabase/functions/push-send/index.ts');
 
@@ -537,6 +546,44 @@ check(
     backgroundSyncOutcome.includes('Number(finance.pending || 0) === 0') &&
     backgroundSyncOutcome.includes('Number(generic.pending || 0) === 0'),
   'Background task result must reflect retryable photo, finance, and generic outbox work',
+);
+const companyDeletePosition = adminDeleteCompanyFunction.indexOf(
+  'delete from public.companies where id in (select id from _target_company)',
+);
+const profileDeletePosition = adminDeleteCompanyFunction.indexOf(
+  'delete from public.profiles where id in (select id from _target_users)',
+);
+check(
+  adminDeleteCompanyFunction.includes("and c.table_name <> 'profiles'") &&
+    adminDeleteCompanyFunction.includes("and c.table_name <> 'companies'") &&
+    companyDeletePosition >= 0 &&
+    profileDeletePosition > companyDeletePosition,
+  'Permanent company deletion must remove the company before guarded administrator profiles',
+);
+check(
+  adminDeleteCompanyFunction.includes('force_active_requests') &&
+    adminDeleteCompanyFunction.includes('ACTIVE_REQUESTS_CONFIRMATION_REQUIRED') &&
+    adminDeleteCompanyFunction.includes("set_config('app.trash_hard_delete', 'on', true)") &&
+    adminCompanyDetailsScreen.includes('admin_company_delete_requests_warning_message') &&
+    adminCompanyDetailsScreen.includes('forceActiveRequests: true'),
+  'Company deletion must require a second confirmation before removing linked requests',
+);
+check(
+  workTypeTrashMigration.includes('trg_recalculate_finance_on_work_types_change') &&
+    workTypeTrashMigration.includes('snapshot.locked_at is null') &&
+    workTypeTrashMigration.includes("trash_entry.entity_type = 'order'") &&
+    workTypeTrashMigration.includes('trash_entry.entity_id = order_row.id'),
+  'Work-type visibility changes must not mutate immutable requests in Trash',
+);
+check(
+  trashAuditMigration.includes('pg_get_functiondef') &&
+    trashAuditMigration.includes('v_occurrences <> 1') &&
+    trashAuditMigration.includes('v_order_id := null;') &&
+    trashAuditMigration.includes('v_client_id := null;') &&
+    trashAuditMigration.includes('v_client_object_id := null;') &&
+    trashAuditMigration.includes('v_order_finance_entry_id := null;') &&
+    trashAuditMigration.includes('v_company_finance_rule_id := null;'),
+  'Permanent Trash deletion must not leave strict audit foreign keys dangling',
 );
 check(
   /if \(isInitializing \|\| !isAuthenticated \|\| !user\?\.id\) return undefined;\s+let active = true;\s+let running = false;/.test(
@@ -1125,7 +1172,9 @@ check(
 check(
   authFlowState.includes('hydratePublicAuthRoute') &&
     authFlowState.includes('PUBLIC_AUTH_ROUTE_STORAGE_KEY') &&
-    rootLayout.includes('publicAuthRouteHydrated'),
+    authFlowState.includes('return route === REGISTER_ROUTE ? LOGIN_ROUTE : route;') &&
+    rootLayout.includes('publicAuthRouteHydrated') &&
+    rootLayout.includes('publicAuthStartupHandledRef'),
   'Pending email-code navigation must be restored before auth redirects',
 );
 check(
@@ -1401,6 +1450,18 @@ check(
   'Keyboard movement and dismissal must use one native animated path without responder-capture blur races',
 );
 check(
+  keyboardControllerCompat.includes("Platform.OS === 'ios'\n    ? ReactNativeKeyboardAvoidingView") &&
+    keyboardControllerCompat.includes("Keyboard.addListener('keyboardDidHide'") &&
+    keyboardControllerCompat.includes('restoreIOSScrollPosition();') &&
+    keyboardControllerCompat.includes(
+      "onScroll: Platform.OS === 'ios' ? handleNativeScroll : onScroll",
+    ) &&
+    keyboardControllerCompat.includes(
+      ': keyboardControllerModule?.KeyboardAvoidingView || ReactNativeKeyboardAvoidingView',
+    ),
+  'iOS keyboard layouts must settle after dismissal without changing the Android controller path',
+);
+check(
   orderDetailsScreen.includes('accessibilityLabel={`${t(\'order_details_phone\')}: ${orderPhoneDisplayValue}`}') &&
     orderDetailsScreen.includes('onPress={openOrderPhoneDialer}') &&
     orderDetailsScreen.includes('onLongPress={copyOrderPhone}') &&
@@ -1593,6 +1654,16 @@ check(
     adminCompanyEditScreen.includes('enabled: isAllowed') &&
     routeFreshnessBoundary.includes("['adminCompanyAccessState']"),
   'Cross-company access state must use an authorization-gated memory-only admin cache key',
+);
+check(
+  fs.existsSync(path.join(root, adminLicenseMigrationPath)) &&
+    adminLicenseMigration.includes('ensure_company_admin_seat') &&
+    adminLicenseMigration.includes("raise exception 'administrator seat is required'") &&
+    adminLicenseMigration.includes("and lower(coalesce(p.role, '')) <> 'admin'") &&
+    billingScreen.includes('return member?.has_seat === true;') &&
+    billingScreen.includes('const licenseMembers = mergedMembers;') &&
+    !billingScreen.includes('mergedMembers.filter((member) => member?.role !== ROLE.ADMIN)'),
+  'The company administrator must consume and retain the mandatory first license',
 );
 
 if (failures.length) {

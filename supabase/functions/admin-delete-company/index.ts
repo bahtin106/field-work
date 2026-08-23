@@ -8,6 +8,18 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const ACTIVE_REQUESTS_CONFIRMATION_REQUIRED = 'ACTIVE_REQUESTS_CONFIRMATION_REQUIRED';
+
+class ActiveRequestsConfirmationRequired extends Error {
+  requestCount: number;
+
+  constructor(requestCount: number) {
+    super('Company has linked requests');
+    this.name = ACTIVE_REQUESTS_CONFIRMATION_REQUIRED;
+    this.requestCount = requestCount;
+  }
+}
+
 function text(value: unknown) {
   return String(value ?? '').trim();
 }
@@ -78,6 +90,7 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
     const body = await req.json().catch(() => ({}));
     const companyId = text(body?.company_id);
     const confirmed = body?.confirm === true;
+    const forceActiveRequests = body?.force_active_requests === true;
 
     if (!isUuid(companyId)) {
       return new Response(JSON.stringify({ success: false, message: 'Invalid company_id' }), {
@@ -102,6 +115,21 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
         if (!companyExists.length) {
           throw new Error('Company not found');
         }
+
+        const requestRows = await tx`
+          select count(*)::int as count
+          from public.orders
+          where company_id = ${companyId}::uuid
+        `;
+        const requestCount = Number(requestRows[0]?.count || 0);
+        if (requestCount > 0 && !forceActiveRequests) {
+          throw new ActiveRequestsConfirmationRequired(requestCount);
+        }
+
+        // A permanent company purge must bypass per-entity trash capture. Otherwise
+        // delete triggers keep orders/clients in place. This setting is transaction-local
+        // and is reached only after the linked-request confirmation gate above.
+        await tx`select set_config('app.trash_hard_delete', 'on', true)`;
 
         // The status guard keeps the Feed status immutable during normal operation.
         // Allow its removal only inside this verified, all-or-nothing company deletion.
@@ -207,6 +235,9 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
                 -- Preserve the authoritative privacy queue until its service-role
                 -- lifecycle is completed after profile/company deletion.
                 and c.table_name <> 'account_deletion_requests'
+                -- Profiles must outlive the company row. Deleting a solo administrator
+                -- while its company still exists is correctly rejected by the role guard.
+                and c.table_name <> 'profiles'
                 and t.table_type = 'BASE TABLE'
               group by c.table_schema, c.table_name
             loop
@@ -236,6 +267,9 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
                 -- The request must survive every user-scoped cleanup column;
                 -- its user/company FKs intentionally become NULL on deletion.
                 and c.table_name <> 'account_deletion_requests'
+                -- Delete the company at the explicit lifecycle boundary below instead
+                -- of depending on information_schema iteration order via owner_id.
+                and c.table_name <> 'companies'
                 and c.column_name in (
                   'user_id',
                   'owner_id',
@@ -314,6 +348,9 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
           end
           $do$
         `;
+        // Remove the parent first so ON DELETE SET NULL detaches the guarded admin
+        // profiles. Their subsequent deletion can no longer violate admin continuity.
+        await tx`delete from public.companies where id in (select id from _target_company)`;
         await tx`delete from public.profiles where id in (select id from _target_users)`;
         await tx`
           delete from storage.objects
@@ -321,7 +358,6 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
              or owner_id in (select id::text from _target_users)
         `;
         await tx`delete from auth.users where id in (select id from _target_users)`;
-        await tx`delete from public.companies where id in (select id from _target_company)`;
 
         const usersAfter = await tx`
           select count(*)::int as count
@@ -412,6 +448,17 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
     }
   } catch (e) {
     console.error('admin-delete-company error', e);
+    if (e instanceof ActiveRequestsConfirmationRequired) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          code: ACTIVE_REQUESTS_CONFIRMATION_REQUIRED,
+          request_count: e.requestCount,
+          message: e.message,
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json', ...cors } },
+      );
+    }
     return new Response(
       JSON.stringify({
         success: false,

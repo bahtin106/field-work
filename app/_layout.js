@@ -167,6 +167,7 @@ function RootLayoutInner() {
   const notificationIdsByOrderRef = useRef(new Map());
   const previousAuthStateRef = useRef(isAuthenticated);
   const returnToHomeAfterLogoutRef = useRef(false);
+  const publicAuthStartupHandledRef = useRef(false);
   const localeHydrationPromiseRef = useRef(null);
   const authSnapshotRef = useRef({ isAuthenticated, userId: String(user?.id || '') });
   authSnapshotRef.current = { isAuthenticated, userId: String(user?.id || '') };
@@ -337,6 +338,9 @@ function RootLayoutInner() {
 
   useEffect(() => {
     if (!publicAuthRouteHydrated) return;
+    // Let the first cold-start redirect consume the hydrated route before the
+    // currently mounted native screen can overwrite it.
+    if (!publicAuthStartupHandledRef.current) return;
     if (isAuthenticated) {
       resetPublicAuthRoute();
       return;
@@ -375,6 +379,7 @@ function RootLayoutInner() {
     } else if (isAuthenticated && inAuthFlow && !isBlockedScreen && !isSamePath('/orders')) {
       router.replace('/orders');
     }
+    publicAuthStartupHandledRef.current = true;
   }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, normalizedPathname, publicAuthRouteHydrated, router]);
 
   useEffect(() => {
