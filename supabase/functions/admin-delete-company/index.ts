@@ -20,6 +20,12 @@ class ActiveRequestsConfirmationRequired extends Error {
   }
 }
 
+export type TrustedAccountDeletionContext = {
+  requestId: string;
+  userId: string;
+  companyId: string;
+};
+
 function text(value: unknown) {
   return String(value ?? '').trim();
 }
@@ -28,7 +34,10 @@ function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-export async function handleAdminDeleteCompanyRequest(req: Request) {
+export async function handleAdminDeleteCompanyRequest(
+  req: Request,
+  trustedAccountDeletion?: TrustedAccountDeletionContext,
+) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405, headers: cors });
 
@@ -51,46 +60,73 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
       });
     }
 
-    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
-    const jwt = authHeader.replace(/^Bearer\s+/i, '').trim();
-    if (!jwt) {
-      return new Response(JSON.stringify({ success: false, message: 'Unauthorized' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json', ...cors },
-      });
-    }
+    let companyId = '';
+    let confirmed = false;
+    let forceActiveRequests = false;
 
-    const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
-      global: { headers: { Authorization: `Bearer ${jwt}` } },
-    });
-    const { data: callerData, error: callerErr } = await admin.auth.getUser(jwt);
-    if (callerErr || !callerData?.user?.id) {
-      return new Response(JSON.stringify({ success: false, message: 'Unauthorized' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json', ...cors },
+    if (trustedAccountDeletion) {
+      const requestId = text(trustedAccountDeletion.requestId);
+      const userId = text(trustedAccountDeletion.userId);
+      companyId = text(trustedAccountDeletion.companyId);
+      const internalAdmin = createClient(SUPABASE_URL, SERVICE_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
       });
-    }
-    const callerUserId = callerData.user.id;
+      const { data: deletionRequest, error: deletionRequestError } = await internalAdmin
+        .from('account_deletion_requests')
+        .select('id,requested_user_id,requested_company_id,status,email_verified_at')
+        .eq('id', requestId)
+        .eq('requested_user_id', userId)
+        .eq('requested_company_id', companyId)
+        .eq('status', 'processing')
+        .maybeSingle();
+      if (deletionRequestError || !deletionRequest?.email_verified_at) {
+        return new Response(JSON.stringify({ success: false, message: 'Forbidden' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json', ...cors },
+        });
+      }
+      confirmed = true;
+      forceActiveRequests = true;
+    } else {
+      const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+      const jwt = authHeader.replace(/^Bearer\s+/i, '').trim();
+      if (!jwt) {
+        return new Response(JSON.stringify({ success: false, message: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...cors },
+        });
+      }
 
-    const { data: isSuperAdminRaw, error: isSuperAdminErr } = await admin.rpc('is_super_admin');
-    if (isSuperAdminErr) {
-      return new Response(JSON.stringify({ success: false, message: 'Super-admin check failed' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json', ...cors },
+      const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
+        global: { headers: { Authorization: `Bearer ${jwt}` } },
       });
-    }
-    const isSuperAdmin = isSuperAdminRaw === true;
-    if (!isSuperAdmin) {
-      return new Response(JSON.stringify({ success: false, message: 'Forbidden' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json', ...cors },
-      });
-    }
+      const { data: callerData, error: callerErr } = await admin.auth.getUser(jwt);
+      if (callerErr || !callerData?.user?.id) {
+        return new Response(JSON.stringify({ success: false, message: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...cors },
+        });
+      }
 
-    const body = await req.json().catch(() => ({}));
-    const companyId = text(body?.company_id);
-    const confirmed = body?.confirm === true;
-    const forceActiveRequests = body?.force_active_requests === true;
+      const { data: isSuperAdminRaw, error: isSuperAdminErr } = await admin.rpc('is_super_admin');
+      if (isSuperAdminErr) {
+        return new Response(JSON.stringify({ success: false, message: 'Super-admin check failed' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json', ...cors },
+        });
+      }
+      if (isSuperAdminRaw !== true) {
+        return new Response(JSON.stringify({ success: false, message: 'Forbidden' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json', ...cors },
+        });
+      }
+
+      const body = await req.json().catch(() => ({}));
+      companyId = text(body?.company_id);
+      confirmed = body?.confirm === true;
+      forceActiveRequests = body?.force_active_requests === true;
+    }
 
     if (!isUuid(companyId)) {
       return new Response(JSON.stringify({ success: false, message: 'Invalid company_id' }), {
@@ -470,5 +506,5 @@ export async function handleAdminDeleteCompanyRequest(req: Request) {
 }
 
 if (import.meta.main) {
-  Deno.serve(handleAdminDeleteCompanyRequest);
+  Deno.serve((req) => handleAdminDeleteCompanyRequest(req));
 }

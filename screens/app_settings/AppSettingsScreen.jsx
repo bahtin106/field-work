@@ -22,7 +22,6 @@ import { useToast } from '../../components/ui/ToastProvider';
 import { DateTimeModal, SelectModal } from '../../components/ui/modals';
 import { ANDROID_CHANNEL_ID, getAndroidChannelName, APP_DEFAULTS } from '../../config/notifications';
 import { LEGAL_LINKS } from '../../config/externalUrls';
-import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { supabase } from '../../lib/supabase';
 import {
   deletePushToken as deletePushTokenHelper,
@@ -311,16 +310,11 @@ async function ensurePushPermission() {
   }
 }
 
-export default function AppSettings() {
+export default function AppSettings({ embedded = false, includeSections = null }) {
   const { t } = useTranslation();
   const appVersion = getAppVersion();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user: authUser, profile: authProfile } = useAuthContext();
-  const authAccountType = String(authUser?.user_metadata?.account_type || '').toLowerCase();
-  const isSoloAdmin =
-    String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
-
   const { theme, mode, setMode } = useTheme();
   const {
     ready: helpReady,
@@ -485,7 +479,7 @@ export default function AppSettings() {
     },
     gcTime: 5 * 60 * 1000,
     staleTime: 2 * 60 * 1000,
-    enabled: !isSoloAdmin,
+    enabled: true,
   });
 
   useEffect(() => {
@@ -498,8 +492,6 @@ export default function AppSettings() {
   }, [prefsError, t, toast]);
 
   useEffect(() => {
-    if (isSoloAdmin) return undefined;
-
     let active = true;
     let channel = null;
 
@@ -533,7 +525,7 @@ export default function AppSettings() {
         supabase.removeChannel(channel);
       } catch {}
     };
-  }, [isSoloAdmin, refreshPrefs]);
+  }, [refreshPrefs]);
 
   useEffect(() => {
     if (prefsData && mounted.current) {
@@ -833,14 +825,6 @@ export default function AppSettings() {
     }
   }, [refreshPrefs, t]);
 
-  useEffect(() => {
-    if (!isSoloAdmin || isLoadingPrefs) return;
-    if (prefs.allow === true) return;
-
-    setPrefs((prev) => ({ ...prev, allow: true }));
-    setNotificationAllow(true).catch(() => {});
-  }, [isLoadingPrefs, isSoloAdmin, prefs.allow, setNotificationAllow]);
-
   // Self-heal: re-register token only when server prefs explicitly allow notifications.
   useEffect(() => {
     let alive = true;
@@ -1028,11 +1012,10 @@ export default function AppSettings() {
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
   const visibleSectionBase = useMemo(() => {
-    if (!isSoloAdmin) return sectionBase;
-    return sectionBase.filter(
-      (sec) => !['appearance', 'notifications', 'quiet', 'privacy'].includes(String(sec?.key || '')),
-    );
-  }, [isSoloAdmin, sectionBase]);
+    if (!Array.isArray(includeSections) || includeSections.length === 0) return sectionBase;
+    const allowed = new Set(includeSections.map((key) => String(key)));
+    return sectionBase.filter((section) => allowed.has(String(section?.key || '')));
+  }, [includeSections, sectionBase]);
 
   const sections = useMemo(
     () =>
@@ -1092,15 +1075,17 @@ export default function AppSettings() {
     [appVersion, availableMapApps, visibleSectionBase, prefs, isLoadingPrefs, currentLocale, currentThemeLabel, helpPreferences, helpReady, mapAppsLoading, selectedMapAppId, t],
   );
 
-  return (
-    <Screen
-      scroll={false}
-      headerOptions={{ title: t('routes.app_settings/AppSettings'), helpTopic: 'app_settings' }}
-    >
-      <ScrollView
-        contentContainerStyle={s.contentWrap}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+  const ContentContainer = embedded ? View : ScrollView;
+  const body = (
+    <>
+      <ContentContainer
+        {...(embedded
+          ? { style: s.embeddedContent }
+          : {
+              contentContainerStyle: s.contentWrap,
+              showsVerticalScrollIndicator: false,
+              keyboardShouldPersistTaps: 'handled',
+            })}
       >
         {isLoadingPrefs && (
           <View style={s.loadingWrap}>
@@ -1147,7 +1132,7 @@ export default function AppSettings() {
             </Card>
           </View>
         ))}
-      </ScrollView>
+      </ContentContainer>
 
       {/* Time Picker */}
       {timePickerOpen ? (
@@ -1233,6 +1218,16 @@ export default function AppSettings() {
         }}
         onClose={() => setMapAppOpen(false)}
       />
+    </>
+  );
+
+  if (embedded) return body;
+  return (
+    <Screen
+      scroll={false}
+      headerOptions={{ title: t('routes.app_settings/AppSettings'), helpTopic: 'app_settings' }}
+    >
+      {body}
     </Screen>
   );
 }
@@ -1243,6 +1238,7 @@ const styles = (t) =>
       paddingHorizontal: t.components.screenLayout.contentPaddingX,
       paddingBottom: t.components.screenLayout.contentPaddingBottom,
     },
+    embeddedContent: { width: '100%' },
     sectionWrap: { marginBottom: 0 },
     loadingWrap: { paddingVertical: t.spacing.sm },
     mapAppsEmpty: {

@@ -46,6 +46,17 @@ import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { availableLocales, getLocale, setLocale } from '../../src/i18n';
 import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
 import { withReadDeadline } from '../../src/shared/network/readDeadline';
+import AppSettings from '../app_settings/AppSettingsScreen';
+
+const SOLO_APP_SETTING_SECTIONS = Object.freeze([
+  'account',
+  'navigation',
+  'notifications',
+  'help',
+  'quiet',
+  'privacy',
+  'legal',
+]);
 
 /* Helpers */
 const getDeviceTimeZone = () => {
@@ -1534,6 +1545,10 @@ export default function CompanySettings() {
               />
             </Card>
           </View>
+        ) : null}
+
+        {isSoloWorkMode ? (
+          <AppSettings embedded includeSections={SOLO_APP_SETTING_SECTIONS} />
         ) : null}
 
         {isSoloWorkMode ? (

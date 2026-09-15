@@ -487,6 +487,8 @@ function RootLayoutInner() {
       const seg = Array.isArray(segmentsRef.current) ? segmentsRef.current : [];
       const inAuthGroup = seg[0] === '(auth)';
       const isBlockedScreen = inAuthGroup && seg[1] === 'blocked';
+      const isAccountRecoveryScreen =
+        seg[0] === 'app_settings' && seg[1] === 'account-deletion';
 
       const { data: accessData, error: accessError } = await withReadDeadline(
         supabase.rpc('get_my_access_state'),
@@ -505,7 +507,7 @@ function RootLayoutInner() {
               : code === 'company_inactive'
                 ? t('auth_company_inactive')
                 : `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`;
-          if (!isBlockedScreen) {
+          if (!isBlockedScreen && !isAccountRecoveryScreen) {
             router.replace({
               pathname: '/(auth)/blocked',
               params: {
@@ -543,7 +545,7 @@ function RootLayoutInner() {
       const blockedByLicense = String(profile?.license_state || '') === 'blocked_by_license';
       const blocked = blockedByAdmin || blockedByLicense;
 
-      if (blocked && !isBlockedScreen) {
+      if (blocked && !isBlockedScreen && !isAccountRecoveryScreen) {
         const code = blockedByAdmin ? 'admin_blocked' : 'blocked_by_license';
         const fallbackMessage = blockedByAdmin
           ? `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`

@@ -2,7 +2,6 @@ import React from 'react';
 // Heavy implementation is loaded by a lightweight Expo Router wrapper.
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
-import { useRouter } from 'expo-router';
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import SectionHeader from '../../../components/ui/SectionHeader';
@@ -14,7 +13,6 @@ import { TBL } from '../../../lib/constants';
 import { getUid, saveNotificationPreferences } from '../../../lib/supabaseHelpers';
 import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
-import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme';
 
@@ -73,11 +71,6 @@ export default function NotificationEventsScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
-  const router = useRouter();
-  const { user: authUser, profile: authProfile } = useAuthContext();
-  const authAccountType = String(authUser?.user_metadata?.account_type || '').trim().toLowerCase();
-  const isSoloAdmin =
-    String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
   const s = React.useMemo(() => styles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
@@ -105,11 +98,6 @@ export default function NotificationEventsScreen() {
     },
     [],
   );
-
-  React.useEffect(() => {
-    if (!isSoloAdmin) return;
-    router.replace('/app_settings');
-  }, [isSoloAdmin, router]);
 
   const { data: prefsData, isLoading, refetch, error } = useQuery({
     queryKey: ['appSettings', 'notifPrefs'],
@@ -155,7 +143,7 @@ export default function NotificationEventsScreen() {
         reminder_delay_minutes: clampDelayMinutes(data.reminder_delay_minutes),
       };
     },
-    enabled: !isSoloAdmin,
+    enabled: true,
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
   });
@@ -283,8 +271,6 @@ export default function NotificationEventsScreen() {
     },
     [reminderDelayDecomposed.unit, savePrefs, t, toast],
   );
-
-  if (isSoloAdmin) return null;
 
   return (
     <Screen

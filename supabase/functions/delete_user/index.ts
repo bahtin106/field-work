@@ -11,6 +11,11 @@ type ReqBody = {
   reassign_to?: string | null;
 };
 
+export type TrustedSelfDeletionContext = {
+  requestId: string;
+  userId: string;
+};
+
 type PublicDeleteError = {
   code: string;
   message: string;
@@ -225,7 +230,10 @@ async function validateSuccessor(admin: any, successorId: string, companyId: str
   return successor;
 }
 
-export async function handleDeleteUserRequest(req: Request): Promise<Response> {
+export async function handleDeleteUserRequest(
+  req: Request,
+  trustedSelfDeletion?: TrustedSelfDeletionContext,
+): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') {
     return jsonResponse({ ok: false, ...publicError('DELETE_USER_FAILED') });
@@ -250,17 +258,39 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
       global: { headers: { 'x-application': 'edge-delete-user' } },
     });
 
-    const authHeader = req.headers.get('Authorization') || '';
-    const token = authHeader.replace('Bearer ', '').trim();
-    if (!token) throw new Error('MISSING_AUTH_TOKEN');
+    let actorUserId = '';
+    let actorProfile: any = null;
+    let isSuperAdmin = false;
+    if (trustedSelfDeletion) {
+      actorUserId = String(trustedSelfDeletion.userId || '').trim();
+      const requestId = String(trustedSelfDeletion.requestId || '').trim();
+      if (!actorUserId || !requestId || targetProfileId !== actorUserId) {
+        throw new Error('ACCESS_DENIED');
+      }
+      const { data: deletionRequest, error: deletionRequestError } = await admin
+        .from('account_deletion_requests')
+        .select('id,requested_user_id,status,email_verified_at')
+        .eq('id', requestId)
+        .eq('requested_user_id', actorUserId)
+        .eq('status', 'processing')
+        .maybeSingle();
+      if (deletionRequestError || !deletionRequest?.email_verified_at) {
+        throw new Error('ACCESS_DENIED');
+      }
+    } else {
+      const authHeader = req.headers.get('Authorization') || '';
+      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      if (!token) throw new Error('MISSING_AUTH_TOKEN');
 
-    const { data: authData, error: authError } = await admin.auth.getUser(token);
-    const actorUserId = authData?.user?.id || null;
-    if (authError || !actorUserId) throw new Error('AUTH_FAILED');
+      const { data: authData, error: authError } = await admin.auth.getUser(token);
+      actorUserId = authData?.user?.id || '';
+      if (authError || !actorUserId) throw new Error('AUTH_FAILED');
+      if (targetProfileId === actorUserId) throw new Error('CANNOT_DELETE_SELF');
 
-    if (targetProfileId === actorUserId) throw new Error('CANNOT_DELETE_SELF');
-
-    const { actorProfile, isSuperAdmin } = await getActorContext(admin, actorUserId);
+      const actor = await getActorContext(admin, actorUserId);
+      actorProfile = actor.actorProfile;
+      isSuperAdmin = actor.isSuperAdmin;
+    }
 
     const { data: target, error: targetError } = await admin
       .from('profiles')
@@ -274,9 +304,11 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
       !!actorProfile?.company_id &&
       String(actorProfile.company_id) === String(target.company_id || '');
 
-    if (!isSuperAdmin && !actorIsCompanyAdmin) throw new Error('ACCESS_DENIED');
+    if (!trustedSelfDeletion && !isSuperAdmin && !actorIsCompanyAdmin) {
+      throw new Error('ACCESS_DENIED');
+    }
 
-    if (await isActiveSuperAdmin(admin, target.id)) {
+    if (!trustedSelfDeletion && await isActiveSuperAdmin(admin, target.id)) {
       throw new Error('CANNOT_DELETE_SUPER_ADMIN');
     }
 
@@ -358,6 +390,7 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
         });
       } catch (cleanupError) {
         console.error('[delete_user] profile media cleanup failed', cleanupError);
+        if (trustedSelfDeletion) throw cleanupError;
       }
     }
 
@@ -388,5 +421,5 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
 }
 
 if (import.meta.main) {
-  serve(handleDeleteUserRequest);
+  serve((req) => handleDeleteUserRequest(req));
 }

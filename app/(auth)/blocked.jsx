@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
@@ -9,6 +9,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 export default function AuthBlockedScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const router = useRouter();
   const params = useLocalSearchParams();
   const { signOut } = useAuthContext();
   const code = String(params?.code || '').trim().toLowerCase();
@@ -39,6 +40,12 @@ export default function AuthBlockedScreen() {
             <Text style={styles(theme).title}>{t('auth_blocked_title')}</Text>
             <Text style={styles(theme).message}>{resolvedMessage}</Text>
             <Pressable
+              style={({ pressed }) => [styles(theme).secondaryButton, pressed ? { opacity: 0.85 } : null]}
+              onPress={() => router.push('/app_settings/account-deletion')}
+            >
+              <Text style={styles(theme).secondaryButtonText}>{t('auth_blocked_delete_account')}</Text>
+            </Pressable>
+            <Pressable
               style={({ pressed }) => [styles(theme).button, pressed ? { opacity: 0.85 } : null]}
               onPress={async () => {
                 try {
@@ -46,7 +53,7 @@ export default function AuthBlockedScreen() {
                 } catch {}
               }}
             >
-              <Text style={styles(theme).buttonText}>{t('btn_ok')}</Text>
+              <Text style={styles(theme).buttonText}>{t('auth_blocked_sign_out')}</Text>
             </Pressable>
           </View>
         </Card>
@@ -86,5 +93,19 @@ const styles = (theme) =>
     buttonText: {
       color: theme.colors.primaryTextOn,
       fontWeight: '700',
+    },
+    secondaryButton: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border,
+      borderRadius: 12,
+      minHeight: 44,
+      paddingHorizontal: theme.spacing.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    secondaryButtonText: {
+      color: theme.colors.text,
+      fontWeight: '700',
+      textAlign: 'center',
     },
   });

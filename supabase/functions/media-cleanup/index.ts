@@ -52,7 +52,7 @@ function isTransientUpstreamError(error: unknown) {
 }
 
 async function rpcWithRetry<T = unknown>(
-  admin: ReturnType<typeof createClient>,
+  admin: any,
   fn: string,
   args: Record<string, unknown>,
   attempts = 3,
@@ -105,7 +105,7 @@ function feedbackIdFromReason(reason: string | null | undefined) {
 }
 
 async function finalizeQueuedFeedbackDeletion(
-  admin: ReturnType<typeof createClient>,
+  admin: any,
   feedbackId: string,
 ) {
   const normalizedId = String(feedbackId || '').trim();
@@ -129,7 +129,7 @@ async function finalizeQueuedFeedbackDeletion(
 }
 
 async function markQueuedFeedbackDeletionFailed(
-  admin: ReturnType<typeof createClient>,
+  admin: any,
   feedbackId: string,
   errorMessage: string,
 ) {
@@ -149,7 +149,7 @@ async function markQueuedFeedbackDeletionFailed(
 }
 
 async function refreshYandexAccessToken(
-  admin: ReturnType<typeof createClient>,
+  admin: any,
   companyId: string,
   refreshToken: string,
 ) {
@@ -193,7 +193,7 @@ async function refreshYandexAccessToken(
   return String(tokenData.access_token);
 }
 
-async function getValidYandexAccessToken(admin: ReturnType<typeof createClient>, companyId: string) {
+async function getValidYandexAccessToken(admin: any, companyId: string) {
   const { data, error } = await admin
     .from('company_yandex_disk_connections')
     .select('access_token, refresh_token, token_expires_at')
@@ -242,6 +242,57 @@ async function deleteYandexResourceSafe(accessToken: string, path: string) {
     throw new Error('Yandex delete is still processing');
   }
   throw new Error(`Yandex delete failed: ${await res.text()}`);
+}
+
+export type ExternalMediaCleanupRow = {
+  provider?: string | null;
+  object_key?: string | null;
+  external_path?: string | null;
+  company_id?: string | null;
+};
+
+/**
+ * Permanently removes mapped external media before an owning company/profile is
+ * deleted. This is deliberately synchronous: once a company row is gone its
+ * Yandex OAuth connection is gone as well, so a queued cleanup could no longer
+ * authenticate against that disk.
+ */
+export async function deleteExternalMediaObjects(
+  admin: any,
+  rows: ExternalMediaCleanupRow[],
+) {
+  const unique = new Map<string, ExternalMediaCleanupRow>();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const provider = String(row?.provider || '').trim().toLowerCase();
+    const objectKey = normalizeKey(String(row?.object_key || row?.external_path || ''));
+    const companyId = String(row?.company_id || '').trim();
+    if (!objectKey || !['beget_s3', 'yandex_disk'].includes(provider)) continue;
+    unique.set(`${provider}|${companyId}|${objectKey}`, {
+      provider,
+      object_key: objectKey,
+      company_id: companyId || null,
+    });
+  }
+
+  const begetKeys = [...unique.values()]
+    .filter((row) => row.provider === 'beget_s3')
+    .map((row) => String(row.object_key || ''));
+  if (begetKeys.length) await deleteBegetKeys(begetKeys);
+
+  const yandexTokenCache = new Map<string, string>();
+  for (const row of unique.values()) {
+    if (row.provider !== 'yandex_disk') continue;
+    const companyId = String(row.company_id || '').trim();
+    if (!companyId) throw new Error('Missing company_id for Yandex cleanup');
+    let accessToken = yandexTokenCache.get(companyId) || '';
+    if (!accessToken) {
+      accessToken = await getValidYandexAccessToken(admin, companyId);
+      yandexTokenCache.set(companyId, accessToken);
+    }
+    await deleteYandexResourceSafe(accessToken, String(row.object_key || ''));
+  }
+
+  return { deleted: unique.size };
 }
 
 export async function handleMediaCleanupRequest(req: Request) {
@@ -335,7 +386,7 @@ export async function handleMediaCleanupRequest(req: Request) {
       usingV2Queue = true;
       queueRows = Array.isArray(claimedRows) ? (claimedRows as typeof queueRows) : [];
     } else {
-      const { count, error: reclaimError } = await admin
+      const { data: reclaimedRows, error: reclaimError } = await admin
         .from('media_cleanup_queue')
         .update({
           locked_at: null,
@@ -343,11 +394,11 @@ export async function handleMediaCleanupRequest(req: Request) {
         })
         .is('processed_at', null)
         .lt('locked_at', staleLockIso)
-        .select('id', { count: 'exact', head: true });
+        .select('id');
       if (reclaimError) {
         console.error('[media-cleanup] reclaim stale locks failed:', toErrorMessage(reclaimError));
       }
-      reclaimedLocks = Number(count || 0);
+      reclaimedLocks = Array.isArray(reclaimedRows) ? reclaimedRows.length : 0;
 
       let query = admin
         .from('media_cleanup_queue')

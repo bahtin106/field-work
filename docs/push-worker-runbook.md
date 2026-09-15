@@ -17,6 +17,16 @@ or the batch limit is invalid. Plain HTTP is permitted only for loopback;
 remote worker endpoints must use HTTPS. The key is passed to curl through
 standard input, so it is not exposed in the process command line.
 
+## Runtime lock directory
+
+The fallback cron uses `/run/lock/monitorapp/push-worker.lock`. Since `/run`
+is recreated at boot, install the tracked tmpfiles rule once on the server:
+
+```sh
+install -o root -g root -m 0644 ops/systemd/monitorapp-tmpfiles.conf /etc/tmpfiles.d/monitorapp.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/monitorapp.conf
+```
+
 ## Atomic key rotation
 
 1. Back up the current runtime configuration, database trigger configuration,

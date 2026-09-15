@@ -1,3 +1,4 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { handlePushSendRequest } from '../push-send/index.ts';
 import { handleInviteUserRequest } from '../invite-user/index.ts';
 import { handleRegisterUserRequest } from '../register-user/index.ts';
@@ -24,8 +25,117 @@ import { handleAdminDeleteCompanyRequest } from '../admin-delete-company/index.t
 import { handleUpdateUserRequest } from '../update_user/index.ts';
 import { handleTelegramBotRequest } from '../telegram-bot/index.ts';
 import { handleMaxBotRequest } from '../max-bot/index.ts';
+import { handleAccountDeletionRequest } from '../account-deletion/index.ts';
 
-function extractFunctionName(req: Request) {
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || Deno.env.get('PROJECT_URL') || '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('ANON_KEY') || '';
+const SUPABASE_SERVICE_ROLE_KEY =
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || '';
+
+const jsonHeaders = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+// These handlers cross the service-role boundary after authenticating the
+// caller. The router performs one shared, fail-closed operational access check
+// before any handler can reach privileged storage/auth/database operations.
+const ACTIVE_ACCESS_FUNCTIONS = new Set([
+  'invite-user',
+  'invite_user',
+  'delete-user',
+  'delete_user',
+  'push-token-sync',
+  'yandex-disk-integration',
+  'yandex-disk-media',
+  'yandex-disk-reconcile',
+  'profile-media-storage',
+  'order-media-storage',
+  'finance-entry-media-storage',
+  'finance-entry-yandex-media',
+  'object-media-storage',
+  'backfill-media-sizes',
+  'switch-account-mode',
+  'change-email',
+  'change_email',
+  'admin-delete-company',
+  'admin_delete_company',
+  'update-user',
+  'update_user',
+]);
+
+const ACTION_GATED_BOT_FUNCTIONS = new Set(['telegram-bot', 'max-bot']);
+
+type AccessState = {
+  can_login?: unknown;
+  block_code?: unknown;
+};
+
+function jsonError(status: number, code: string) {
+  return new Response(JSON.stringify({ success: false, message: code, code }), {
+    status,
+    headers: jsonHeaders,
+  });
+}
+
+function extractBearer(req: Request) {
+  return String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+}
+
+function firstAccessState(value: unknown): AccessState | null {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return candidate && typeof candidate === 'object' ? candidate as AccessState : null;
+}
+
+export async function requireActiveFunctionAccess(
+  req: Request,
+  options: { allowBlockedCleanup?: boolean } = {},
+): Promise<Response | null> {
+  const jwt = extractBearer(req);
+  if (!jwt) return jsonError(401, 'UNAUTHORIZED');
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
+    return jsonError(503, 'ACCESS_CHECK_UNAVAILABLE');
+  }
+
+  // Internal jobs already authenticate the service-role secret in their own
+  // handlers and do not represent an employee session.
+  if (jwt === SUPABASE_SERVICE_ROLE_KEY) return null;
+
+  const caller = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
+
+  const { data: authData, error: authError } = await caller.auth.getUser();
+  if (authError || !authData?.user?.id) return jsonError(401, 'UNAUTHORIZED');
+
+  const { data, error } = await caller.rpc('get_my_access_state');
+  if (error) {
+    console.warn('[main] active access check unavailable', error.message);
+    return jsonError(503, 'ACCESS_CHECK_UNAVAILABLE');
+  }
+
+  const access = firstAccessState(data);
+  if (access?.can_login !== true) {
+    if (options.allowBlockedCleanup === true) return null;
+    const blockCode = typeof access?.block_code === 'string' && access.block_code
+      ? access.block_code
+      : 'ACCOUNT_ACCESS_BLOCKED';
+    return jsonError(403, blockCode);
+  }
+  return null;
+}
+
+async function extractRequestAction(req: Request) {
+  if (req.method !== 'POST') return '';
+  const body = await req.clone().json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return '';
+  const action = (body as { action?: unknown }).action;
+  return typeof action === 'string' ? action.trim().toLowerCase() : '';
+}
+
+export function extractFunctionName(req: Request) {
   const url = new URL(req.url);
   const normalizedPath = url.pathname.replace(/\/+$/, '');
   const relayHeader = String(req.headers.get('x-relay-function-name') || '').trim();
@@ -41,8 +151,20 @@ function extractFunctionName(req: Request) {
   return name || '';
 }
 
-Deno.serve(async (req) => {
+export async function routeFunctionRequest(req: Request) {
   const fn = extractFunctionName(req);
+
+  if (req.method !== 'OPTIONS') {
+    const needsActionInspection = fn === 'push-token-sync' || ACTION_GATED_BOT_FUNCTIONS.has(fn);
+    const action = needsActionInspection ? await extractRequestAction(req) : '';
+    const requiresActiveAccess = ACTIVE_ACCESS_FUNCTIONS.has(fn)
+      || (ACTION_GATED_BOT_FUNCTIONS.has(fn) && action.length > 0);
+    const allowBlockedCleanup = fn === 'push-token-sync' && action === 'delete';
+    const denied = requiresActiveAccess
+      ? await requireActiveFunctionAccess(req, { allowBlockedCleanup })
+      : null;
+    if (denied) return denied;
+  }
 
   if (fn === 'push-send') return handlePushSendRequest(req);
   if (fn === 'invite-user' || fn === 'invite_user') return handleInviteUserRequest(req);
@@ -70,9 +192,11 @@ Deno.serve(async (req) => {
   if (fn === 'public-support-request') return handlePublicSupportRequest(req);
   if (fn === 'admin-delete-company' || fn === 'admin_delete_company') return handleAdminDeleteCompanyRequest(req);
   if (fn === 'update-user' || fn === 'update_user') return handleUpdateUserRequest(req);
+  if (fn === 'account-deletion' || fn === 'account_deletion') return handleAccountDeletionRequest(req);
 
-  return new Response(JSON.stringify({ success: false, message: `Unknown function: ${fn || 'none'}` }), {
-    status: 404,
-    headers: { 'Content-Type': 'application/json' },
-  });
-});
+  return jsonError(404, `Unknown function: ${fn || 'none'}`);
+}
+
+if (import.meta.main) {
+  Deno.serve(routeFunctionRequest);
+}

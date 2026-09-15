@@ -131,7 +131,7 @@ function mapInviteErrorToUiMessage(rawMessage, statusCode, t) {
   const msg = String(rawMessage || '').trim();
 
   if (/already exists|email.*taken|user.*exists|duplicate|email.*exists/i.test(msg)) {
-    return t('error_email_exists');
+    return t('invite_existing_account_delete_first');
   }
   if (/seat limit exceeded/i.test(msg)) {
     return t('err_seat_limit_exceeded_generic');
@@ -1004,7 +1004,7 @@ export default function NewUserScreen() {
         .maybeSingle();
 
       if (existingProfile) {
-        throw new Error(t('error_email_exists'));
+        throw new Error(t('invite_existing_account_delete_first'));
       }
 
       const payload = {

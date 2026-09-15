@@ -102,6 +102,8 @@ const orderFacetCounts = read('src/features/orders/facetCounts.js');
 const filtersPanel = read('components/filters/FiltersPanel.jsx');
 const appSettingsScreen = read('screens/app_settings/AppSettingsScreen.jsx');
 const accountDeletionScreen = read('screens/app_settings/AccountDeletionScreen.jsx');
+const accountDeletionFunction = read('supabase/functions/account-deletion/index.ts');
+const accountDeletionWorker = read('ops/scripts-root/account-deletion-worker.sh');
 const pushAutoSetup = read('lib/pushAutoSetup.js');
 const pushWorkerTick = read('scripts/push-worker-tick.sh');
 const pushWorkerBurst = read('scripts/push-worker-burst.sh');
@@ -245,6 +247,12 @@ const accountDeletionRollbackPath =
   'supabase/rollback/20260821220000_add_account_deletion_requests_rollback.sql';
 const accountDeletionMigration = read(accountDeletionMigrationPath);
 const accountDeletionRollback = read(accountDeletionRollbackPath);
+const automatedAccountDeletionMigrationPath =
+  'supabase/migrations/20260915120000_automate_verified_account_deletion.sql';
+const automatedAccountDeletionRollbackPath =
+  'supabase/rollback/20260915120000_automate_verified_account_deletion_rollback.sql';
+const automatedAccountDeletionMigration = read(automatedAccountDeletionMigrationPath);
+const automatedAccountDeletionRollback = read(automatedAccountDeletionRollbackPath);
 const adminLicenseMigrationPath =
   'supabase/migrations/20260823234500_count_company_admin_license.sql';
 const adminLicenseMigration = read(adminLicenseMigrationPath);
@@ -509,6 +517,8 @@ check(
 check(
   fs.existsSync(path.join(root, accountDeletionMigrationPath)) &&
     fs.existsSync(path.join(root, accountDeletionRollbackPath)) &&
+    fs.existsSync(path.join(root, automatedAccountDeletionMigrationPath)) &&
+    fs.existsSync(path.join(root, automatedAccountDeletionRollbackPath)) &&
     accountDeletionMigration.includes('create table if not exists public.account_deletion_requests') &&
     accountDeletionMigration.includes('create or replace function public.request_account_deletion()') &&
     accountDeletionMigration.includes('create or replace function public.transition_account_deletion_request(') &&
@@ -532,8 +542,24 @@ check(
     accountDeletionRollback.includes('drop function if exists public.transition_account_deletion_request') &&
     accountDeletionRollback.includes('drop function if exists public.request_account_deletion()') &&
     accountDeletionRollback.includes('drop function if exists public.account_deletion_requests_preserve_active_delete()') &&
-    accountDeletionScreen.includes("supabase.rpc('request_account_deletion')") &&
+    automatedAccountDeletionMigration.includes('create or replace function public.mark_account_deletion_email_verified(') &&
+    automatedAccountDeletionMigration.includes('create or replace function public.claim_verified_account_deletions(') &&
+    automatedAccountDeletionMigration.includes('create or replace function public.list_account_deletion_storage_objects(') &&
+    automatedAccountDeletionMigration.includes('create or replace function public.cancel_my_account_deletion_request(') &&
+    automatedAccountDeletionRollback.includes('drop function if exists public.mark_account_deletion_email_verified') &&
+    automatedAccountDeletionRollback.includes('drop function if exists public.claim_verified_account_deletions') &&
+    automatedAccountDeletionRollback.includes('drop function if exists public.list_account_deletion_storage_objects') &&
+    automatedAccountDeletionRollback.includes('drop function if exists public.cancel_my_account_deletion_request') &&
+    accountDeletionScreen.includes('supabase.functions.invoke(FUNCTIONS.ACCOUNT_DELETION') &&
+    accountDeletionScreen.includes("action: 'request_code'") &&
+    accountDeletionScreen.includes("action: 'confirm'") &&
     accountDeletionScreen.includes(".from('account_deletion_requests')") &&
+    accountDeletionFunction.includes("action === 'process_pending'") &&
+    accountDeletionFunction.includes("caller.rpc('request_account_deletion')") &&
+    accountDeletionFunction.includes("admin.rpc('mark_account_deletion_email_verified'") &&
+    accountDeletionFunction.includes("admin.rpc('claim_verified_account_deletions'") &&
+    accountDeletionFunction.includes("admin.rpc('list_account_deletion_storage_objects'") &&
+    accountDeletionWorker.includes('"action":"process_pending"') &&
     (adminDeleteCompanyFunction.match(/c\.table_name <> 'account_deletion_requests'/g) || []).length === 2 &&
     !accountDeletionScreen.includes('createSupportRequest'),
   'Account deletion must use the dedicated authenticated, RLS-protected request workflow with rollback',
