@@ -32,6 +32,7 @@ const approvedActionPins = new Map([
 ]);
 const legacySystemBarVisitorPath =
   'android/buildSrc/src/main/groovy/com/monitorapp/buildlogic/LegacySystemBarColorApiVisitorFactory.groovy';
+const androidEdgeToEdgeAuditPath = 'scripts/verify-android-edge-to-edge-aab.mjs';
 
 function check(condition, message) {
   if (!condition) failures.push(message);
@@ -48,6 +49,7 @@ const appJson = json('app.json').expo;
 const easJson = json('eas.json');
 const metroConfig = read('metro.config.js');
 const watchmanConfig = json('.watchmanconfig');
+const metroWindowsPreflight = read('scripts/prepare-metro-windows.mjs');
 const routePreload = read('src/shared/navigation/routePreload.js');
 const uiIdleTask = read('src/shared/perf/uiIdleTask.ts');
 const ruLocale = json('assets/locales/ru.json');
@@ -80,6 +82,8 @@ const androidLauncherBackground = read(
 );
 const gradle = read('android/app/build.gradle');
 const gradleProperties = read('android/gradle.properties');
+const androidReleaseBuilder = read('scripts/build-android-release.mjs');
+const androidEdgeToEdgeAudit = read(androidEdgeToEdgeAuditPath);
 const legacySystemBarCompat = read(
   'android/app/src/main/java/com/monitorapp/monitor/LegacySystemBarColorCompat.java',
 );
@@ -351,7 +355,8 @@ check(
   ) &&
     releaseWorkflow.includes('deno-version: v2.9.5') &&
     releaseWorkflow.includes('deno check --node-modules-dir=none') &&
-    releaseWorkflow.includes('./gradlew :app:bundleRelease --no-daemon'),
+    releaseWorkflow.includes('./gradlew :app:bundleRelease --no-daemon') &&
+    releaseWorkflow.includes('npm run android:edge-to-edge:audit -- android/app/build/outputs/bundle/release/app-release.aab'),
   'Release CI must pin third-party actions and compile both Edge and Android native sources',
 );
 
@@ -780,6 +785,15 @@ check(
   'React Native edge-to-edge Gradle flag must be enabled',
 );
 check(
+  gradle.includes('getDefaultProguardFile("proguard-android-optimize.txt")') &&
+    !gradle.includes('getDefaultProguardFile("proguard-android.txt")') &&
+    /(?:^|\n)android\.enableMinifyInReleaseBuilds=true(?:\r?\n|$)/.test(gradleProperties) &&
+    /(?:^|\n)android\.enableShrinkResourcesInReleaseBuilds=true(?:\r?\n|$)/.test(gradleProperties) &&
+    /(?:^|\n)android\.r8\.optimizedResourceShrinking=true(?:\r?\n|$)/.test(gradleProperties) &&
+    !/(?:^|\n)android\.enableR8\.fullMode=false(?:\r?\n|$)/.test(gradleProperties),
+  'Android release must enable R8 code optimization and optimized resource shrinking',
+);
+check(
   !`${androidStyles}\n${androidNightStyles}`.match(
     /windowOptOutEdgeToEdgeEnforcement|android:(?:statusBarColor|navigationBarColor|navigationBarDividerColor|windowTranslucentNavigation)/,
   ),
@@ -811,6 +825,20 @@ check(
     legacySystemBarVisitor.includes("'getNavigationBarDividerColor()I'") &&
     legacySystemBarVisitor.includes("'setNavigationBarDividerColor(I)V'"),
   'Release builds must isolate legacy system-bar color APIs from Android 15+',
+);
+check(
+  androidEdgeToEdgeAudit.includes("const WINDOW_DESCRIPTOR = 'Landroid/view/Window;'") &&
+    androidEdgeToEdgeAudit.includes('getStatusBarColor') &&
+    androidEdgeToEdgeAudit.includes('setStatusBarColor') &&
+    androidEdgeToEdgeAudit.includes('getNavigationBarColor') &&
+    androidEdgeToEdgeAudit.includes('setNavigationBarColor') &&
+    androidEdgeToEdgeAudit.includes('getNavigationBarDividerColor') &&
+    androidEdgeToEdgeAudit.includes('setNavigationBarDividerColor') &&
+    androidEdgeToEdgeAudit.includes('method_ids') &&
+    androidEdgeToEdgeAudit.includes('isOptimizationsEnabled') &&
+    androidEdgeToEdgeAudit.includes('isOptimizedResourceShrinkingEnabled') &&
+    androidReleaseBuilder.includes('assertAndroidEdgeToEdgeAabIsClean(bundlePath)'),
+  'Android release artifacts must fail closed on legacy Window APIs or disabled R8 optimization',
 );
 
 check(externalUrls.includes('https://monitorapp.ru/data-deletion'), 'Public account deletion URL is required');
@@ -1424,6 +1452,7 @@ check(
 );
 check(
   metroConfig.includes('config.resolver.useWatchman = true') &&
+    metroConfig.includes('requireWindowsWatchman()') &&
     metroConfig.includes('config.resolver.blockList') &&
     metroConfig.includes('build|\\.cxx|\\.gradle') &&
     metroConfig.includes('android|ios|apple|windows|macos') &&
@@ -1441,13 +1470,19 @@ check(
   'Watchman must ignore generated project trees so Metro HMR cannot exhaust Windows file handles',
 );
 check(
-  packageJson.scripts?.start === 'expo start' &&
+    packageJson.scripts?.start === 'expo start' &&
+    packageJson.scripts?.prestart === 'node scripts/prepare-metro-windows.mjs' &&
+    packageJson.scripts?.preandroid === 'node scripts/prepare-metro-windows.mjs' &&
+    packageJson.scripts?.preweb === 'node scripts/prepare-metro-windows.mjs' &&
     packageJson.scripts?.web === 'expo start --web' &&
-    metroConfig.includes('config.maxWorkers = Math.min(config.maxWorkers || 2, 2)') &&
+    metroConfig.includes("process.platform === 'win32' ? 1 : 2") &&
+    metroWindowsPreflight.includes("runWatchman(['watch-del', root]") &&
+    metroWindowsPreflight.includes("runWatchman(['watch-project', root]") &&
+    metroWindowsPreflight.includes("watchResponse?.watcher || '').toLowerCase() !== 'win32'") &&
     routePreload.includes('const preloadQueue = []') &&
     routePreload.includes('while (preloadQueue.length)') &&
     routePreload.includes('await preloadLazyRouteScreen(item.cacheKey, item.load)'),
-  'Speculative route modules must load sequentially using supported Expo and Metro configuration',
+  'Metro must refresh changed Watchman rules, require the native watcher, and cap Windows file-read pressure',
 );
 check(
   universalHome.indexOf('isAdmin ? HOME_ROUTES.companySettings') <
@@ -1531,13 +1566,15 @@ check(
   !cachedImage.includes('__img_retry') &&
     !cachedImage.includes('fallbackUriRef') &&
     cachedImage.includes('uri: sourceUri') &&
-    cachedImage.includes('source={imageSource}') &&
-    cachedImage.includes('buildProtectedMemoryCacheKey(sourceUri, protectedUserId)') &&
-    cachedImage.includes("const effectiveCachePolicy = requiresProtectedAuth ? 'memory' : cachePolicy") &&
+    cachedImage.includes('source={shouldLoadImage ? imageSource : null}') &&
+    cachedImage.includes('const shouldLoadImage = Boolean(sourceUri) && canLoadSource && !hasError') &&
+    cachedImage.includes('const requiresProtectedAuth = isProtectedMediaThumbnailUrl(sourceUri)') &&
+    !cachedImage.includes('isProtectedProfileMediaRenderUrl') &&
+    cachedImage.includes("const effectiveCachePolicy = requiresProtectedAuth ? 'none' : cachePolicy") &&
     cachedImage.includes("cachePolicy={retryAttempt > 0 ? 'none' : effectiveCachePolicy}") &&
     cachedImage.includes('Authorization: `Bearer ${protectedAccessToken}`') &&
-    supabaseSessionCache.includes('getCachedSupabaseAuthContext'),
-  'Image retries must preserve signed URLs while protected media stays authenticated and account-scoped in memory',
+    supabaseSessionCache.includes('getCachedSupabaseAccessToken'),
+  'Signed profile images must load without JWT gating while protected thumbnails stay authenticated and uncached',
 );
 check(
   photoGrid.includes('key: buildPhotoKey(uploadedUrl || visibleUri, visibleUri') &&
@@ -1603,12 +1640,23 @@ check(
   'Photo selection count must appear once and bulk-delete copy must remain concise',
 );
 check(
-  fullscreenImageViewer.includes('onDisplay={handleDisplayed}') &&
+  fullscreenImageViewer.includes('onDisplay={markImageReady}') &&
+    fullscreenImageViewer.includes('onLoad={handleImageLoad}') &&
+    fullscreenImageViewer.includes('markImageReady();') &&
+    fullscreenImageViewer.includes('event?.source?.width') &&
+    !fullscreenImageViewer.includes('useImageResolution') &&
+    !fullscreenImageViewer.includes('RNImage.getSize') &&
     fullscreenImageViewer.includes("t('viewer_image_load_error')") &&
     fullscreenImageViewer.includes('fallbackImages={retainedProps.fallbackImages}') &&
     fullscreenImageViewer.includes('registerIOSModal') &&
     fullscreenImageViewer.includes('onNativeDismiss={handleNativeDismiss}'),
   'Fullscreen photos must expose loading failure recovery and a network fallback',
+);
+check(
+  adminFeedbackDetailsScreen.includes("from 'expo-image'") &&
+    adminFeedbackDetailsScreen.includes('cachePolicy="memory-disk"') &&
+    adminFeedbackDetailsScreen.includes('contentFit="cover"'),
+  'Remote support photos must use the managed Expo image cache and downsampling pipeline',
 );
 check(
   !fullscreenImageViewer.includes('handleGalleryPanEnd') &&

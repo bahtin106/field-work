@@ -12,7 +12,6 @@ import { fetchCompanyOrderStatuses, getOrderStatusesQueryKey } from '../lib/orde
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
-import { getCachedSupabaseAuthContext } from '../lib/supabaseSessionCache';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../lib/companySettingsQuery';
 import {
   getCachedProfileMediaResolution,
@@ -30,7 +29,6 @@ import { preloadRouteScreen } from '../src/shared/navigation/routePreload';
 import { queryKeys } from '../src/shared/query/queryKeys';
 import { queryClient as appQueryClient } from '../src/shared/query/queryClient';
 import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
-import { isProtectedProfileMediaRenderUrl } from '../src/shared/media/profileMediaUrl';
 import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
 import { useSubscriptionGuard } from '../hooks/useSubscriptionGuard';
@@ -41,7 +39,6 @@ import {
   SUPPORT_UNREAD_QUERY_KEY,
 } from '../src/features/supportRequests/api';
 import Button from './ui/Button';
-import { buildProtectedMemoryCacheKey } from './ui/CachedImage';
 import Card from './ui/Card';
 import {
   ThemedRefreshControl,
@@ -520,9 +517,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     if (!uid || !rawAvatarUrl) return undefined;
     if (isRenderableAvatarUrl(avatarDisplayUrl)) {
       primeProfileMediaResolution(rawAvatarUrl, avatarDisplayUrl);
-      if (!isProtectedProfileMediaRenderUrl(avatarDisplayUrl)) {
-        ExpoImage.prefetch(avatarDisplayUrl, 'memory-disk').catch(() => {});
-      }
+      ExpoImage.prefetch(avatarDisplayUrl, 'memory-disk').catch(() => {});
       if (storedAvatarDisplayUrl !== avatarDisplayUrl) {
         applyAvatarSnapshot({ avatar_url: rawAvatarUrl, avatar_display_url: avatarDisplayUrl });
       }
@@ -530,9 +525,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     }
     if (isRenderableAvatarUrl(rawAvatarUrl)) {
       primeProfileMediaResolution(rawAvatarUrl, rawAvatarUrl);
-      if (!isProtectedProfileMediaRenderUrl(rawAvatarUrl)) {
-        ExpoImage.prefetch(rawAvatarUrl, 'memory-disk').catch(() => {});
-      }
+      ExpoImage.prefetch(rawAvatarUrl, 'memory-disk').catch(() => {});
       if (storedAvatarDisplayUrl !== rawAvatarUrl) {
         applyAvatarSnapshot({ avatar_url: rawAvatarUrl, avatar_display_url: rawAvatarUrl });
       }
@@ -547,9 +540,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         if (!snapshot) return;
         applyAvatarSnapshot(snapshot);
         if (snapshot.avatar_display_url) {
-          if (!isProtectedProfileMediaRenderUrl(snapshot.avatar_display_url)) {
-            ExpoImage.prefetch(snapshot.avatar_display_url, 'memory-disk').catch(() => {});
-          }
+          ExpoImage.prefetch(snapshot.avatar_display_url, 'memory-disk').catch(() => {});
         }
       })
       .catch(() => {});
@@ -567,19 +558,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     let cancelled = false;
     const loadAvatar = async () => {
       try {
-        let source = {
+        const source = {
           uri: avatarUrl,
           ...(avatarCacheKey ? { cacheKey: avatarCacheKey } : {}),
         };
-        if (isProtectedProfileMediaRenderUrl(avatarUrl)) {
-          const { accessToken, userId } = await getCachedSupabaseAuthContext(uid);
-          if (!accessToken || !userId) throw new Error('Protected avatar session is unavailable');
-          source = {
-            uri: avatarUrl,
-            cacheKey: buildProtectedMemoryCacheKey(avatarUrl, userId),
-            headers: { Authorization: `Bearer ${accessToken}` },
-          };
-        }
 
         const imageRef = await ExpoImage.loadAsync(source, {
           maxWidth: 512,

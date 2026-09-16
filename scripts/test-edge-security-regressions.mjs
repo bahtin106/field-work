@@ -130,16 +130,10 @@ const callerAssetIndex = mediaThumbnail.indexOf("await caller\n      .from('medi
 const adminClientIndex = mediaThumbnail.indexOf('const admin = createClient(supabaseUrl, serviceRole');
 assert.ok(callerAssetIndex >= 0 && callerAssetIndex < adminClientIndex, 'service role must be created only after RLS authorization');
 assert.match(cachedImage, /isProtectedMediaThumbnailUrl\(sourceUri\)/);
-assert.match(cachedImage, /isProtectedProfileMediaRenderUrl\(sourceUri\)/);
+assert.doesNotMatch(cachedImage, /isProtectedProfileMediaRenderUrl/);
 assert.match(cachedImage, /Authorization: `Bearer \$\{protectedAccessToken\}`/);
-assert.match(cachedImage, /buildProtectedMemoryCacheKey\(sourceUri, protectedUserId\)/);
-assert.match(cachedImage, /protected-image:\$\{owner\}:/);
-assert.match(cachedImage, /effectiveCachePolicy = requiresProtectedAuth \? 'memory' : cachePolicy/);
-assert.match(
-  supabaseSessionCache,
-  /export async function getCachedSupabaseAuthContext[\s\S]*?observedAuthReady && userId !== observedAuthUserId/,
-  'protected image cache identity must be bound to the currently observed auth user',
-);
+assert.match(cachedImage, /effectiveCachePolicy = requiresProtectedAuth \? 'none' : cachePolicy/);
+assert.match(cachedImage, /getCachedSupabaseAccessToken\(\)/);
 assert.match(profileMediaUrl, /functions\/v1\/profile-media-storage/);
 assert.match(profileMediaUrl, /target\.searchParams\.get\('sig'\)/);
 assert.match(
@@ -149,9 +143,10 @@ assert.match(
 );
 assert.match(
   universalHome,
-  /headers: \{ Authorization: `Bearer \$\{accessToken\}` \}/,
-  'protected home avatars must include the current authenticated session',
+  /const source = \{[\s\S]*?uri: avatarUrl,[\s\S]*?cacheKey: avatarCacheKey/,
+  'signed home avatars must load directly without waiting for the session cache',
 );
+assert.doesNotMatch(universalHome, /Protected avatar session is unavailable/);
 assert.match(
   universalHome,
   /<ExpoImage\s+source=\{avatarImageRef\}/,
@@ -159,8 +154,8 @@ assert.match(
 );
 assert.match(
   universalHome,
-  /!isProtectedProfileMediaRenderUrl\(snapshot\.avatar_display_url\)/,
-  'protected profile images must not be prefetched without authorization',
+  /ExpoImage\.prefetch\(snapshot\.avatar_display_url, 'memory-disk'\)/,
+  'signature-authenticated profile images may be prefetched directly',
 );
 assert.match(entityPhotoPreview, /disableContentShrink/);
 assert.match(entityPhotoPreview, /width: previewSize, height: previewSize/);
@@ -182,6 +177,16 @@ assert.match(imagePipeline, /!isProtectedMediaThumbnailUrl\(url\)/, 'shared pref
 assert.match(objectEdit, /<CachedImage\s+uri=\{photoAvatarUrl\}/, 'object avatar must use the authenticated renderer');
 assert.match(fullscreenViewer, /!activeUriIsProtected \? \(/, 'fullscreen viewer must not render protected URLs without auth');
 assert.match(fullscreenViewer, /filter\(\(uri\) => !isProtectedMediaThumbnailUrl\(uri\)\)/, 'viewer prefetch must skip protected URLs');
+assert.doesNotMatch(
+  fullscreenViewer,
+  /RNImage\.getSize|useImageResolution/,
+  'fullscreen viewer must not fetch and decode remote images through a second native pipeline',
+);
+assert.match(
+  fullscreenViewer,
+  /onLoad=\{handleImageLoad\}/,
+  'fullscreen viewer must reuse expo-image load metadata for image dimensions',
+);
 const financeDisplaySection = financeMedia.slice(
   financeMedia.indexOf('const getDisplayUrl = useCallback'),
   financeMedia.indexOf('const getThumbnailUrl = useCallback'),

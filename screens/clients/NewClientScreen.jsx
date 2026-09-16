@@ -4,7 +4,6 @@ import React from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Feather from '@expo/vector-icons/Feather';
-import { Image as ExpoImage } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import AdditionalPhoneInputRow from '../../components/clients/AdditionalPhoneInputRow';
@@ -14,6 +13,8 @@ import PhoneInput from '../../components/ui/PhoneInput';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import AvatarCropModal from '../../components/ui/AvatarCropModal';
+import CachedImage from '../../components/ui/CachedImage';
+import ModalImagePreview from '../../components/media/ModalImagePreview';
 import { BaseModal, SelectModal } from '../../components/ui/modals';
 import { useToast } from '../../components/ui/ToastProvider';
 import TagEditorField from '../../components/tags/TagEditorField';
@@ -729,11 +730,13 @@ export default function NewClientScreen() {
             accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
           >
             {canManageAvatar && avatarUrl ? (
-              <ExpoImage
-                source={{ uri: avatarUrl }}
+              <CachedImage
+                uri={avatarUrl}
                 style={styles.avatarImg}
                 contentFit="cover"
                 cachePolicy="none"
+                placeholder={null}
+                transition={180}
               />
             ) : (
               <Text style={styles.avatarText}>{clientInitials}</Text>
@@ -858,19 +861,14 @@ export default function NewClientScreen() {
           onClose={() => setViewAvatarVisible(false)}
           title={t('profile_photo_title')}
           maxHeightRatio={0.9}
+          disableContentShrink
         >
-          <View style={styles.avatarPreviewWrap}>
-            {avatarUrl ? (
-              <ExpoImage
-                source={{ uri: avatarUrl }}
-                style={styles.avatarPreviewImg}
-                contentFit="contain"
-                cachePolicy="none"
-              />
-            ) : (
-              <Text style={styles.avatarPreviewEmpty}>{t('placeholder_no_photo')}</Text>
-            )}
-          </View>
+          <ModalImagePreview
+            uri={avatarUrl}
+            emptyLabel={t('placeholder_no_photo')}
+            accessibilityLabel={t('profile_photo_title')}
+            cachePolicy="none"
+          />
         </BaseModal>
       ) : null}
 
@@ -957,19 +955,6 @@ function createStyles(theme) {
       color: theme.colors.primary,
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.semibold,
-    },
-    avatarPreviewWrap: {
-      alignItems: 'center',
-      padding: theme.spacing.md,
-    },
-    avatarPreviewImg: {
-      width: '100%',
-      height: undefined,
-      aspectRatio: 1,
-      borderRadius: theme.radii.lg,
-    },
-    avatarPreviewEmpty: {
-      color: theme.colors.textSecondary,
     },
   });
 }

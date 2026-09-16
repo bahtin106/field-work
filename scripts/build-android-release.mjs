@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAndroidEdgeToEdgeAabIsClean } from './verify-android-edge-to-edge-aab.mjs';
 
 const TASKS = {
   apk: 'assembleRelease',
@@ -105,6 +106,7 @@ function loadPlayCredentials() {
 
 function verifyBundle() {
   if (!existsSync(bundlePath)) throw new Error('Gradle completed without producing app-release.aab.');
+  const edgeToEdgeAudit = assertAndroidEdgeToEdgeAabIsClean(bundlePath);
   const sha1 = readSha1(runKeytool(['-printcert', '-jarfile', bundlePath]));
   if (sha1 !== EXPECTED_PLAY_SHA1) {
     throw new Error(`Refusing to publish: AAB certificate is ${sha1 || 'unknown'}, expected ${EXPECTED_PLAY_SHA1}.`);
@@ -119,6 +121,9 @@ function verifyBundle() {
   copyFileSync(bundlePath, releasePath);
   const hash = createHash('sha256').update(readFileSync(releasePath)).digest('hex').toUpperCase();
   console.log(`Verified Google Play AAB: ${releasePath}`);
+  console.log(
+    `Android artifact audit: ${edgeToEdgeAudit.dexFiles.length} clean DEX file(s), R8 ${edgeToEdgeAudit.r8.version} optimized`,
+  );
   console.log(`Certificate SHA1: ${sha1}`);
   console.log(`SHA256: ${hash}`);
   console.log(`Size: ${statSync(releasePath).size} bytes`);

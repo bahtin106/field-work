@@ -90,6 +90,7 @@ const PhotoItem = memo(function PhotoItem({
   uri,
   displayUri,
   fallbackUri,
+  fallbackUris,
   issueMessage,
   isPending,
   isFailed,
@@ -127,7 +128,8 @@ const PhotoItem = memo(function PhotoItem({
     if (!isPending && onToggleSelect) onToggleSelect(actualIndex);
   }, [actualIndex, isPending, onToggleSelect]);
 
-  const src = displayUri || uri;
+  const src = String(displayUri || uri || '').trim();
+  const safeFallbackUri = String(fallbackUri || '').trim();
 
   return (
     <View style={s.item}>
@@ -138,7 +140,7 @@ const PhotoItem = memo(function PhotoItem({
         disabled={isPending && !isFailed}
         accessibilityRole={isFailed ? 'button' : 'image'}
         accessibilityLabel={isFailed ? t('btn_retry') : undefined}
-        style={({ pressed }) => [pressed && s.pressed]}
+        style={({ pressed }) => [s.imagePressable, pressed && s.pressed]}
       >
         <View style={s.imageContainer}>
           {issueMessage ? (
@@ -153,16 +155,29 @@ const PhotoItem = memo(function PhotoItem({
               </Text>
             </View>
           ) : (
-            <CachedImage
-              uri={src}
-              fallbackUri={fallbackUri && fallbackUri !== src ? fallbackUri : undefined}
-              width="100%"
-              height="100%"
-              style={{ borderRadius: theme.radii.sm }}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              transition={theme.timings?.panelToggleMs ?? 200}
-            />
+            src ? (
+              <CachedImage
+                uri={src}
+                fallbackUri={safeFallbackUri && safeFallbackUri !== src ? safeFallbackUri : undefined}
+                fallbackUris={fallbackUris}
+                width="100%"
+                height="100%"
+                style={{ borderRadius: theme.radii.sm }}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                recyclingKey={uri || src}
+                transition={0}
+                showLoadingIndicator
+              />
+            ) : (
+              <View style={s.unavailable}>
+                <Feather
+                  name="image"
+                  size={theme.icons?.md || 22}
+                  color={theme.colors.textSecondary}
+                />
+              </View>
+            )
           )}
           {isPending && isFailed ? (
             <RetryOverlay
@@ -281,19 +296,27 @@ function PhotoGrid({
       if (completedUrls.has(String(url || ''))) continue;
       const thumbUri = getThumbnailUrl ? getThumbnailUrl(url) : '';
       const displayUri = getDisplayUrl ? getDisplayUrl(url) : url;
+      const remoteDisplayUri = getFallbackUrl ? getFallbackUrl(url) : '';
       const sourceKey = normalizePhotoKeySource(url) || normalizePhotoKeySource(displayUri);
-      const candidates = [thumbUri, displayUri]
+      // A local cached file wins offline. Otherwise use the small media proxy
+      // thumbnail and keep the resolved full-size URL as an error fallback.
+      // CachedImage attaches the session JWT required by media-thumbnail.
+      const candidates = /^file:\/\//i.test(String(displayUri || ''))
+        ? [displayUri, thumbUri, remoteDisplayUri]
+        : [thumbUri, displayUri, remoteDisplayUri];
+      const normalizedCandidates = candidates
         .map((value) => String(value || '').trim())
         .filter(Boolean);
       const retainedUri = String(stableDisplayBySourceRef.current.get(sourceKey) || '').trim();
       // Choose the best source available on first render, then retain it. A thumbnail
       // arriving later must not reload every tile that is already visible.
-      const visibleUri = retainedUri && candidates.includes(retainedUri)
+      const visibleUri = retainedUri && normalizedCandidates.includes(retainedUri)
         ? retainedUri
-        : candidates[0] || '';
+        : normalizedCandidates[0] || '';
       if (sourceKey && visibleUri) stableDisplayBySourceRef.current.set(sourceKey, visibleUri);
-      const remoteFallbackUri = getFallbackUrl ? getFallbackUrl(url) : '';
-      const fallbackUri = [remoteFallbackUri, thumbUri, displayUri]
+      const fallbackUris = [...new Set(normalizedCandidates)]
+        .filter((value) => value !== visibleUri);
+      const fallbackUri = fallbackUris
         .map((value) => String(value || '').trim())
         .find((value) => value && value !== visibleUri);
       const keySource = normalizePhotoKeySource(url) || normalizePhotoKeySource(visibleUri);
@@ -304,6 +327,7 @@ function PhotoGrid({
         uri: url,
         displayUri: visibleUri,
         fallbackUri: fallbackUri && fallbackUri !== visibleUri ? fallbackUri : '',
+        fallbackUris,
         issueMessage: getIssue ? getIssue(url) : '',
         isPending: false,
         isFailed: false,
@@ -369,6 +393,7 @@ function PhotoGrid({
         uri={item.uri}
         displayUri={item.displayUri}
         fallbackUri={item.fallbackUri}
+        fallbackUris={item.fallbackUris}
         issueMessage={item.issueMessage}
         isPending={item.isPending}
         isFailed={item.isFailed}
@@ -444,6 +469,10 @@ function buildStyles(theme) {
       position: 'relative',
     },
     pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
+    imagePressable: {
+      width: '100%',
+      height: '100%',
+    },
     imageContainer: {
       width: '100%',
       height: '100%',

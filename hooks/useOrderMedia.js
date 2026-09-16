@@ -484,11 +484,45 @@ export function useOrderMedia({ order, mediaProvider, t }) {
           ).catch(() => {});
           return;
         }
+        const hydratedEntries = envelope.entries || {};
+        const localFiles = Array.from(
+          new Set(Object.values(hydratedEntries).map((value) => String(value || '').trim()).filter(isLocalFileUri)),
+        );
+        const fileStates = await Promise.all(
+          localFiles.map(async (fileUri) => {
+            try {
+              const info = await getInfoAsync(fileUri, { size: true });
+              return [fileUri, Boolean(info?.exists && Number(info?.size || 0) > 0)];
+            } catch {
+              return [fileUri, false];
+            }
+          }),
+        );
+        if (cancelled || !isOrderMediaCacheScopeActive(scope)) return;
+        const validFiles = new Set(fileStates.filter(([, valid]) => valid).map(([fileUri]) => fileUri));
+        const validEntries = Object.fromEntries(
+          Object.entries(hydratedEntries).filter(([, fileUri]) => {
+            const normalizedFileUri = String(fileUri || '').trim();
+            return !isLocalFileUri(normalizedFileUri) || validFiles.has(normalizedFileUri);
+          }),
+        );
         localCacheRef.current = {
-          ...envelope.entries,
+          ...validEntries,
           ...(localCacheRef.current || {}),
         };
         if (Object.keys(localCacheRef.current).length) markLocalCacheChanged();
+        if (Object.keys(validEntries).length !== Object.keys(hydratedEntries).length) {
+          const cleanedEnvelope = serializeLocalCacheEnvelope(scope, validEntries);
+          if (cleanedEnvelope) {
+            enqueueOrderMediaIndexMutation(async () => {
+              if (!isOrderMediaCacheScopeActive(scope)) return;
+              const currentRaw = await AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
+              if (currentRaw === rawCurrent) {
+                await AsyncStorage.setItem(ORDER_MEDIA_LOCAL_CACHE_KEY, cleanedEnvelope);
+              }
+            }).catch(() => {});
+          }
+        }
       } catch {}
     })();
     return () => {
@@ -661,7 +695,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     (sourceUrl) => {
       if (!sourceUrl) return '';
       const displayUrl = getDisplayUrl(sourceUrl);
-      if (/^file:\/\//i.test(String(displayUrl || ''))) return displayUrl;
+      // Keep the server thumbnail independent from the preferred local display
+      // file so a removed/corrupt cache entry still has a usable fallback.
       return thumbUrls[sourceUrl] || displayUrl;
     },
     [getDisplayUrl, thumbUrls],

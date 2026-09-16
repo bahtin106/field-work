@@ -1,6 +1,5 @@
 import Feather from '@expo/vector-icons/Feather';
 import * as Clipboard from 'expo-clipboard';
-import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
@@ -17,6 +16,8 @@ import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import AvatarCropModal from '../../components/ui/AvatarCropModal';
+import CachedImage from '../../components/ui/CachedImage';
+import ModalImagePreview from '../../components/media/ModalImagePreview';
 import PhoneInput from '../../components/ui/PhoneInput';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
@@ -1166,11 +1167,13 @@ export default function NewUserScreen() {
               accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
             >
               {canManageAvatar && avatarUrl ? (
-                <ExpoImage
-                  source={{ uri: avatarUrl }}
+                <CachedImage
+                  uri={avatarUrl}
                   style={styles.avatarImg}
                   contentFit="cover"
                   cachePolicy="none"
+                  placeholder={null}
+                  transition={180}
                 />
               ) : (
                 <Text style={styles.avatarText}>{initials || '*'}</Text>
@@ -1300,19 +1303,14 @@ export default function NewUserScreen() {
             onClose={() => setViewAvatarVisible(false)}
             title={t('profile_photo_title')}
             maxHeightRatio={0.9}
+            disableContentShrink
           >
-            <View style={{ alignItems: 'center', padding: theme.spacing.md }}>
-              {avatarUrl ? (
-                <ExpoImage
-                  source={{ uri: avatarUrl }}
-                  style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
-                  contentFit="contain"
-                  cachePolicy="none"
-                />
-              ) : (
-                <Text style={{ color: theme.colors.textSecondary }}>{t('photo_empty')}</Text>
-              )}
-            </View>
+            <ModalImagePreview
+              uri={avatarUrl}
+              emptyLabel={t('photo_empty')}
+              accessibilityLabel={t('profile_photo_title')}
+              cachePolicy="none"
+            />
           </BaseModal>
         ) : null}
 

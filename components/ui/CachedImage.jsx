@@ -6,33 +6,18 @@ import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import Feather from '@expo/vector-icons/Feather';
 import { useTheme } from '../../theme';
-import { getCachedSupabaseAuthContext } from '../../lib/supabaseSessionCache';
-import { isProtectedProfileMediaRenderUrl } from '../../src/shared/media/profileMediaUrl';
+import { getCachedSupabaseAccessToken } from '../../lib/supabaseSessionCache';
 import { isProtectedMediaThumbnailUrl } from '../../src/shared/media/thumbnailUrl';
 
 const BLURHASH_PLACEHOLDER = 'L6PZfSi_.AyE_3t7t7R**0o#DgR4';
 const MAX_IMAGE_RETRY_ATTEMPTS = 2;
 const IMAGE_LOAD_TIMEOUT_MS = 15_000;
 
-function hashImageCacheKey(value) {
-  let hash = 2166136261;
-  const input = String(value || '');
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-export function buildProtectedMemoryCacheKey(uri, userId) {
-  const owner = String(userId || '').trim().toLowerCase();
-  if (!owner || !uri) return '';
-  return `protected-image:${owner}:${hashImageCacheKey(uri)}`;
-}
-
 /**
  * @param {object} props
  * @param {string} props.uri              – image URL (remote or local)
+ * @param {string} [props.fallbackUri]    – first alternate source
+ * @param {string[]} [props.fallbackUris] – remaining sources, tried once in order
  * @param {number} [props.width]          – explicit width (or use style)
  * @param {number} [props.height]         – explicit height (or use style)
  * @param {object} [props.style]          – additional style
@@ -50,6 +35,7 @@ export function buildProtectedMemoryCacheKey(uri, userId) {
 export default function CachedImage({
   uri,
   fallbackUri,
+  fallbackUris,
   width,
   height,
   style,
@@ -73,12 +59,19 @@ export default function CachedImage({
   const [activeUri, setActiveUri] = useState(uri || '');
   const [isLoading, setIsLoading] = useState(!!uri);
   const [retryAttempt, setRetryAttempt] = useState(0);
-  const [protectedAccessToken, setProtectedAccessToken] = useState('');
-  const [protectedUserId, setProtectedUserId] = useState('');
-  const [protectedAuthReady, setProtectedAuthReady] = useState(false);
+  const [protectedAuth, setProtectedAuth] = useState(null);
   const retryTimerRef = useRef(null);
   const loadTimeoutRef = useRef(null);
   const loadedUriRef = useRef('');
+  const failedSourcesRef = useRef(new Set());
+  // Compare values, not the caller's array identity: background renders must
+  // not restart the loading watchdog or retry an already rejected source.
+  const fallbackKey = JSON.stringify(
+    [...new Set([fallbackUri, ...(Array.isArray(fallbackUris) ? fallbackUris : [])]
+      .map((value) => String(value || '').trim()).filter(Boolean))],
+  );
+  const nextFallback = useCallback((current) => JSON.parse(fallbackKey)
+    .find((candidate) => candidate !== current && !failedSourcesRef.current.has(candidate)), [fallbackKey]);
 
   // Reset only when the visible URI changes. Fallback churn should not reload
   // an already rendered image during background media refreshes.
@@ -96,6 +89,7 @@ export default function CachedImage({
     setIsLoading(!!uri);
     setRetryAttempt(0);
     loadedUriRef.current = '';
+    failedSourcesRef.current.clear();
   }, [uri]);
 
   useEffect(
@@ -107,7 +101,7 @@ export default function CachedImage({
   );
 
   useEffect(() => {
-    const fallback = String(fallbackUri || '').trim();
+    const fallback = nextFallback(activeUri);
     if (!hasError || !fallback || fallback === activeUri) return;
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
@@ -122,11 +116,12 @@ export default function CachedImage({
     setIsLoading(true);
     setRetryAttempt(0);
     loadedUriRef.current = '';
-  }, [activeUri, fallbackUri, hasError]);
+  }, [activeUri, nextFallback, hasError]);
 
   const handleError = useCallback(
     (e) => {
-      const fallback = String(fallbackUri || '').trim();
+      failedSourcesRef.current.add(activeUri);
+      const fallback = nextFallback(activeUri);
       if (fallback && fallback !== activeUri) {
         if (loadTimeoutRef.current) {
           clearTimeout(loadTimeoutRef.current);
@@ -166,11 +161,15 @@ export default function CachedImage({
       setHasError(true);
       onError?.(e);
     },
-    [activeUri, fallbackUri, onError, retryAttempt],
+    [activeUri, nextFallback, onError, retryAttempt],
   );
 
   const handleLoad = useCallback(
     (e) => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
       if (loadTimeoutRef.current) {
         clearTimeout(loadTimeoutRef.current);
         loadTimeoutRef.current = null;
@@ -178,7 +177,8 @@ export default function CachedImage({
       loadedUriRef.current = activeUri || uri || '';
       setHasError(false);
       setIsLoading(false);
-      setRetryAttempt(0);
+      // retryAttempt is part of the native view key. Resetting it here destroys
+      // the successfully decoded image and starts the original request again.
       onLoad?.(e);
     },
     [activeUri, onLoad, uri],
@@ -189,62 +189,51 @@ export default function CachedImage({
   }, []);
 
   const sourceUri = activeUri || uri || '';
-  const requiresProtectedAuth =
-    isProtectedMediaThumbnailUrl(sourceUri) || isProtectedProfileMediaRenderUrl(sourceUri);
+  // media-thumbnail is JWT-protected. profile-media-storage render URLs are
+  // already authenticated by their exp/sig query pair and must stay usable
+  // while the Supabase session cache is warming up.
+  const requiresProtectedAuth = isProtectedMediaThumbnailUrl(sourceUri);
+  const authRequestKey = `${sourceUri}:${retryAttempt}`;
+  const protectedAuthReady = protectedAuth?.key === authRequestKey;
+  const protectedAccessToken = protectedAuthReady ? protectedAuth.token : '';
 
   useEffect(() => {
     let cancelled = false;
+    let authTimeout;
     if (!requiresProtectedAuth) {
-      setProtectedAccessToken('');
-      setProtectedUserId('');
-      setProtectedAuthReady(true);
       return () => {
         cancelled = true;
       };
     }
 
-    setProtectedAuthReady(false);
-    getCachedSupabaseAuthContext()
-      .then(({ accessToken, userId }) => {
+    authTimeout = setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      setProtectedAuth({ key: authRequestKey, token: '' });
+    }, IMAGE_LOAD_TIMEOUT_MS);
+    getCachedSupabaseAccessToken()
+      .then((accessToken) => {
         if (cancelled) return;
-        setProtectedAccessToken(String(accessToken || '').trim());
-        setProtectedUserId(String(userId || '').trim().toLowerCase());
-        setProtectedAuthReady(true);
+        clearTimeout(authTimeout);
+        setProtectedAuth({ key: authRequestKey, token: String(accessToken || '').trim() });
       })
       .catch(() => {
         if (cancelled) return;
-        setProtectedAccessToken('');
-        setProtectedUserId('');
-        setProtectedAuthReady(true);
+        clearTimeout(authTimeout);
+        setProtectedAuth({ key: authRequestKey, token: '' });
       });
     return () => {
       cancelled = true;
+      clearTimeout(authTimeout);
     };
-  }, [requiresProtectedAuth, retryAttempt, sourceUri]);
+  }, [authRequestKey, requiresProtectedAuth]);
 
   useEffect(() => {
-    if (!requiresProtectedAuth || !protectedAuthReady || protectedAccessToken) return;
-    const fallback = String(fallbackUri || '').trim();
-    if (
-      fallback &&
-      fallback !== sourceUri &&
-      !isProtectedMediaThumbnailUrl(fallback) &&
-      !isProtectedProfileMediaRenderUrl(fallback)
-    ) {
-      setActiveUri(fallback);
-      setHasError(false);
-      setIsLoading(true);
-      setRetryAttempt(0);
-      loadedUriRef.current = '';
-      return;
-    }
-    setIsLoading(false);
-    setHasError(true);
-  }, [fallbackUri, protectedAccessToken, protectedAuthReady, requiresProtectedAuth, sourceUri]);
+    if (!requiresProtectedAuth || !protectedAuthReady || protectedAccessToken || hasError) return;
+    handleError(new Error('Image session is unavailable'));
+  }, [handleError, hasError, protectedAccessToken, protectedAuthReady, requiresProtectedAuth]);
 
-  const canLoadSource =
-    !requiresProtectedAuth ||
-    (protectedAuthReady && Boolean(protectedAccessToken) && Boolean(protectedUserId));
+  const canLoadSource = !requiresProtectedAuth || (protectedAuthReady && Boolean(protectedAccessToken));
 
   const restartLoadTimeout = useCallback(() => {
     if (loadTimeoutRef.current) {
@@ -283,15 +272,6 @@ export default function CachedImage({
     };
   }, [restartLoadTimeout, retryAttempt]);
 
-  const protectedMemoryCacheKey = useMemo(
-    () => (
-      requiresProtectedAuth
-        ? buildProtectedMemoryCacheKey(sourceUri, protectedUserId)
-        : ''
-    ),
-    [protectedUserId, requiresProtectedAuth, sourceUri],
-  );
-  const effectiveCacheKey = requiresProtectedAuth ? protectedMemoryCacheKey : cacheKey;
   const imageSource = useMemo(() => {
     const sourceHeaders = {
       ...(headers && typeof headers === 'object' ? headers : {}),
@@ -301,14 +281,13 @@ export default function CachedImage({
     };
     return {
       uri: sourceUri,
-      ...(effectiveCacheKey ? { cacheKey: effectiveCacheKey } : {}),
+      ...(!requiresProtectedAuth && cacheKey ? { cacheKey } : {}),
       ...(Object.keys(sourceHeaders).length ? { headers: sourceHeaders } : {}),
     };
-  }, [effectiveCacheKey, headers, protectedAccessToken, requiresProtectedAuth, sourceUri]);
-  // Expo's native URL cache does not vary by Authorization. Protected bytes
-  // therefore use an account-scoped key and memory-only storage: the modal can
-  // reuse an already rendered avatar without persisting it or crossing users.
-  const effectiveCachePolicy = requiresProtectedAuth ? 'memory' : cachePolicy;
+  }, [cacheKey, headers, protectedAccessToken, requiresProtectedAuth, sourceUri]);
+  // The native cache key does not vary by Authorization. Avoid caching a
+  // protected response under a URL-only key; full display URLs remain cached.
+  const effectiveCachePolicy = requiresProtectedAuth ? 'none' : cachePolicy;
   const sizeStyle = useMemo(
     () => ({
       ...(width != null ? { width } : {}),
@@ -316,42 +295,39 @@ export default function CachedImage({
     }),
     [width, height],
   );
+  const shouldLoadImage = Boolean(sourceUri) && canLoadSource && !hasError;
 
-  if (!sourceUri || hasError || !canLoadSource) {
-    return (
-      <View
-        style={[
-          styles.fallback,
-          sizeStyle,
-          { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
-          style,
-        ]}
-      >
-        <Feather name="image" size={24} color={theme.colors.textSecondary} />
-      </View>
-    );
-  }
-
+  // Keep the native Image mounted while its JWT is being resolved. Swapping a
+  // Feather-only view for a late-mounted ExpoImage in an Android modal can emit
+  // onLoad/onDisplay with valid dimensions yet leave the tile blank (Fabric).
+  // A stable native view receives its authenticated source as a normal update.
   return (
     <View style={[sizeStyle, style, styles.imageFrame]}>
       <Image
         key={`${sourceUri}:${retryAttempt}`}
-        source={imageSource}
+        source={shouldLoadImage ? imageSource : null}
         style={StyleSheet.absoluteFill}
         contentFit={contentFit}
         cachePolicy={retryAttempt > 0 ? 'none' : effectiveCachePolicy}
         recyclingKey={recyclingKey != null ? `${String(recyclingKey)}:${retryAttempt}` : `${sourceUri}:${retryAttempt}`}
         transition={transition}
-        placeholder={placeholder ? { blurhash: placeholder } : undefined}
+        placeholder={placeholder && shouldLoadImage ? { blurhash: placeholder } : undefined}
         placeholderContentFit={contentFit}
         enforceEarlyResizing
-        onLoad={handleLoad}
-        onLoadEnd={handleLoadEnd}
-        onError={handleError}
+        onLoad={shouldLoadImage ? handleLoad : undefined}
+        onLoadEnd={shouldLoadImage ? handleLoadEnd : undefined}
+        onError={shouldLoadImage ? handleError : undefined}
         onProgress={handleProgress}
         accessibilityLabel={accessibilityLabel}
         {...rest}
       />
+      {!sourceUri || hasError ? (
+        <View style={[StyleSheet.absoluteFill, styles.fallback, {
+          backgroundColor: theme.colors.surface, borderColor: theme.colors.border,
+        }]}>
+          <Feather name="image" size={24} color={theme.colors.textSecondary} />
+        </View>
+      ) : null}
       {showLoadingIndicator && isLoading ? (
         <View pointerEvents="none" style={styles.loadingOverlay}>
           <ActivityIndicator size="small" color={theme.colors.textSecondary} />

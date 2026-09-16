@@ -2,7 +2,6 @@
 
 import AntDesign from '@expo/vector-icons/AntDesign';
 import Feather from '@expo/vector-icons/Feather';
-import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -31,6 +30,9 @@ import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
+import CachedImage from '../../../components/ui/CachedImage';
+import ModalImagePreview from '../../../components/media/ModalImagePreview';
+import { getProfileMediaDisplayUri } from '../../../src/shared/media/profileMediaDisplayUri';
 import {
   hasMobilePhoneValue,
   isValidOptionalMobilePhone,
@@ -526,6 +528,7 @@ function AvatarSheetModal({
   onDeletePhoto,
   onViewPhoto,
   onClose,
+  onDismiss,
 }) {
   const { t } = useTranslation();
 
@@ -553,6 +556,7 @@ function AvatarSheetModal({
       title={t('profile_photo_title')}
       items={items}
       searchable={false}
+      onDismiss={onDismiss}
       onSelect={(it) => {
         try {
           if (it.id === 'camera') onTakePhoto?.();
@@ -867,10 +871,7 @@ export default function EditUser({ privilegedAdminAccess = false }) {
   const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // Временный аватар до сохранения
   const avatarSaveTimestampRef = useRef(0); // Timestamp последнего сохранения аватара
   const avatarDisplayUrl = useMemo(
-    () =>
-      /^https?:\/\//i.test(String(avatarUrl || ''))
-        ? employeeData?.avatarDisplayUrl || avatarUrl
-        : avatarUrl,
+    () => getProfileMediaDisplayUri(avatarUrl, employeeData?.avatarDisplayUrl),
     [avatarUrl, employeeData?.avatarDisplayUrl],
   );
   const avatarImageCachePolicy = /^https?:\/\//i.test(String(avatarDisplayUrl || '')) ? 'memory-disk' : 'none';
@@ -994,6 +995,7 @@ export default function EditUser({ privilegedAdminAccess = false }) {
   const [resettingPwd, setResettingPwd] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [viewAvatarVisible, setViewAvatarVisible] = useState(false);
+  const pendingAvatarViewRef = useRef(false);
   const companyRoleContext = employeeData?.roleContext || null;
   const targetAccountType = String(
     companyRoleContext?.accountType || employeeData?.accountType || '',
@@ -3187,11 +3189,13 @@ export default function EditUser({ privilegedAdminAccess = false }) {
                   accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
                 >
                   {canManageAvatar && avatarDisplayUrl ? (
-                    <ExpoImage
-                      source={{ uri: avatarDisplayUrl }}
+                    <CachedImage
+                      uri={avatarDisplayUrl}
                       style={styles.avatarImg}
                       contentFit="cover"
                       cachePolicy={avatarImageCachePolicy}
+                      placeholder={null}
+                      transition={180}
                     />
                   ) : (
                     <Text style={styles.avatarText}>{initials || '•'}</Text>
@@ -3648,9 +3652,14 @@ export default function EditUser({ privilegedAdminAccess = false }) {
                 onPickFromLibrary={pickFromLibrary}
                 onDeletePhoto={deleteAvatar}
                 onViewPhoto={() => {
-                  setViewAvatarVisible(true);
+                  pendingAvatarViewRef.current = true;
                 }}
                 onClose={() => setAvatarSheet(false)}
+                onDismiss={() => {
+                  if (!pendingAvatarViewRef.current) return;
+                  pendingAvatarViewRef.current = false;
+                  setViewAvatarVisible(true);
+                }}
               />
             ) : null}
             <AvatarCropModal visible={cropVisible} uri={cropSrc} onCancel={onCropCancel} onConfirm={onCropConfirm} />
@@ -3661,19 +3670,14 @@ export default function EditUser({ privilegedAdminAccess = false }) {
                 onClose={() => setViewAvatarVisible(false)}
                 title={t('profile_photo_title')}
                 maxHeightRatio={0.9}
+                disableContentShrink
               >
-                <View style={{ alignItems: 'center', padding: theme.spacing.md }}>
-                  {avatarDisplayUrl ? (
-                    <ExpoImage
-                      source={{ uri: avatarDisplayUrl }}
-                      style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
-                      contentFit="contain"
-                      cachePolicy={avatarImageCachePolicy}
-                    />
-                  ) : (
-                    <Text style={{ color: theme.colors.textSecondary }}>{t('photo_empty')}</Text>
-                  )}
-                </View>
+                <ModalImagePreview
+                  uri={avatarDisplayUrl}
+                  emptyLabel={t('photo_empty')}
+                  accessibilityLabel={t('profile_photo_title')}
+                  cachePolicy={avatarImageCachePolicy}
+                />
               </BaseModal>
             ) : null}
             {useDepartments ? (

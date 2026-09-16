@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import React from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import Screen from '../../../../components/layout/Screen';
 import Button from '../../../../components/ui/Button';
 import Card from '../../../../components/ui/Card';
@@ -341,10 +342,13 @@ export default function AdminFeedbackDetailsScreen() {
                       }}
                       style={({ pressed }) => [styles(theme).photoPressable, pressed && styles(theme).photoPressed]}
                     >
-                      <Image
+                      <ExpoImage
                         source={{ uri: url }}
                         style={styles(theme).photo}
-                        resizeMode="cover"
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        recyclingKey={url}
+                        transition={120}
                       />
                     </Pressable>
                   ))}

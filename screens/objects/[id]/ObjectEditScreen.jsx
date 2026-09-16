@@ -1,6 +1,5 @@
 import AntDesign from '@expo/vector-icons/AntDesign';
 import Feather from '@expo/vector-icons/Feather';
-import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
 import React from 'react';
@@ -14,6 +13,7 @@ import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
 import CachedImage from '../../../components/ui/CachedImage';
+import ModalImagePreview from '../../../components/media/ModalImagePreview';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
@@ -1471,19 +1471,14 @@ export default function EditObjectScreen() {
         onClose={() => setPhotoPreviewVisible(false)}
         title={t('objects_photo_title')}
         maxHeightRatio={0.9}
+        disableContentShrink
       >
-        <View style={styles.previewWrap}>
-          {photoDisplayUrl ? (
-            <ExpoImage
-              source={{ uri: photoDisplayUrl }}
-              style={styles.previewImg}
-              contentFit="contain"
-              cachePolicy="none"
-            />
-          ) : (
-            <Text style={styles.previewEmpty}>{t('placeholder_no_photo')}</Text>
-          )}
-        </View>
+        <ModalImagePreview
+          uri={photoDisplayUrl}
+          fallbackUri={photoAvatarUrl}
+          emptyLabel={t('placeholder_no_photo')}
+          accessibilityLabel={t('objects_photo_title')}
+        />
       </BaseModal>
     </>
   );
@@ -1686,19 +1681,6 @@ function createStyles(theme, formStyles) {
     },
     mapActionBtnInactive: {
       opacity: 0.5,
-    },
-    previewWrap: {
-      alignItems: 'center',
-      padding: theme.spacing.md,
-    },
-    previewImg: {
-      width: '100%',
-      height: undefined,
-      aspectRatio: 1,
-      borderRadius: theme.radii.lg,
-    },
-    previewEmpty: {
-      color: theme.colors.textSecondary,
     },
   });
 }

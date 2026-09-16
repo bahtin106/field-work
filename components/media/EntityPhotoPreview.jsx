@@ -2,10 +2,9 @@ import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { useTheme } from '../../theme';
-import { getCachedSupabaseAuthContext } from '../../lib/supabaseSessionCache';
-import { isProtectedProfileMediaRenderUrl } from '../../src/shared/media/profileMediaUrl';
+import { getCachedSupabaseAccessToken } from '../../lib/supabaseSessionCache';
 import { isProtectedMediaThumbnailUrl } from '../../src/shared/media/thumbnailUrl';
-import CachedImage, { buildProtectedMemoryCacheKey } from '../ui/CachedImage';
+import CachedImage from '../ui/CachedImage';
 import { BaseModal } from '../ui/modals';
 
 export default function EntityPhotoPreview({
@@ -77,15 +76,13 @@ export default function EntityPhotoPreview({
     let cancelled = false;
     const loadSharedImage = async () => {
       try {
-        const protectedSource =
-          isProtectedMediaThumbnailUrl(fullUrl) || isProtectedProfileMediaRenderUrl(fullUrl);
+        const protectedSource = isProtectedMediaThumbnailUrl(fullUrl);
         let source = { uri: fullUrl };
         if (protectedSource) {
-          const { accessToken, userId } = await getCachedSupabaseAuthContext();
-          if (!accessToken || !userId) throw new Error('Protected image session is unavailable');
+          const accessToken = await getCachedSupabaseAccessToken();
+          if (!accessToken) throw new Error('Protected image session is unavailable');
           source = {
             uri: fullUrl,
-            cacheKey: buildProtectedMemoryCacheKey(fullUrl, userId),
             headers: { Authorization: `Bearer ${accessToken}` },
           };
         }

@@ -1,7 +1,6 @@
 import AntDesign from '@expo/vector-icons/AntDesign';
 import Feather from '@expo/vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import React from 'react';
@@ -9,6 +8,8 @@ import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } fro
 import AdditionalPhoneInputRow from '../../../components/clients/AdditionalPhoneInputRow';
 import EditScreenTemplate from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
+import CachedImage from '../../../components/ui/CachedImage';
+import ModalImagePreview from '../../../components/media/ModalImagePreview';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
@@ -276,6 +277,9 @@ export default function EditClientScreen() {
     () => (String(avatarUrl || '').startsWith('http') ? client?.avatarDisplayUrl || avatarUrl : avatarUrl),
     [avatarUrl, client?.avatarDisplayUrl],
   );
+  const avatarImageCachePolicy = /^https?:\/\//i.test(String(avatarDisplayUrl || ''))
+    ? 'memory-disk'
+    : 'none';
 
   const [avatarSheetVisible, setAvatarSheetVisible] = React.useState(false);
   const [cropVisible, setCropVisible] = React.useState(false);
@@ -1217,11 +1221,13 @@ export default function EditClientScreen() {
               accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
             >
               {canManageAvatar && avatarDisplayUrl ? (
-                <ExpoImage
-                  source={{ uri: avatarDisplayUrl }}
+                <CachedImage
+                  uri={avatarDisplayUrl}
                   style={styles.avatarImg}
                   contentFit="cover"
-                  cachePolicy="none"
+                  cachePolicy={avatarImageCachePolicy}
+                  placeholder={null}
+                  transition={180}
                 />
               ) : (
                 <Text style={styles.avatarText}>{initials || '*'}</Text>
@@ -1539,19 +1545,14 @@ export default function EditClientScreen() {
           onClose={() => setViewAvatarVisible(false)}
           title={t('profile_photo_title')}
           maxHeightRatio={0.9}
+          disableContentShrink
         >
-          <View style={styles.avatarPreviewWrap}>
-            {avatarDisplayUrl ? (
-              <ExpoImage
-                source={{ uri: avatarDisplayUrl }}
-                style={styles.avatarPreviewImg}
-                contentFit="contain"
-                cachePolicy="none"
-              />
-            ) : (
-              <Text style={styles.avatarPreviewEmpty}>{t('placeholder_no_photo')}</Text>
-            )}
-          </View>
+          <ModalImagePreview
+            uri={avatarDisplayUrl}
+            emptyLabel={t('placeholder_no_photo')}
+            accessibilityLabel={t('profile_photo_title')}
+            cachePolicy={avatarImageCachePolicy}
+          />
         </BaseModal>
       ) : null}
     </>
@@ -1712,18 +1713,5 @@ function createStyles(theme) {
       // do not force flex:1 here — allow buttons to size naturally
     },
 
-    avatarPreviewWrap: {
-      alignItems: 'center',
-      padding: theme.spacing.md,
-    },
-    avatarPreviewImg: {
-      width: '100%',
-      height: undefined,
-      aspectRatio: 1,
-      borderRadius: theme.radii.lg,
-    },
-    avatarPreviewEmpty: {
-      color: theme.colors.textSecondary,
-    },
   });
 }

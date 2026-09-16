@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Image as RNImage,
   Modal,
   PanResponder,
   Platform,
@@ -20,7 +19,7 @@ import { cacheDirectory, copyAsync, downloadAsync, getInfoAsync } from 'expo-fil
 import { Image as ExpoImage } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
-import { fitContainer, Gallery, useImageResolution } from 'react-native-zoom-toolkit';
+import { fitContainer, Gallery } from 'react-native-zoom-toolkit';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme';
 import { withAlpha } from '../../../theme/colors';
@@ -135,20 +134,6 @@ function createEdgeBackResponder(direction, onClose) {
   });
 }
 
-const measureImage = (uri) =>
-  new Promise((resolve) => {
-    if (!uri || isProtectedMediaThumbnailUrl(uri)) {
-      resolve(null);
-      return;
-    }
-
-    RNImage.getSize(
-      uri,
-      (width, height) => resolve({ width, height }),
-      () => resolve(null),
-    );
-  });
-
 const getImageExtension = (uri) => {
   const path = String(uri || '').trim().split('?')[0].split('#')[0];
   const match = path.match(/\.(jpe?g|png|gif|webp)$/i);
@@ -165,17 +150,18 @@ const GalleryPhoto = memo(function GalleryPhoto({
   onLoadStateChange,
   onRefreshUri,
   onDisplayedUri,
+  onResolution,
 }) {
   const [activeUri, setActiveUri] = useState(uri);
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [loadState, setLoadState] = useState('loading');
+  const [resolution, setResolution] = useState(null);
   const retryTimerRef = useRef(null);
   const loadTimeoutRef = useRef(null);
   const retryScheduledRef = useRef(false);
   const refreshAttemptedRef = useRef(false);
   const refreshRequestRef = useRef(0);
   const activeUriIsProtected = isProtectedMediaThumbnailUrl(activeUri);
-  const { resolution } = useImageResolution({ uri: activeUriIsProtected ? '' : activeUri });
 
   const clearLoadTimeout = useCallback(() => {
     if (!loadTimeoutRef.current) return;
@@ -189,6 +175,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
     const safeFallback = String(fallbackUri || '').trim();
     if (safeFallback && safeFallback !== activeUri && !isProtectedMediaThumbnailUrl(safeFallback)) {
       setActiveUri(safeFallback);
+      setResolution(null);
       setRetryAttempt(0);
       setLoadState('loading');
       onFallbackActivated?.(safeFallback);
@@ -234,6 +221,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
             return;
           }
           setActiveUri(refreshedUri);
+          setResolution(null);
           setRetryAttempt(0);
           setLoadState('loading');
         })
@@ -260,7 +248,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
     retryAttempt,
   ]);
 
-  const handleDisplayed = useCallback(() => {
+  const markImageReady = useCallback(() => {
     retryScheduledRef.current = false;
     clearLoadTimeout();
     if (retryTimerRef.current) {
@@ -270,6 +258,20 @@ const GalleryPhoto = memo(function GalleryPhoto({
     setLoadState('ready');
     onDisplayedUri?.(activeUri);
   }, [activeUri, clearLoadTimeout, onDisplayedUri]);
+
+  const handleImageLoad = useCallback((event) => {
+    // onLoad means the source has been fetched and decoded. Do not keep the
+    // opaque loading layer mounted while waiting for onDisplay: on Android the
+    // latter can be delayed or skipped when ExpoImage is hosted by a zoom view
+    // inside a native modal.
+    markImageReady();
+    const width = Number(event?.source?.width) || 0;
+    const height = Number(event?.source?.height) || 0;
+    if (width <= 0 || height <= 0) return;
+    const nextResolution = { width, height };
+    setResolution(nextResolution);
+    onResolution?.(activeUri, nextResolution);
+  }, [activeUri, markImageReady, onResolution]);
 
   const restartLoadTimeout = useCallback(() => {
     clearLoadTimeout();
@@ -286,6 +288,7 @@ const GalleryPhoto = memo(function GalleryPhoto({
     refreshAttemptedRef.current = false;
     refreshRequestRef.current += 1;
     setActiveUri(uri);
+    setResolution(null);
     setRetryAttempt(0);
     setLoadState('loading');
   }, [uri]);
@@ -335,7 +338,8 @@ const GalleryPhoto = memo(function GalleryPhoto({
           priority="high"
           transition={0}
           recyclingKey={`${activeUri}:${retryAttempt}`}
-          onDisplay={handleDisplayed}
+          onLoad={handleImageLoad}
+          onDisplay={markImageReady}
           onError={handleLoadFailure}
           onProgress={restartLoadTimeout}
           style={StyleSheet.absoluteFill}
@@ -509,6 +513,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   const [rotations, setRotations] = useState({});
   const [toolbarVisible, setToolbarVisible] = useState(true);
   const [imageLoadStates, setImageLoadStates] = useState({});
+  const [imageResolutions, setImageResolutions] = useState({});
   const [manualRetryNonce, setManualRetryNonce] = useState(0);
   const [nativeVisible, setNativeVisible] = useState(false);
   const [nativeDismissPending, setNativeDismissPending] = useState(false);
@@ -738,6 +743,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     setBusy(false);
     setToolbarVisible(true);
     setImageLoadStates({});
+    setImageResolutions({});
     setManualRetryNonce(0);
     if (becameVisible) {
       setRotations({});
@@ -964,16 +970,15 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       capturedAt: formatImageDateTime(metadata.capturedAt, locale),
       uploadedAt: formatImageDateTime(metadata.uploadedAt, locale),
       origin: String(metadata.origin || '').trim() || null,
-      resolution: null,
+      resolution: imageResolutions[currentUri]
+        ? `${imageResolutions[currentUri].width} x ${imageResolutions[currentUri].height}`
+        : null,
       size: null,
       loading: true,
     });
 
     void (async () => {
-      const [dims, localUri] = await Promise.all([
-        measureImage(currentUri),
-        downloadToCache(currentUri).catch(() => null),
-      ]);
+      const localUri = await downloadToCache(currentUri).catch(() => null);
       let fileSize = null;
       try {
         if (localUri) {
@@ -984,12 +989,11 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       if (infoRequestRef.current !== requestId) return;
       setInfoOpen((previous) => previous && ({
         ...previous,
-        resolution: dims ? `${dims.width} x ${dims.height}` : null,
         size: formatBytes(fileSize),
         loading: false,
       }));
     })();
-  }, [capturePreviewMode, currentIndex, currentUri, downloadToCache, formatBytes, localImageMetadata, locale]);
+  }, [capturePreviewMode, currentIndex, currentUri, downloadToCache, formatBytes, imageResolutions, localImageMetadata, locale]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (deleting) return;
@@ -1111,6 +1115,24 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     });
   }, []);
 
+  const handleImageResolution = useCallback((index, displayedUri, resolution) => {
+    const key = String(displayedUri || '').trim();
+    const width = Number(resolution?.width) || 0;
+    const height = Number(resolution?.height) || 0;
+    if (!key || width <= 0 || height <= 0) return;
+    setImageResolutions((previous) => {
+      const current = previous[key];
+      if (current?.width === width && current?.height === height) return previous;
+      return { ...previous, [key]: { width, height } };
+    });
+    if (currentIndexRef.current === index) {
+      setInfoOpen((previous) => previous && ({
+        ...previous,
+        resolution: `${width} x ${height}`,
+      }));
+    }
+  }, []);
+
   const refreshImageUri = useCallback(
     (index, failedUri) => {
       if (!onRetryImage) return '';
@@ -1170,12 +1192,16 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
         onLoadStateChange={handleImageLoadStateChange}
         onRefreshUri={onRetryImage ? (failedUri) => refreshImageUri(index, failedUri) : undefined}
         onDisplayedUri={(displayedUri) => handleDisplayedUri(index, displayedUri)}
+        onResolution={(displayedUri, resolution) =>
+          handleImageResolution(index, displayedUri, resolution)
+        }
       />
     ),
     [
       handleDisplayedUri,
       handleFallbackActivated,
       handleImageLoadStateChange,
+      handleImageResolution,
       localFallbackImages,
       onRetryImage,
       refreshImageUri,

@@ -1,4 +1,28 @@
 ﻿const { getDefaultConfig } = require('expo/metro-config');
+const { spawnSync } = require('node:child_process');
+
+function requireWindowsWatchman() {
+  if (process.platform !== 'win32') return;
+  const where = spawnSync('where.exe', ['watchman.exe'], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  const executable = String(where.stdout || '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find(Boolean);
+  const probe = executable
+    ? spawnSync(executable, ['version'], { encoding: 'utf8', windowsHide: true })
+    : null;
+  if (!probe || probe.status !== 0) {
+    throw new Error(
+      'Watchman is required for Metro on Windows. Run `winget install facebook.watchman`, then restart the terminal.',
+    );
+  }
+}
+
+requireWindowsWatchman();
+
 const config = getDefaultConfig(__dirname);
 // On Windows, Metro's fallback watcher opens a watcher for every directory and
 // can exhaust the process handle limit in a large Expo project. Watchman uses a
@@ -25,9 +49,9 @@ config.resolver.blockList = [
   /(?:^|[\\/])node_modules[\\/]\.deno(?:[\\/]|$)/,
 ];
 
-// Metro owns two worker pools. On Windows, four workers put this project close
-// to the per-process open-file ceiling during a cold bundle; two leave enough
-// headroom for HMR and Expo's dev-server requests without disabling parallelism.
-config.maxWorkers = Math.min(config.maxWorkers || 2, 2);
+// A single Windows transformer worker bounds concurrent file reads while
+// Watchman handles filesystem notifications outside the Node process.
+const safeWorkerCount = process.platform === 'win32' ? 1 : 2;
+config.maxWorkers = Math.min(config.maxWorkers || safeWorkerCount, safeWorkerCount);
 
 module.exports = config;

@@ -75,6 +75,9 @@ jobs:
         # permissions in CI.
         run: bash ./gradlew :app:bundleRelease --no-daemon
 
+      - name: Verify Android 15 edge-to-edge bytecode
+        run: npm run android:edge-to-edge:audit -- android/app/build/outputs/bundle/release/app-release.aab
+
       - name: Export Android production bundle
         run: npx expo export --platform android --output-dir dist-ci-android
 
