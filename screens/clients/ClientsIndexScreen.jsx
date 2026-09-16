@@ -5,7 +5,6 @@ import React from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  InteractionManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -36,6 +35,7 @@ import { useCompanyTags } from '../../src/features/tags/queries';
 import { hasDisplayValue } from '../../src/shared/display/value';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
+import { scheduleUiIdleTaskHandle } from '../../src/shared/perf/uiIdleTask';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { CLIENT_SORT, clientSortOptions, sortClients } from '../../src/shared/sorting/clientSort';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
@@ -273,7 +273,7 @@ export default function ClientsIndexScreen() {
       try {
         clientPrefetchTaskRef.current?.cancel?.();
       } catch {}
-      clientPrefetchTaskRef.current = InteractionManager.runAfterInteractions(() => {
+      clientPrefetchTaskRef.current = scheduleUiIdleTaskHandle(() => {
         const registry = getPrefetchRegistry();
         ids.forEach((id) => {
           registry.run(`client-detail:${id}`, () => ensureClientPrefetch(queryClient, id)).catch(() => {});

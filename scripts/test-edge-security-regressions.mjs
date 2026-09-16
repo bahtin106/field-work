@@ -14,7 +14,53 @@ const passwordReset = read('supabase/functions/request-password-reset/index.ts')
 const login = read('app/(auth)/login.jsx');
 const mediaThumbnail = read('supabase/functions/media-thumbnail/index.ts');
 const cachedImage = read('components/ui/CachedImage.jsx');
+const universalHome = read('components/UniversalHome.jsx');
+const entityPhotoPreview = read('components/media/EntityPhotoPreview.jsx');
+const profileMediaUrl = read('src/shared/media/profileMediaUrl.js');
 const backfill = read('supabase/functions/backfill-media-sizes/index.ts');
+const supabaseConfig = read('supabase/config.toml');
+const profileMediaStorage = read('supabase/functions/profile-media-storage/index.ts');
+const supabaseSessionCache = read('lib/supabaseSessionCache.js');
+const registerUser = read('supabase/functions/register_user/index.ts');
+const registrationEmailGuard = read(
+  'supabase/migrations/20260916200000_prevent_duplicate_registration_emails.sql',
+);
+const adminUserProfileFix = read(
+  'supabase/migrations/20260916213000_fix_admin_user_profile_suspended_at.sql',
+);
+
+// Registration retries must never treat an orphan profile as an available
+// email. Database uniqueness closes concurrent races, while failed multi-step
+// registrations are removed by one service-only transaction.
+assert.equal(registerUser.includes('isProfileEmailOwnedByAuthUser'), false);
+assert.equal(registerUser.includes('existingUser = null'), false);
+assert.equal(registerUser.includes('auth.admin.deleteUser'), false);
+assert.match(registerUser, /rpc\('service_rollback_failed_registration'/);
+assert.match(
+  registerUser,
+  /Do not delete only the auth row when public cleanup failed/,
+);
+assert.match(registrationEmailGuard, /create unique index if not exists profiles_email_normalized_uidx/);
+assert.match(registrationEmailGuard, /create unique index if not exists users_email_normalized_uidx/);
+assert.match(
+  registrationEmailGuard,
+  /revoke all on function public\.service_rollback_failed_registration\(uuid, uuid, text\)[\s\S]*?from public, anon, authenticated/,
+);
+assert.match(
+  registrationEmailGuard,
+  /grant execute on function public\.service_rollback_failed_registration\(uuid, uuid, text\)[\s\S]*?to service_role/,
+);
+assert.match(
+  adminUserProfileFix,
+  /null::timestamptz as suspended_at/,
+  'admin profile RPC must expose the CTE timestamp under the name selected below',
+);
+assert.match(adminUserProfileFix, /s\.suspended_at/);
+assert.match(adminUserProfileFix, /perform public\.admin_assert_super_admin\(\)/);
+assert.match(
+  adminUserProfileFix,
+  /revoke all on function public\.admin_get_user_profile_full\(uuid\)[\s\S]*?from public, anon/,
+);
 
 // Password reset: an initial request may only start the OTP proof flow. It must
 // never alter credentials or reveal whether the profile exists.
@@ -84,8 +130,45 @@ const callerAssetIndex = mediaThumbnail.indexOf("await caller\n      .from('medi
 const adminClientIndex = mediaThumbnail.indexOf('const admin = createClient(supabaseUrl, serviceRole');
 assert.ok(callerAssetIndex >= 0 && callerAssetIndex < adminClientIndex, 'service role must be created only after RLS authorization');
 assert.match(cachedImage, /isProtectedMediaThumbnailUrl\(sourceUri\)/);
+assert.match(cachedImage, /isProtectedProfileMediaRenderUrl\(sourceUri\)/);
 assert.match(cachedImage, /Authorization: `Bearer \$\{protectedAccessToken\}`/);
-assert.match(cachedImage, /effectiveCachePolicy = requiresProtectedAuth \? 'none' : cachePolicy/);
+assert.match(cachedImage, /buildProtectedMemoryCacheKey\(sourceUri, protectedUserId\)/);
+assert.match(cachedImage, /protected-image:\$\{owner\}:/);
+assert.match(cachedImage, /effectiveCachePolicy = requiresProtectedAuth \? 'memory' : cachePolicy/);
+assert.match(
+  supabaseSessionCache,
+  /export async function getCachedSupabaseAuthContext[\s\S]*?observedAuthReady && userId !== observedAuthUserId/,
+  'protected image cache identity must be bound to the currently observed auth user',
+);
+assert.match(profileMediaUrl, /functions\/v1\/profile-media-storage/);
+assert.match(profileMediaUrl, /target\.searchParams\.get\('sig'\)/);
+assert.match(
+  universalHome,
+  /await ExpoImage\.loadAsync\(source/,
+  'the home avatar must load into a reusable native ImageRef',
+);
+assert.match(
+  universalHome,
+  /headers: \{ Authorization: `Bearer \$\{accessToken\}` \}/,
+  'protected home avatars must include the current authenticated session',
+);
+assert.match(
+  universalHome,
+  /<ExpoImage\s+source=\{avatarImageRef\}/,
+  'the home avatar must render the resolved native ImageRef',
+);
+assert.match(
+  universalHome,
+  /!isProtectedProfileMediaRenderUrl\(snapshot\.avatar_display_url\)/,
+  'protected profile images must not be prefetched without authorization',
+);
+assert.match(entityPhotoPreview, /disableContentShrink/);
+assert.match(entityPhotoPreview, /width: previewSize, height: previewSize/);
+assert.match(entityPhotoPreview, /await ExpoImage\.loadAsync\(source/);
+assert.ok(
+  (entityPhotoPreview.match(/source=\{previewImageRef\}/g) || []).length >= 2,
+  'the thumbnail and modal must render the same native ImageRef',
+);
 const photoGrid = read('app/orders/components/PhotoGrid.jsx');
 const imagePipeline = read('src/shared/media/imagePipeline.js');
 const objectEdit = read('screens/objects/[id]/ObjectEditScreen.jsx');
@@ -131,5 +214,19 @@ assert.match(backfill, /if \(!hasExactBearerSecret\(req\.headers\.get\('authoriz
 assert.match(backfill, /return json\(401, \{ success: false, message: 'Unauthorized' \}\)/);
 assert.equal(backfill.includes(".select('role')"), false, 'tenant-admin bypass must stay removed');
 assert.equal(backfill.includes('admin.auth.getUser'), false, 'user JWTs must not authorize global maintenance');
+
+// Profile image render URLs are short-lived and signed by the handler, so the
+// gateway must let their unauthenticated GET requests reach that verification.
+// Mutating POST actions remain protected by explicit user JWT validation.
+assert.match(
+  supabaseConfig,
+  /\[functions\.profile-media-storage\][\s\S]*?verify_jwt\s*=\s*false/,
+  'profile image render GETs must bypass the gateway JWT check',
+);
+assert.match(profileMediaStorage, /if \(req\.method === 'GET'\)[\s\S]*?verifyRenderRequest\(url\)/);
+assert.match(profileMediaStorage, /if \(!valid\)[\s\S]*?binary\(403, 'Forbidden'/);
+assert.match(profileMediaStorage, /const token = \(req\.headers\.get\('Authorization'\)/);
+assert.match(profileMediaStorage, /if \(!token\) return json\(401/);
+assert.match(profileMediaStorage, /getCallerContext\(admin, callerDb, token\)/);
 
 console.log('Edge security regression tests passed.');

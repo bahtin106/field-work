@@ -3,7 +3,7 @@
 // Stays mounted; visibility is controlled by Animated slide. Matches "отдельная страница" UX.
 
 import Feather from '@expo/vector-icons/Feather';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation } from 'expo-router/react-navigation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {

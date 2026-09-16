@@ -1,27 +1,69 @@
+import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { withAlpha } from '../../../theme/colors';
 import { useTranslation } from '../../i18n/useTranslation';
+import {
+  POOR_CONNECTION_BANNER_DELAY_MS,
+  SYNCING_BANNER_DELAY_MS,
+  resolveOfflineBannerPresentation,
+} from './offlineBannerState.mjs';
 import { useOfflineSync } from './useOfflineSync';
 
 export default function OfflineStatusBanner({ enabled = true }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { isNetworkKnown, isOnline, isPoorConnection, isSyncing, outbox } = useOfflineSync({ enabled });
+  const [poorConnectionVisible, setPoorConnectionVisible] = useState(false);
+  const [syncingVisible, setSyncingVisible] = useState(false);
+  const hasPendingSyncWork = Number(outbox?.pending || 0) > 0;
 
-  const pending = Number(outbox?.pending || 0);
-  const conflicts = Number(outbox?.conflicts || 0);
-  const failed = Number(outbox?.failed || 0);
+  useEffect(() => {
+    if (!enabled || !isOnline || !isPoorConnection) {
+      setPoorConnectionVisible(false);
+      return undefined;
+    }
 
-  if (!isNetworkKnown && pending === 0 && conflicts === 0 && failed === 0 && !isSyncing) {
-    return null;
-  }
+    const timer = setTimeout(
+      () => setPoorConnectionVisible(true),
+      POOR_CONNECTION_BANNER_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [enabled, isOnline, isPoorConnection]);
 
-  if (isOnline && !isPoorConnection && pending === 0 && conflicts === 0 && failed === 0 && !isSyncing) {
-    return null;
-  }
+  useEffect(() => {
+    if (!enabled || !isOnline || !isSyncing || !hasPendingSyncWork) {
+      setSyncingVisible(false);
+      return undefined;
+    }
 
-  const tone = conflicts > 0 || failed > 0 ? 'danger' : isOnline ? 'warning' : 'primary';
+    const timer = setTimeout(
+      () => setSyncingVisible(true),
+      SYNCING_BANNER_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [enabled, hasPendingSyncWork, isOnline, isSyncing]);
+
+  const presentation = useMemo(
+    () => resolveOfflineBannerPresentation(
+      { isNetworkKnown, isOnline, isPoorConnection, isSyncing },
+      outbox,
+      { poorConnectionVisible, syncingVisible },
+    ),
+    [
+      isNetworkKnown,
+      isOnline,
+      isPoorConnection,
+      isSyncing,
+      outbox,
+      poorConnectionVisible,
+      syncingVisible,
+    ],
+  );
+
+  if (!presentation) return null;
+
+  const { tone, pending, conflicts, failed, showPoorConnection, showSyncing } = presentation;
   const accent = tone === 'danger'
     ? theme.colors.danger
     : tone === 'warning'
@@ -29,9 +71,9 @@ export default function OfflineStatusBanner({ enabled = true }) {
       : theme.colors.primary;
 
   const parts = [];
-  if (!isOnline) parts.push(t('offline_banner_no_connection'));
-  else if (isPoorConnection) parts.push(t('offline_banner_poor_connection'));
-  else if (isSyncing) parts.push(t('offline_banner_syncing'));
+  if (!presentation.isOnline) parts.push(t('offline_banner_no_connection'));
+  else if (showPoorConnection) parts.push(t('offline_banner_poor_connection'));
+  else if (showSyncing) parts.push(t('offline_banner_syncing'));
   if (pending > 0) parts.push(t('offline_banner_pending').replace('{count}', String(pending)));
   if (conflicts > 0) parts.push(t('offline_banner_conflicts').replace('{count}', String(conflicts)));
   if (failed > 0) parts.push(t('offline_banner_failed').replace('{count}', String(failed)));

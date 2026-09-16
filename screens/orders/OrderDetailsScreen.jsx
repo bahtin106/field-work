@@ -1,4 +1,4 @@
-﻿import { useFocusEffect } from '@react-navigation/native';
+﻿import { useFocusEffect } from 'expo-router/react-navigation';
 import { format } from 'date-fns';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
@@ -8,7 +8,6 @@ import {
   BackHandler,
   Easing,
   findNodeHandle,
-  InteractionManager,
   Keyboard,
   Linking,
   Pressable,
@@ -20,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { scheduleUiIdleTaskHandle } from '../../src/shared/perf/uiIdleTask';
 import {
   KeyboardAwareScrollView,
   SMOOTH_KEYBOARD_DISMISS_MODE,
@@ -3241,7 +3241,7 @@ function OrderDetailsContent() {
 
     financeEntryMediaWarmupTimerRef.current = setTimeout(() => {
       financeEntryMediaWarmupTimerRef.current = null;
-      financeEntryMediaWarmupTaskRef.current = InteractionManager.runAfterInteractions(() => {
+      financeEntryMediaWarmupTaskRef.current = scheduleUiIdleTaskHandle(() => {
         financeEntryMediaWarmupTaskRef.current = null;
         setFinanceEntryViewMediaEnabled(true);
       });
@@ -5297,7 +5297,7 @@ function OrderDetailsContent() {
     );
     if (!hasOrderPhotos && !hasFinanceEntryPhotos) return undefined;
 
-    const preloadTask = InteractionManager.runAfterInteractions(() => {
+    const preloadTask = scheduleUiIdleTaskHandle(() => {
       loadFullscreenImageViewerModule().catch(() => {});
     });
     return () => preloadTask?.cancel?.();
@@ -5794,7 +5794,7 @@ function OrderDetailsContent() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      const task = InteractionManager.runAfterInteractions(() => {
+      const task = scheduleUiIdleTaskHandle(() => {
         if (cancelled) return;
         warmEditScreenCache();
       });

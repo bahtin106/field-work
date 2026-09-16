@@ -4,23 +4,35 @@ import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import SearchFiltersBar from '../../../components/filters/SearchFiltersBar';
+import SortSelectModal from '../../../components/filters/SortSelectModal';
+import { useFilters } from '../../../components/hooks/useFilters';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import EmptyListState from '../../../components/ui/EmptyListState';
+import MultiSelectModal from '../../../components/ui/modals/MultiSelectModal';
 import { ThemedRefreshControl } from '../../../components/ui/PullToRefreshFeedback';
 import { ADMIN_PAGE_SIZE } from '../../../constants/admin';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
+import { joinFilterSummary, summarizeFilterPart } from '../../../src/shared/filters/summary';
 import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
 import { withReadDeadline } from '../../../src/shared/network/readDeadline';
 import {
   canRunDeferredNetworkWork,
   useOfflineSnapshot,
 } from '../../../src/shared/offline/offlineStatus';
+import {
+  ADMIN_COMPANY_FILTER,
+  ADMIN_COMPANY_SORT,
+  filterAdminCompanies,
+  sortAdminCompanies,
+} from '../../../src/features/admin/directoryLists.mjs';
 import { useTheme } from '../../../theme/ThemeProvider';
+
+const ADMIN_COMPANY_FILTER_DEFAULTS = Object.freeze({ selections: [] });
 
 async function fetchCompanies(search, signal) {
   const { data, error } = await supabase
@@ -87,16 +99,31 @@ export default function AdminCompaniesScreen() {
   const offlineSnapshot = useOfflineSnapshot();
   const canUseAdminNetwork = canRunDeferredNetworkWork(offlineSnapshot);
   const [search, setSearch] = React.useState('');
+  const [debouncedSearch, setDebouncedSearch] = React.useState('');
+  const [sortVisible, setSortVisible] = React.useState(false);
+  const [sortKey, setSortKey] = React.useState(ADMIN_COMPANY_SORT.NAME_ASC);
+  const filters = useFilters({
+    screenKey: 'admin-companies',
+    defaults: ADMIN_COMPANY_FILTER_DEFAULTS,
+  });
 
   React.useLayoutEffect(() => {
     nav.setParams({ headerTitle: t('routes.admin/companies') });
   }, [nav, t]);
 
+  React.useEffect(() => {
+    const timer = setTimeout(
+      () => setDebouncedSearch(search.trim()),
+      Number(theme.timings?.backDelayMs ?? 300),
+    );
+    return () => clearTimeout(timer);
+  }, [search, theme.timings?.backDelayMs]);
+
   const { data, isLoading, isRefetching, error, refetch } = useQuery({
-    queryKey: ['adminCompanies', search],
+    queryKey: ['adminCompanies', debouncedSearch],
     queryFn: ({ signal }) =>
       withReadDeadline(
-        (readSignal) => fetchCompanies(search.trim(), readSignal),
+        (readSignal) => fetchCompanies(debouncedSearch, readSignal),
         { label: 'Admin companies', signal },
       ),
     enabled: isAllowed && canUseAdminNetwork,
@@ -173,8 +200,100 @@ export default function AdminCompaniesScreen() {
   );
 
   const keyExtractor = React.useCallback((row) => String(row.company_id), []);
-  const companies = Array.isArray(data) ? data : [];
-  const refreshing = isRefetching && !isLoading;
+  const allCompanies = React.useMemo(() => (Array.isArray(data) ? data : []), [data]);
+  const filterSelections = React.useMemo(
+    () => (Array.isArray(filters.values.selections) ? filters.values.selections : []),
+    [filters.values.selections],
+  );
+  const companyFilterOptions = React.useMemo(
+    () => [
+      {
+        id: `${ADMIN_COMPANY_FILTER.SUBSCRIPTION_PREFIX}${ADMIN_COMPANY_FILTER.SUBSCRIPTION_ACTIVE}`,
+        value: `${ADMIN_COMPANY_FILTER.SUBSCRIPTION_PREFIX}${ADMIN_COMPANY_FILTER.SUBSCRIPTION_ACTIVE}`,
+        label: t('admin_companies_filter_subscription_active'),
+        subtitle: t('admin_companies_filter_subscription'),
+      },
+      {
+        id: `${ADMIN_COMPANY_FILTER.SUBSCRIPTION_PREFIX}${ADMIN_COMPANY_FILTER.SUBSCRIPTION_EXPIRED}`,
+        value: `${ADMIN_COMPANY_FILTER.SUBSCRIPTION_PREFIX}${ADMIN_COMPANY_FILTER.SUBSCRIPTION_EXPIRED}`,
+        label: t('admin_companies_filter_subscription_expired'),
+        subtitle: t('admin_companies_filter_subscription'),
+      },
+      {
+        id: `${ADMIN_COMPANY_FILTER.SUBSCRIPTION_PREFIX}${ADMIN_COMPANY_FILTER.SUBSCRIPTION_NOT_CONFIGURED}`,
+        value: `${ADMIN_COMPANY_FILTER.SUBSCRIPTION_PREFIX}${ADMIN_COMPANY_FILTER.SUBSCRIPTION_NOT_CONFIGURED}`,
+        label: t('admin_companies_filter_subscription_not_configured'),
+        subtitle: t('admin_companies_filter_subscription'),
+      },
+      {
+        id: `${ADMIN_COMPANY_FILTER.ADMIN_PREFIX}${ADMIN_COMPANY_FILTER.ADMIN_ASSIGNED}`,
+        value: `${ADMIN_COMPANY_FILTER.ADMIN_PREFIX}${ADMIN_COMPANY_FILTER.ADMIN_ASSIGNED}`,
+        label: t('admin_companies_filter_admin_assigned'),
+        subtitle: t('admin_companies_filter_admin'),
+      },
+      {
+        id: `${ADMIN_COMPANY_FILTER.ADMIN_PREFIX}${ADMIN_COMPANY_FILTER.ADMIN_UNASSIGNED}`,
+        value: `${ADMIN_COMPANY_FILTER.ADMIN_PREFIX}${ADMIN_COMPANY_FILTER.ADMIN_UNASSIGNED}`,
+        label: t('admin_companies_filter_admin_unassigned'),
+        subtitle: t('admin_companies_filter_admin'),
+      },
+    ],
+    [t],
+  );
+  const filterSummaryData = React.useMemo(() => {
+    const labelsByValue = new Map(companyFilterOptions.map((option) => [option.value, option.label]));
+    const subscriptionLabels = filterSelections
+      .filter((value) => String(value).startsWith(ADMIN_COMPANY_FILTER.SUBSCRIPTION_PREFIX))
+      .map((value) => labelsByValue.get(value));
+    const adminLabels = filterSelections
+      .filter((value) => String(value).startsWith(ADMIN_COMPANY_FILTER.ADMIN_PREFIX))
+      .map((value) => labelsByValue.get(value));
+    const build = (countWhenMany) =>
+      joinFilterSummary(
+        [
+          summarizeFilterPart({
+            label: t('admin_companies_filter_subscription'),
+            values: subscriptionLabels,
+            countWhenMany,
+          }),
+          summarizeFilterPart({
+            label: t('admin_companies_filter_admin'),
+            values: adminLabels,
+            countWhenMany,
+          }),
+        ],
+        t('common_bullet'),
+      );
+    return { full: build(false), compact: build(true) };
+  }, [companyFilterOptions, filterSelections, t]);
+  const sortOptions = React.useMemo(
+    () => [
+      { id: ADMIN_COMPANY_SORT.NAME_ASC, label: t('sort_name_asc') },
+      { id: ADMIN_COMPANY_SORT.NAME_DESC, label: t('sort_name_desc') },
+      { id: ADMIN_COMPANY_SORT.EMPLOYEES_MANY_FEW, label: t('admin_sort_employees_many_few') },
+      { id: ADMIN_COMPANY_SORT.EMPLOYEES_FEW_MANY, label: t('admin_sort_employees_few_many') },
+      {
+        id: ADMIN_COMPANY_SORT.SUBSCRIPTION_END_SOON_LATE,
+        label: t('admin_sort_subscription_end_soon_late'),
+      },
+      {
+        id: ADMIN_COMPANY_SORT.SUBSCRIPTION_END_LATE_SOON,
+        label: t('admin_sort_subscription_end_late_soon'),
+      },
+      { id: ADMIN_COMPANY_SORT.UPDATED_NEW_OLD, label: t('admin_sort_updated_new_old') },
+      { id: ADMIN_COMPANY_SORT.UPDATED_OLD_NEW, label: t('admin_sort_updated_old_new') },
+    ],
+    [t],
+  );
+  const companies = React.useMemo(
+    () =>
+      sortAdminCompanies(filterAdminCompanies(allCompanies, filterSelections), {
+        sortKey,
+        locale: resolveDateLocale(locale),
+      }),
+    [allCompanies, filterSelections, locale, sortKey],
+  );
+  const refreshing = isRefetching && !isLoading && debouncedSearch === search.trim();
 
   const errorCard = error ? (
     <Card style={styles.stateCard}>
@@ -200,8 +319,20 @@ export default function AdminCompaniesScreen() {
           <SearchFiltersBar
             value={search}
             onChangeText={setSearch}
-            onClear={() => setSearch('')}
+            onClear={() => {
+              setSearch('');
+              setDebouncedSearch('');
+            }}
             placeholder={t('admin_companies_search_placeholder')}
+            onOpenFilters={filters.open}
+            onOpenSort={() => setSortVisible(true)}
+            filterSummary={filterSummaryData.full}
+            filterSummaryCompact={filterSummaryData.compact}
+            onResetFilters={async () => {
+              const resetValues = filters.reset();
+              await filters.apply(resetValues);
+            }}
+            metaText={`${t('common_total')}: ${companies.length}`}
             searchProps={{ maxLength: TEXT_INPUT_LIMITS.search }}
           />
         </View>
@@ -240,6 +371,30 @@ export default function AdminCompaniesScreen() {
           }
         />
       </View>
+
+      <MultiSelectModal
+        visible={filters.visible}
+        onClose={filters.close}
+        title={t('common_filter')}
+        items={companyFilterOptions}
+        value={filterSelections}
+        searchable={false}
+        onChange={(nextSelections) => {
+          const nextValues = { selections: nextSelections };
+          filters.setValue('selections', nextSelections);
+          void filters.apply(nextValues);
+        }}
+      />
+
+      <SortSelectModal
+        visible={sortVisible}
+        onClose={() => setSortVisible(false)}
+        options={sortOptions}
+        value={sortKey}
+        onChange={(nextSort) => {
+          if (nextSort) setSortKey(nextSort);
+        }}
+      />
     </Screen>
   );
 }

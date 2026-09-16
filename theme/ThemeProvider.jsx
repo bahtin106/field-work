@@ -603,15 +603,11 @@ export const ThemeProvider = ({ children }) => {
 
   useEffect(() => {
     // Keep native and JS theme sources in sync.
-    // `null` means "follow system" in React Native Appearance API.
+    // React Native 0.86 uses `unspecified` to restore the system theme.
     if (typeof Appearance.setColorScheme !== 'function') return;
     try {
       if (mode === 'system') {
-        try {
-          Appearance.setColorScheme(null);
-        } catch {
-          Appearance.setColorScheme('unspecified');
-        }
+        Appearance.setColorScheme('unspecified');
       } else if (mode === 'light' || mode === 'dark') {
         Appearance.setColorScheme(mode);
       }

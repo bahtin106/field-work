@@ -1,0 +1,22 @@
+{
+  "ignore_dirs": [
+    "node_modules/.deno",
+    ".codex-temp",
+    ".git",
+    ".expo",
+    "android/build",
+    "android/app/build",
+    "android/app/.cxx",
+    "android/.gradle",
+    "android/.cxx",
+    "android/.kotlin",
+    "modules/monitor-map-apps/android/build",
+    "ios/build",
+    "build",
+    "builds",
+    "releases",
+    "dist",
+    "coverage",
+    "supabase/.temp"
+  ]
+}

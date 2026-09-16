@@ -1,0 +1,4 @@
+[functions.profile-media-storage]
+# Signed image GETs have no Authorization header. The handler validates their
+# signature and expiry; authenticated POST actions still validate the user JWT.
+verify_jwt = false

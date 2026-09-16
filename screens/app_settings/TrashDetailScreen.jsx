@@ -111,7 +111,7 @@ export default function TrashDetailScreen() {
     try {
       const [fileSystemModule, mediaLibrary] = await Promise.all([
         import('expo-file-system/legacy'),
-        import('expo-media-library'),
+        import('expo-media-library/legacy'),
       ]);
       const fileSystem = fileSystemModule?.default?.downloadAsync ? fileSystemModule.default : fileSystemModule;
       const permission = await mediaLibrary.requestPermissionsAsync(true);

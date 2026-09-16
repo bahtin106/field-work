@@ -1,4 +1,4 @@
-import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useIsFocused } from 'expo-router/react-navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -8,7 +8,6 @@ import {
   Animated,
   Easing,
   FlatList,
-  InteractionManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,6 +17,7 @@ import {
 } from 'react-native';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { scheduleUiIdleTaskHandle } from '../../src/shared/perf/uiIdleTask';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
 import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
@@ -1790,7 +1790,7 @@ function MyOrdersContent() {
 
     let task = null;
     const timer = setTimeout(() => {
-      task = InteractionManager.runAfterInteractions(() => {
+      task = scheduleUiIdleTaskHandle(() => {
         prefetchFeed().catch(() => {});
       });
     }, MY_ORDERS_FEED_PREFETCH_DELAY_MS);

@@ -1,17 +1,18 @@
-import { InteractionManager } from 'react-native';
-
 type UiIdleTaskOptions = {
   delayMs?: number;
   idleTimeoutMs?: number;
 };
 
-/** Runs non-visual work after gestures/animations and during an idle JS frame. */
+export type UiIdleTaskHandle = {
+  cancel: () => void;
+};
+
+/** Runs non-visual work during an idle JS frame after an optional delay. */
 export function scheduleUiIdleTask(
   callback: () => void,
   { delayMs = 0, idleTimeoutMs = 1200 }: UiIdleTaskOptions = {},
 ) {
   let cancelled = false;
-  let interactionTask: { cancel?: () => void } | null = null;
   let idleHandle: number | null = null;
   let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -34,18 +35,23 @@ export function scheduleUiIdleTask(
     }, 0);
   };
 
-  const delayTimer = setTimeout(() => {
-    interactionTask = InteractionManager.runAfterInteractions(run);
-  }, Math.max(0, delayMs));
+  const delayTimer = setTimeout(run, Math.max(0, delayMs));
 
   return () => {
     cancelled = true;
     clearTimeout(delayTimer);
-    interactionTask?.cancel?.();
-    if (fallbackTimer) clearTimeout(fallbackTimer);
+    if (fallbackTimer != null) clearTimeout(fallbackTimer);
     if (idleHandle != null) {
       const cancelIdle = (globalThis as any).cancelIdleCallback;
       if (typeof cancelIdle === 'function') cancelIdle(idleHandle);
     }
   };
+}
+
+/** Compatibility shape for call sites that keep a cancellable task handle. */
+export function scheduleUiIdleTaskHandle(
+  callback: () => void,
+  options?: UiIdleTaskOptions,
+): UiIdleTaskHandle {
+  return { cancel: scheduleUiIdleTask(callback, options) };
 }

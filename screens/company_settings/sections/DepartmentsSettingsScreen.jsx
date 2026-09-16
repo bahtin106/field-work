@@ -3,7 +3,6 @@ import React from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
-  InteractionManager,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -34,6 +33,7 @@ import { getMyCompanyId } from '../../../lib/workTypes';
 import { getLocale } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useLastIntentWinsToggle } from '../../../src/shared/hooks/useLastIntentWinsToggle';
+import { scheduleUiIdleTaskHandle } from '../../../src/shared/perf/uiIdleTask';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { useTheme } from '../../../theme/ThemeProvider';
 
@@ -193,7 +193,7 @@ export default function DepartmentsSettings() {
     if (!createModalOpen) return undefined;
     let cancelled = false;
     let timer = null;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = scheduleUiIdleTaskHandle(() => {
       timer = setTimeout(() => {
         if (cancelled) return;
         createInputRef.current?.focus?.();
@@ -210,7 +210,7 @@ export default function DepartmentsSettings() {
     if (!editModal.open) return undefined;
     let cancelled = false;
     let timer = null;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = scheduleUiIdleTaskHandle(() => {
       timer = setTimeout(() => {
         if (cancelled) return;
         editInputRef.current?.focus?.();

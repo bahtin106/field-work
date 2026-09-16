@@ -15,7 +15,7 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Feather from '@expo/vector-icons/Feather';
 import * as Sharing from 'expo-sharing';
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { cacheDirectory, copyAsync, downloadAsync, getInfoAsync } from 'expo-file-system/legacy';
 import { Image as ExpoImage } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';

@@ -8,6 +8,21 @@ const root = process.cwd();
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 const json = (relativePath) => JSON.parse(read(relativePath));
 const failures = [];
+const applicationSource = ['app', 'components', 'hooks', 'lib', 'providers', 'screens', 'src', 'theme']
+  .flatMap((relativeDirectory) => {
+    const pending = [path.join(root, relativeDirectory)];
+    const sources = [];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const entryPath = path.join(current, entry.name);
+        if (entry.isDirectory()) pending.push(entryPath);
+        else if (/\.(?:[cm]?[jt]sx?)$/i.test(entry.name)) sources.push(fs.readFileSync(entryPath, 'utf8'));
+      }
+    }
+    return sources;
+  })
+  .join('\n');
 const expectedContactsUsageDescription =
   'Доступ к контактам нужен, чтобы по вашему выбору подставлять номера телефонов в заявки и карточки клиентов. Приложение не изменяет контакты.';
 const approvedActionPins = new Map([
@@ -31,6 +46,10 @@ function hasProductionUpdatesChannel(manifestSource) {
 const packageJson = json('package.json');
 const appJson = json('app.json').expo;
 const easJson = json('eas.json');
+const metroConfig = read('metro.config.js');
+const watchmanConfig = json('.watchmanconfig');
+const routePreload = read('src/shared/navigation/routePreload.js');
+const uiIdleTask = read('src/shared/perf/uiIdleTask.ts');
 const ruLocale = json('assets/locales/ru.json');
 const enLocale = json('assets/locales/en.json');
 const easIgnore = read('.easignore');
@@ -105,6 +124,7 @@ const accountDeletionScreen = read('screens/app_settings/AccountDeletionScreen.j
 const accountDeletionFunction = read('supabase/functions/account-deletion/index.ts');
 const accountDeletionWorker = read('ops/scripts-root/account-deletion-worker.sh');
 const pushAutoSetup = read('lib/pushAutoSetup.js');
+const notificationsCompat = read('lib/notificationsCompat.js');
 const pushWorkerTick = read('scripts/push-worker-tick.sh');
 const pushWorkerBurst = read('scripts/push-worker-burst.sh');
 const pushWorkerRunbook = read('docs/push-worker-runbook.md');
@@ -164,10 +184,11 @@ const backgroundSync = read('src/shared/offline/backgroundSync.js');
 const backgroundSyncOutcome = read('src/shared/offline/backgroundSyncOutcome.mjs');
 const queryProvider = read('src/shared/query/QueryProvider.tsx');
 const queryClient = read('src/shared/query/queryClient.ts');
+const smartPrefetch = read('src/shared/query/smartPrefetch.ts');
 const prefetchRegistry = read('src/shared/query/prefetchRegistry.js');
 const routeFreshnessBoundary = read('src/shared/query/RouteFreshnessBoundary.tsx');
 const readDeadline = read('src/shared/network/readDeadline.ts');
-const imageSizeSecurityPatch = read('patches/image-size+1.2.1.patch');
+const imageSizePackagePresent = fs.existsSync(path.join(root, 'node_modules/image-size/package.json'));
 const authFlowState = read('lib/authFlowNavigationState.js');
 const accessSnapshot = read('lib/accessSnapshot.js');
 const permissionsProvider = read('lib/permissions.js');
@@ -186,6 +207,7 @@ const orderPhotoRow = read('app/orders/components/OrderPhotoRow.jsx');
 const quickPreviewModal = read('components/ui/modals/QuickPreviewModal.jsx');
 const dialog = read('components/ui/Dialog.jsx');
 const fullscreenImageViewer = read('app/orders/components/FullscreenImageViewer.jsx');
+const trashDetailScreen = read('screens/app_settings/TrashDetailScreen.jsx');
 const baseModal = read('components/ui/modals/BaseModal.jsx');
 const confirmAlertModals = read('components/ui/modals/ConfirmAlertModals.jsx');
 const selectModal = read('components/ui/modals/SelectModal.jsx');
@@ -342,16 +364,16 @@ check(
 
 check(!packageJson.dependencies?.['expo-dev-client'], 'expo-dev-client must not be bundled in production dependencies');
 check(packageJson.dependencies?.['expo-background-task'], 'expo-background-task is required for deferred media delivery');
-check(packageJson.dependencies?.['expo-contacts'] === '~15.0.11', 'expo-contacts must match Expo SDK 54');
-check(packageJson.dependencies?.expo === '~54.0.37', 'Expo must stay on the validated SDK 54 patch');
-check(packageJson.dependencies?.['expo-constants'] === '~18.0.14', 'expo-constants must match the validated SDK 54 patch');
-check(packageJson.dependencies?.['expo-file-system'] === '~19.0.24', 'expo-file-system must match the validated SDK 54 patch');
-check(packageJson.dependencies?.['expo-updates'] === '~29.0.20', 'expo-updates must match the validated SDK 54 patch');
-check(packageJson.dependencies?.['@react-native-community/netinfo'] === '11.4.1', 'NetInfo must match Expo SDK 54');
-check(packageJson.dependencies?.['react-native-keyboard-controller'] === '1.18.5', 'Keyboard controller must match Expo SDK 54');
+check(packageJson.dependencies?.['expo-contacts'] === '~57.0.5', 'expo-contacts must match Expo SDK 57');
+check(packageJson.dependencies?.expo === '~57.0.23', 'Expo must stay on the validated SDK 57 patch');
+check(packageJson.dependencies?.['expo-constants'] === '~57.0.18', 'expo-constants must match the validated SDK 57 patch');
+check(packageJson.dependencies?.['expo-file-system'] === '~57.0.7', 'expo-file-system must match the validated SDK 57 patch');
+check(packageJson.dependencies?.['expo-updates'] === '~57.0.22', 'expo-updates must match the validated SDK 57 patch');
+check(packageJson.dependencies?.['@react-native-community/netinfo'] === '12.0.1', 'NetInfo must match Expo SDK 57');
+check(packageJson.dependencies?.['react-native-keyboard-controller'] === '1.21.9', 'Keyboard controller must match Expo SDK 57');
 check(packageJson.devDependencies?.pngjs === '3.4.0', 'Icon tooling must declare its direct pngjs dependency');
 check(
-  packageJson.devDependencies?.['expo-doctor'] === '1.20.2' &&
+  packageJson.devDependencies?.['expo-doctor'] === '1.20.4' &&
     packageJson.scripts?.doctor === 'expo-doctor',
   'Release diagnostics must use the locked expo-doctor dependency',
 );
@@ -397,7 +419,7 @@ check(
   ),
   'Legacy gallery writes must limit WRITE_EXTERNAL_STORAGE to Android 9 and older',
 );
-check(/android\.enableProguardInReleaseBuilds=true/.test(gradleProperties), 'Release minification must be enabled');
+check(/android\.enableMinifyInReleaseBuilds=true/.test(gradleProperties), 'Release minification must be enabled');
 check(/android\.enableShrinkResourcesInReleaseBuilds=true/.test(gradleProperties), 'Release resource shrinking must be enabled');
 check(
   appJson.plugins?.some(
@@ -434,8 +456,8 @@ check(
   'Expandable text rows must only expose overflow-driven chevrons and keep readable expanded indentation',
 );
 
-const versionName = gradle.match(/versionName\s*=\s*["']([^"']+)["']/)?.[1];
-const versionCode = Number(gradle.match(/versionCode\s*=\s*(\d+)/)?.[1] || 0);
+const versionName = gradle.match(/versionName\s*(?:=\s*)?["']([^"']+)["']/)?.[1];
+const versionCode = Number(gradle.match(/versionCode\s*(?:=\s*)?(\d+)/)?.[1] || 0);
 const nativeRuntimeVersion = androidStrings.match(
   /name="expo_runtime_version"[^>]*>([^<]+)</,
 )?.[1];
@@ -629,6 +651,31 @@ check(
   'The native root must provide a production-safe crash recovery boundary',
 );
 check(
+  !rootLayout.includes("from 'expo-notifications'") &&
+    rootLayout.includes('loadNotificationsModule()') &&
+    pushAutoSetup.includes('loadNotificationsModule()') &&
+    notificationsCompat.includes("Constants?.appOwnership === 'expo'") &&
+    notificationsCompat.includes("import('expo-notifications')"),
+  'Expo Go must not evaluate the Android push module; native builds must load it lazily',
+);
+check(
+  !themeProvider.includes('Appearance.setColorScheme(null)') &&
+    themeProvider.includes("Appearance.setColorScheme('unspecified')"),
+  'System theme must use the non-null React Native 0.86 Appearance reset value',
+);
+check(
+  fullscreenImageViewer.includes("from 'expo-media-library/legacy'") &&
+    trashDetailScreen.includes("import('expo-media-library/legacy')") &&
+    !fullscreenImageViewer.includes("from 'expo-media-library'") &&
+    !trashDetailScreen.includes("import('expo-media-library')"),
+  'Function-based MediaLibrary calls must use the SDK 57 legacy entrypoint',
+);
+check(
+  !smartPrefetch.includes("from '../../../lib/orderStatuses'") &&
+    smartPrefetch.includes("import('../../../lib/orderStatuses')"),
+  'Smart prefetch must not recreate the auth/provider require cycle through order statuses',
+);
+check(
   !pushAutoSetup.includes('AndroidNotificationVisibility.PUBLIC') &&
     !appSettingsScreen.includes('AndroidNotificationVisibility.PUBLIC') &&
     pushAutoSetup.includes('AndroidNotificationVisibility.PRIVATE') &&
@@ -667,10 +714,12 @@ check(
 check(appJson.android?.runtimeVersion === appJson.version, 'Android runtimeVersion must match app version');
 check(appJson.ios?.runtimeVersion === appJson.version, 'iOS runtimeVersion must match app version');
 check(Number.isInteger(versionCode) && versionCode > 0, 'Android versionCode must be a positive integer');
-check(appJson.orientation === 'default', 'Android release must support user-selected orientation');
+check(
+  appJson.orientation == null || appJson.orientation === 'default',
+  'Android release must support user-selected orientation',
+);
 check(
   appJson.icon === './assets/icon.png' &&
-    appJson.splash?.image === './assets/icon.png' &&
     appJson.web?.favicon === './assets/favicon.png' &&
     appJson.android?.adaptiveIcon?.foregroundImage ===
       './assets/branding/app-icon-android-foreground.png' &&
@@ -711,7 +760,6 @@ check(
     iconSyncValidationOutput ? `\n${iconSyncValidationOutput}` : ''
   }`,
 );
-check(appJson.android?.edgeToEdgeEnabled === true, 'Android edge-to-edge must be enabled');
 check(
   !manifest.includes('android:screenOrientation=') &&
     manifest.includes('com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity') &&
@@ -719,9 +767,8 @@ check(
   'Android release must remove orientation locks from app and merged code-scanner activities',
 );
 check(
-  /(?:^|\n)expo\.edgeToEdgeEnabled=true(?:\r?\n|$)/.test(gradleProperties) &&
-    /(?:^|\n)edgeToEdgeEnabled=true(?:\r?\n|$)/.test(gradleProperties),
-  'Expo and React Native edge-to-edge Gradle flags must be enabled',
+  /(?:^|\n)edgeToEdgeEnabled=true(?:\r?\n|$)/.test(gradleProperties),
+  'React Native edge-to-edge Gradle flag must be enabled',
 );
 check(
   !`${androidStyles}\n${androidNightStyles}`.match(
@@ -1189,11 +1236,10 @@ check(
   'Offline object search must preserve scoped cached suggestions without persisting a false empty success',
 );
 check(
-    imageSizeSecurityPatch.includes('if (boxSize < 8)') &&
-    imageSizeSecurityPatch.includes('assertValidImageEntry') &&
+    !imageSizePackagePresent &&
     packageJson.scripts?.['test:security-regressions'] ===
       'node scripts/test-image-size-security.mjs && node scripts/test-edge-security-regressions.mjs && node scripts/test-media-upload-policy.mjs',
-  'The Metro image parser DoS mitigation and its isolated regression test must remain reproducible',
+  'The obsolete vulnerable image-size parser must stay out of the installed dependency tree',
 );
 check(
   authFlowState.includes('hydratePublicAuthRoute') &&
@@ -1361,6 +1407,40 @@ check(
   'Route modules must preload during idle time, never inside the active press gesture',
 );
 check(
+  !applicationSource.includes('InteractionManager') &&
+    !applicationSource.includes('runAfterInteractions') &&
+    uiIdleTask.includes('requestIdleCallback') &&
+    uiIdleTask.includes('cancelIdleCallback'),
+  'Application idle work must use cancellable requestIdleCallback scheduling, never InteractionManager',
+);
+check(
+  metroConfig.includes('config.resolver.useWatchman = true') &&
+    metroConfig.includes('config.resolver.blockList') &&
+    metroConfig.includes('build|\\.cxx|\\.gradle') &&
+    metroConfig.includes('android|ios|apple|windows|macos') &&
+    metroConfig.includes('ReactAndroid|ReactCommon|React|ReactApple') &&
+    metroConfig.includes("node_modules[\\\\/]\\.deno"),
+  'Metro must ignore generated native build trees and the Deno junction cache to avoid EMFILE crashes',
+);
+check(
+  Array.isArray(watchmanConfig.ignore_dirs) &&
+    watchmanConfig.ignore_dirs.includes('.git') &&
+    watchmanConfig.ignore_dirs.includes('.expo') &&
+    watchmanConfig.ignore_dirs.includes('android/app/build') &&
+    watchmanConfig.ignore_dirs.includes('android/.gradle') &&
+    watchmanConfig.ignore_dirs.includes('android/.cxx'),
+  'Watchman must ignore generated project trees so Metro HMR cannot exhaust Windows file handles',
+);
+check(
+  packageJson.scripts?.start === 'expo start' &&
+    packageJson.scripts?.web === 'expo start --web' &&
+    metroConfig.includes('config.maxWorkers = Math.min(config.maxWorkers || 2, 2)') &&
+    routePreload.includes('const preloadQueue = []') &&
+    routePreload.includes('while (preloadQueue.length)') &&
+    routePreload.includes('await preloadLazyRouteScreen(item.cacheKey, item.load)'),
+  'Speculative route modules must load sequentially using supported Expo and Metro configuration',
+);
+check(
   universalHome.indexOf('isAdmin ? HOME_ROUTES.companySettings') <
     universalHome.indexOf('!isSoloAdmin ? HOME_ROUTES.appSettings') &&
     universalHome.includes('delayMs: index * 220'),
@@ -1443,10 +1523,12 @@ check(
     !cachedImage.includes('fallbackUriRef') &&
     cachedImage.includes('uri: sourceUri') &&
     cachedImage.includes('source={imageSource}') &&
-    cachedImage.includes("const effectiveCachePolicy = requiresProtectedAuth ? 'none' : cachePolicy") &&
+    cachedImage.includes('buildProtectedMemoryCacheKey(sourceUri, protectedUserId)') &&
+    cachedImage.includes("const effectiveCachePolicy = requiresProtectedAuth ? 'memory' : cachePolicy") &&
     cachedImage.includes("cachePolicy={retryAttempt > 0 ? 'none' : effectiveCachePolicy}") &&
-    cachedImage.includes('Authorization: `Bearer ${protectedAccessToken}`'),
-  'Image retries must preserve signed URLs while protected thumbnails stay authenticated and uncached',
+    cachedImage.includes('Authorization: `Bearer ${protectedAccessToken}`') &&
+    supabaseSessionCache.includes('getCachedSupabaseAuthContext'),
+  'Image retries must preserve signed URLs while protected media stays authenticated and account-scoped in memory',
 );
 check(
   photoGrid.includes('key: buildPhotoKey(uploadedUrl || visibleUri, visibleUri') &&

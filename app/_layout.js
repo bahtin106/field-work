@@ -1,8 +1,7 @@
 ﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
-import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Image, InteractionManager, LogBox, Platform, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Image, LogBox, Platform, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { enableFreeze } from 'react-native-screens';
@@ -28,6 +27,7 @@ import { renderNavigationScreen } from '../components/navigation/NavigationCommi
 import ToastProvider from '../components/ui/ToastProvider';
 import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
+import { loadNotificationsModule } from '../lib/notificationsCompat';
 import {
   getLastPublicAuthRoute,
   hydratePublicAuthRoute,
@@ -68,6 +68,7 @@ import {
   unregisterOfflineBackgroundSync,
 } from '../src/shared/offline/backgroundSync';
 import { withReadDeadline } from '../src/shared/network/readDeadline';
+import { scheduleUiIdleTaskHandle } from '../src/shared/perf/uiIdleTask';
 import QueryProvider from '../src/shared/query/QueryProvider';
 import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
@@ -79,10 +80,12 @@ export const unstable_settings = {
   initialRouteName: 'index',
 };
 
-function ensureForegroundNotificationHandler() {
+async function ensureForegroundNotificationHandler() {
   if (Platform.OS === 'web') return;
   if (globalThis.__foregroundNotifHandlerConfigured) return;
   try {
+    const Notifications = await loadNotificationsModule();
+    if (!Notifications) return;
     Notifications.setNotificationHandler({
       handleNotification: async (notification) => {
         const belongsToCurrentUser = notificationBelongsToUser(
@@ -106,7 +109,7 @@ function ensureForegroundNotificationHandler() {
   }
 }
 
-ensureForegroundNotificationHandler();
+ensureForegroundNotificationHandler().catch(() => {});
 
 function LastSeenTracker() {
   const { user } = useAuthContext();
@@ -575,7 +578,7 @@ function RootLayoutInner() {
 
     let bootstrapTask = null;
     const bootstrapTimer = setTimeout(() => {
-      bootstrapTask = InteractionManager.runAfterInteractions(() => {
+      bootstrapTask = scheduleUiIdleTaskHandle(() => {
         enforceAccess();
       });
     }, ACCESS_BOOTSTRAP_DELAY_MS);
@@ -694,7 +697,7 @@ function RootLayoutInner() {
     const bootstrapTimer = setTimeout(() => {
       silentBootstrap.finally(() => {
         if (!active) return;
-        bootstrapTask = InteractionManager.runAfterInteractions(() => {
+        bootstrapTask = scheduleUiIdleTaskHandle(() => {
           runBootstrap(true).catch(() => {});
         });
       });
@@ -711,12 +714,18 @@ function RootLayoutInner() {
         runBootstrap(false).catch(() => {});
       }
     });
-    const pushTokenSub = Notifications.addPushTokenListener((devicePushToken) => {
-      if (!active || authSnapshotRef.current.userId !== String(user.id)) return;
-      const network = getOfflineSnapshot();
-      if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
-      syncChangedPushTokenForUser(user.id, devicePushToken).catch(() => {});
-    });
+    let pushTokenSub = null;
+    loadNotificationsModule()
+      .then((Notifications) => {
+        if (!active || !Notifications) return;
+        pushTokenSub = Notifications.addPushTokenListener((devicePushToken) => {
+          if (!active || authSnapshotRef.current.userId !== String(user.id)) return;
+          const network = getOfflineSnapshot();
+          if (!network.isNetworkKnown || !network.isOnline || network.isPoorConnection) return;
+          syncChangedPushTokenForUser(user.id, devicePushToken).catch(() => {});
+        });
+      })
+      .catch(() => {});
 
     return () => {
       active = false;
@@ -735,7 +744,8 @@ function RootLayoutInner() {
       const normalized = String(orderId || '').trim();
       if (!normalized) return;
 
-      const moduleRef = Notifications;
+      const moduleRef = await loadNotificationsModule();
+      if (!moduleRef) return;
       const rememberedIds = notificationIdsByOrderRef.current.get(normalized) || new Set();
       const toDismiss = new Set(rememberedIds);
       const list = await moduleRef.getPresentedNotificationsAsync?.();
@@ -819,38 +829,38 @@ function RootLayoutInner() {
       notificationIdsByOrderRef.current.set(orderId, next);
     };
 
-    const clearLastResponse = () => {
+    const clearLastResponse = (Notifications) => {
       try {
         Notifications.clearLastNotificationResponse?.();
       } catch {}
     };
 
-    const dismissTappedNotification = (response) => {
+    const dismissTappedNotification = (Notifications, response) => {
       const identifier = String(response?.notification?.request?.identifier || '').trim();
       if (identifier) {
         Notifications.dismissNotificationAsync?.(identifier).catch(() => {});
       }
     };
 
-    const handleResponse = (response) => {
+    const handleResponse = (Notifications, response) => {
       if (!active || !response) return;
       const expectedUserId = authSnapshotRef.current.userId;
       if (!isAuthenticatedUserCurrent(expectedUserId)) return;
       if (!notificationBelongsToUser(response, expectedUserId)) {
-        dismissTappedNotification(response);
-        clearLastResponse();
+        dismissTappedNotification(Notifications, response);
+        clearLastResponse(Notifications);
         return;
       }
       const dedupeKey = getNotificationResponseKey(response);
       if (dedupeKey && lastHandledNotificationKeyRef.current === dedupeKey) {
-        clearLastResponse();
+        clearLastResponse(Notifications);
         return;
       }
       if (dedupeKey) lastHandledNotificationKeyRef.current = dedupeKey;
 
       const target = resolveNotificationTarget(response);
-      clearLastResponse();
-      dismissTappedNotification(response);
+      clearLastResponse(Notifications);
+      dismissTappedNotification(Notifications, response);
       if (!target) return;
       if (target.kind === 'support-feedback') {
         openSupportFeedbackFromNotification(target.entityId);
@@ -859,29 +869,36 @@ function RootLayoutInner() {
       }
     };
 
-    const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
-      const currentUserId = authSnapshotRef.current.userId;
-      if (!notificationBelongsToUser(notification, currentUserId)) {
-        const identifier = String(notification?.request?.identifier || '').trim();
-        if (identifier) Notifications.dismissNotificationAsync?.(identifier).catch(() => {});
-        return;
-      }
-      rememberNotificationIdentifier(notification);
-    });
-    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-      rememberNotificationIdentifier(response?.notification);
-      handleResponse(response);
-    });
+    let receivedSub = null;
+    let responseSub = null;
+    loadNotificationsModule()
+      .then((Notifications) => {
+        if (!active || !Notifications) return;
+        receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+          const currentUserId = authSnapshotRef.current.userId;
+          if (!notificationBelongsToUser(notification, currentUserId)) {
+            const identifier = String(notification?.request?.identifier || '').trim();
+            if (identifier) Notifications.dismissNotificationAsync?.(identifier).catch(() => {});
+            return;
+          }
+          rememberNotificationIdentifier(notification);
+        });
+        responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+          rememberNotificationIdentifier(response?.notification);
+          handleResponse(Notifications, response);
+        });
 
-    try {
-      const initialResponse = Notifications.getLastNotificationResponse?.();
-      if (initialResponse) handleResponse(initialResponse);
-    } catch {}
+        try {
+          const initialResponse = Notifications.getLastNotificationResponse?.();
+          if (initialResponse) handleResponse(Notifications, initialResponse);
+        } catch {}
 
-    Notifications.getPresentedNotificationsAsync?.()
-      .then((presented) => {
-        if (!active || !Array.isArray(presented)) return;
-        for (const item of presented) rememberNotificationIdentifier(item);
+        Notifications.getPresentedNotificationsAsync?.()
+          .then((presented) => {
+            if (!active || !Array.isArray(presented)) return;
+            for (const item of presented) rememberNotificationIdentifier(item);
+          })
+          .catch(() => {});
       })
       .catch(() => {});
 

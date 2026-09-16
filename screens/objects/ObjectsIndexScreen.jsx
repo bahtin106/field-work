@@ -2,7 +2,7 @@
 // destination frame is already visible.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ActivityIndicator, FlatList, InteractionManager, Keyboard, Platform, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Keyboard, Platform, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -41,6 +41,7 @@ import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries
 import { t } from '../../src/i18n';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
+import { scheduleUiIdleTaskHandle } from '../../src/shared/perf/uiIdleTask';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { OBJECT_SORT, objectSortOptions, sortObjects } from '../../src/shared/sorting/objectSort';
@@ -455,7 +456,7 @@ export default function ObjectsIndex() {
       try {
         objectPrefetchTaskRef.current?.cancel?.();
       } catch {}
-      objectPrefetchTaskRef.current = InteractionManager.runAfterInteractions(() => {
+      objectPrefetchTaskRef.current = scheduleUiIdleTaskHandle(() => {
         const registry = getPrefetchRegistry();
         ids.forEach((id) => {
           registry.run(`object-detail:${id}`, () => ensureClientObjectPrefetch(queryClient, id)).catch(() => {});

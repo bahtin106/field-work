@@ -14,11 +14,9 @@ def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    def resolvedEntryFile = ["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim()
-    def forcedRouterEntryFile = new File(projectRoot, "node_modules/expo-router/entry.js").absolutePath
-    entryFile = file(resolvedEntryFile?.toLowerCase()?.contains("expo-router\\entry.js") ? forcedRouterEntryFile : resolvedEntryFile)
+    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
-    hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
+    hermesCommand = new File(["node", "--print", "require.resolve('hermes-compiler/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/hermesc/%OS-BIN%/hermesc"
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
 
     enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
@@ -71,9 +69,9 @@ react {
 }
 
 /**
- * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
+ * Set this to true in release builds to optimize the app using [R8](https://developer.android.com/topic/performance/app-optimization/enable-app-optimization).
  */
-def enableProguardInReleaseBuilds = (findProperty('android.enableProguardInReleaseBuilds') ?: false).toBoolean()
+def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -89,18 +87,20 @@ def enableProguardInReleaseBuilds = (findProperty('android.enableProguardInRelea
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
-    ndkVersion = rootProject.ext.ndkVersion
+    ndkVersion rootProject.ext.ndkVersion
 
-    buildToolsVersion = rootProject.ext.buildToolsVersion
-    compileSdk = rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
 
-    namespace = 'com.monitorapp.monitor'
+    namespace 'com.monitorapp.monitor'
     defaultConfig {
-        applicationId = 'com.monitorapp.monitor'
-        minSdk = rootProject.ext.minSdkVersion
-        targetSdk = rootProject.ext.targetSdkVersion
-        versionCode = 12
-        versionName = "1.1.1"
+        applicationId 'com.monitorapp.monitor'
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 12
+        versionName "1.1.1"
+
+        buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
         externalNativeBuild {
             cmake {
                 // Keep object paths under Windows MAX_PATH without over-constraining CMake.
@@ -133,41 +133,44 @@ android {
 
     signingConfigs {
         debug {
-            storeFile = file('debug.keystore')
-            storePassword = 'android'
-            keyAlias = 'androiddebugkey'
-            keyPassword = 'android'
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
         }
         if (hasReleaseSigning) {
             release {
-                storeFile = resolvedReleaseStoreFile
-                storePassword = releaseStorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeyPassword
+                storeFile resolvedReleaseStoreFile
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
             }
         }
     }
     buildTypes {
         debug {
-            signingConfig = signingConfigs.debug
+            signingConfig signingConfigs.debug
         }
         release {
             if (hasReleaseSigning) {
-                signingConfig = signingConfigs.release
+                signingConfig signingConfigs.release
             }
-            shrinkResources = (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
-            minifyEnabled = enableProguardInReleaseBuilds
+            def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
+            shrinkResources enableShrinkResources.toBoolean()
+            minifyEnabled enableMinifyInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
-            crunchPngs = (findProperty('android.enablePngCrunchInReleaseBuilds')?.toBoolean() ?: true)
+            def enablePngCrunchInRelease = findProperty('android.enablePngCrunchInReleaseBuilds') ?: 'true'
+            crunchPngs enablePngCrunchInRelease.toBoolean()
         }
     }
     packagingOptions {
         jniLibs {
-            useLegacyPackaging = (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
+            def enableLegacyPackaging = findProperty('expo.useLegacyPackaging') ?: 'false'
+            useLegacyPackaging enableLegacyPackaging.toBoolean()
         }
     }
     androidResources {
-        ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
 
     externalNativeBuild {
@@ -227,7 +230,7 @@ dependencies {
     }
 }
 
-apply plugin: "com.google.gms.google-services"
+apply plugin: 'com.google.gms.google-services'
 
 androidComponents {
     onVariants(selector().all()) { variant ->
@@ -236,7 +239,10 @@ androidComponents {
             InstrumentationScope.ALL
         ) { }
         variant.instrumentation.setAsmFramesComputationMode(
-            FramesComputationMode.COMPUTE_FRAMES_FOR_INSTRUMENTED_METHODS
+            // INVOKEVIRTUAL(Window, args) becomes INVOKESTATIC(Window, args),
+            // preserving the operand stack; recomputing frames is unnecessary
+            // and cannot reliably resolve every Expo runtime-only class.
+            FramesComputationMode.COPY_FRAMES
         )
     }
 }

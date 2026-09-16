@@ -2,8 +2,19 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const icnsModulePath = require.resolve('image-size/dist/types/icns.js');
-const jxlModulePath = require.resolve('image-size/dist/types/jxl.js');
+let icnsModulePath;
+let jxlModulePath;
+
+try {
+  icnsModulePath = require.resolve('image-size/dist/types/icns.js');
+  jxlModulePath = require.resolve('image-size/dist/types/jxl.js');
+} catch (error) {
+  if (error?.code === 'MODULE_NOT_FOUND') {
+    console.log('image-size parser is not installed; vulnerable parser surface is absent');
+    process.exit(0);
+  }
+  throw error;
+}
 
 const CASE_TIMEOUT_MS = 1_500;
 

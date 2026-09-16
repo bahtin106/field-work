@@ -6,7 +6,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
-  InteractionManager,
   Platform,
   StyleSheet,
   View,
@@ -48,6 +47,7 @@ import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { runAfterNavigationFrame } from '../../src/shared/perf/navigationWork';
+import { scheduleUiIdleTaskHandle } from '../../src/shared/perf/uiIdleTask';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
@@ -229,7 +229,7 @@ function UsersIndexContent() {
         .filter((item) => item?.id)
         .slice(0, 2);
 
-      const task = InteractionManager.runAfterInteractions(() => {
+      const task = scheduleUiIdleTaskHandle(() => {
         const registry = getPrefetchRegistry();
         visibleUsers.forEach((item) => {
           const id = String(item.id);
@@ -349,7 +349,7 @@ function UsersIndexContent() {
       };
 
       const fallbackTimer = setTimeout(releaseGuard, USER_OPEN_GUARD_MS);
-      InteractionManager.runAfterInteractions(() => {
+      scheduleUiIdleTaskHandle(() => {
         clearTimeout(fallbackTimer);
         releaseGuard();
       });

@@ -5,10 +5,13 @@ import React from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import SearchFiltersBar from '../../../components/filters/SearchFiltersBar';
+import SortSelectModal from '../../../components/filters/SortSelectModal';
+import { useFilters } from '../../../components/hooks/useFilters';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import EmptyListState from '../../../components/ui/EmptyListState';
+import MultiSelectModal from '../../../components/ui/modals/MultiSelectModal';
 import { ThemedRefreshControl } from '../../../components/ui/PullToRefreshFeedback';
 import { ADMIN_PAGE_SIZE } from '../../../constants/admin';
 import { ROLE, getRoleLabel } from '../../../constants/roles';
@@ -19,13 +22,22 @@ import { pluralizeRu } from '../../../lib/pluralize';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
+import { joinFilterSummary, summarizeFilterPart } from '../../../src/shared/filters/summary';
 import { TEXT_INPUT_LIMITS } from '../../../src/shared/input/limits';
 import { withReadDeadline } from '../../../src/shared/network/readDeadline';
 import {
   canRunDeferredNetworkWork,
   useOfflineSnapshot,
 } from '../../../src/shared/offline/offlineStatus';
+import {
+  ADMIN_USER_FILTER,
+  ADMIN_USER_SORT,
+  filterAdminUsers,
+  sortAdminUsers,
+} from '../../../src/features/admin/directoryLists.mjs';
 import { useTheme } from '../../../theme/ThemeProvider';
+
+const ADMIN_USER_FILTER_DEFAULTS = Object.freeze({ selections: [] });
 
 async function fetchUsers(search, signal) {
   const { data, error } = await supabase
@@ -91,6 +103,12 @@ export default function AdminUsersScreen() {
   const { isAllowed, isLoading: guardLoading } = useRequireSuperAdmin();
   const [search, setSearch] = React.useState('');
   const [debouncedSearch, setDebouncedSearch] = React.useState('');
+  const [sortVisible, setSortVisible] = React.useState(false);
+  const [sortKey, setSortKey] = React.useState(ADMIN_USER_SORT.NAME_ASC);
+  const filters = useFilters({
+    screenKey: 'admin-users',
+    defaults: ADMIN_USER_FILTER_DEFAULTS,
+  });
 
   React.useLayoutEffect(() => {
     nav.setParams({ headerTitle: t('routes.admin/users') });
@@ -277,7 +295,117 @@ export default function AdminUsersScreen() {
   );
 
   const keyExtractor = React.useCallback((row) => String(row.profile_id), []);
-  const users = Array.isArray(data) ? data : [];
+  const allUsers = React.useMemo(() => (Array.isArray(data) ? data : []), [data]);
+  const filterSelections = React.useMemo(
+    () => (Array.isArray(filters.values.selections) ? filters.values.selections : []),
+    [filters.values.selections],
+  );
+  const userFilterOptions = React.useMemo(() => {
+    const roleOptions = [
+      {
+        id: `${ADMIN_USER_FILTER.ROLE_PREFIX}${ADMIN_USER_FILTER.SUPER_ADMIN_ROLE}`,
+        value: `${ADMIN_USER_FILTER.ROLE_PREFIX}${ADMIN_USER_FILTER.SUPER_ADMIN_ROLE}`,
+        label: t('role_super_admin'),
+        subtitle: t('admin_users_filter_role'),
+      },
+      ...Object.values(ROLE).map((role) => ({
+        id: `${ADMIN_USER_FILTER.ROLE_PREFIX}${role}`,
+        value: `${ADMIN_USER_FILTER.ROLE_PREFIX}${role}`,
+        label: getRoleLabel(role, t),
+        subtitle: t('admin_users_filter_role'),
+      })),
+    ];
+
+    const companiesById = new Map();
+    allUsers.forEach((row) => {
+      const companyId = String(row?.company_id || '').trim();
+      if (!companyId) return;
+      const companyName = String(row?.company_name || '').trim();
+      companiesById.set(companyId, companyName || companyId);
+    });
+    filterSelections.forEach((selection) => {
+      const value = String(selection || '');
+      if (!value.startsWith(ADMIN_USER_FILTER.COMPANY_PREFIX)) return;
+      const companyId = value.slice(ADMIN_USER_FILTER.COMPANY_PREFIX.length);
+      if (companyId && companyId !== ADMIN_USER_FILTER.UNASSIGNED_COMPANY) {
+        companiesById.set(companyId, companiesById.get(companyId) || companyId);
+      }
+    });
+
+    const companyOptions = [...companiesById.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1], resolveAppLocale(locale), { sensitivity: 'base' }))
+      .map(([companyId, companyName]) => ({
+        id: `${ADMIN_USER_FILTER.COMPANY_PREFIX}${companyId}`,
+        value: `${ADMIN_USER_FILTER.COMPANY_PREFIX}${companyId}`,
+        label: companyName,
+        subtitle: t('admin_users_filter_company'),
+      }));
+
+    if (
+      allUsers.some((row) => !String(row?.company_id || '').trim()) ||
+      filterSelections.includes(
+        `${ADMIN_USER_FILTER.COMPANY_PREFIX}${ADMIN_USER_FILTER.UNASSIGNED_COMPANY}`,
+      )
+    ) {
+      companyOptions.unshift({
+        id: `${ADMIN_USER_FILTER.COMPANY_PREFIX}${ADMIN_USER_FILTER.UNASSIGNED_COMPANY}`,
+        value: `${ADMIN_USER_FILTER.COMPANY_PREFIX}${ADMIN_USER_FILTER.UNASSIGNED_COMPANY}`,
+        label: t('admin_users_company_unassigned'),
+        subtitle: t('admin_users_filter_company'),
+      });
+    }
+
+    return [...roleOptions, ...companyOptions];
+  }, [allUsers, filterSelections, locale, t]);
+  const filterSummaryData = React.useMemo(() => {
+    const labelsByValue = new Map(userFilterOptions.map((option) => [option.value, option.label]));
+    const roleLabels = filterSelections
+      .filter((value) => String(value).startsWith(ADMIN_USER_FILTER.ROLE_PREFIX))
+      .map((value) => labelsByValue.get(value) || String(value).slice(ADMIN_USER_FILTER.ROLE_PREFIX.length));
+    const companyLabels = filterSelections
+      .filter((value) => String(value).startsWith(ADMIN_USER_FILTER.COMPANY_PREFIX))
+      .map((value) => labelsByValue.get(value) || String(value).slice(ADMIN_USER_FILTER.COMPANY_PREFIX.length));
+    const build = (countWhenMany) =>
+      joinFilterSummary(
+        [
+          summarizeFilterPart({
+            label: t('admin_users_filter_role'),
+            values: roleLabels,
+            countWhenMany,
+          }),
+          summarizeFilterPart({
+            label: t('admin_users_filter_company'),
+            values: companyLabels,
+            countWhenMany,
+          }),
+        ],
+        t('common_bullet'),
+      );
+    return { full: build(false), compact: build(true) };
+  }, [filterSelections, t, userFilterOptions]);
+  const sortOptions = React.useMemo(
+    () => [
+      { id: ADMIN_USER_SORT.NAME_ASC, label: t('sort_name_asc') },
+      { id: ADMIN_USER_SORT.NAME_DESC, label: t('sort_name_desc') },
+      { id: ADMIN_USER_SORT.COMPANY, label: t('admin_sort_company') },
+      { id: ADMIN_USER_SORT.ROLE, label: t('sort_role') },
+      { id: ADMIN_USER_SORT.LAST_SEEN_NEW_OLD, label: t('sort_last_seen_new_old') },
+      { id: ADMIN_USER_SORT.LAST_SEEN_OLD_NEW, label: t('sort_last_seen_old_new') },
+      { id: ADMIN_USER_SORT.CREATED_NEW_OLD, label: t('sort_created_new_old') },
+      { id: ADMIN_USER_SORT.CREATED_OLD_NEW, label: t('sort_created_old_new') },
+    ],
+    [t],
+  );
+  const users = React.useMemo(
+    () =>
+      sortAdminUsers(filterAdminUsers(allUsers, filterSelections), {
+        sortKey,
+        locale: resolveAppLocale(locale),
+        getName: (row) => formatPersonName(row, row?.email || row?.profile_id),
+        getRoleLabel: (row) => getAdminRoleLabel(row, t),
+      }),
+    [allUsers, filterSelections, locale, sortKey, t],
+  );
   const refreshing = isRefetching && !isLoading && debouncedSearch === search.trim();
 
   const errorCard = error ? (
@@ -306,6 +434,15 @@ export default function AdminUsersScreen() {
             onChangeText={setSearch}
             onClear={clearSearch}
             placeholder={t('admin_users_search_placeholder')}
+            onOpenFilters={filters.open}
+            onOpenSort={() => setSortVisible(true)}
+            filterSummary={filterSummaryData.full}
+            filterSummaryCompact={filterSummaryData.compact}
+            onResetFilters={async () => {
+              const resetValues = filters.reset();
+              await filters.apply(resetValues);
+            }}
+            metaText={`${t('common_total')}: ${users.length}`}
             searchProps={{ maxLength: TEXT_INPUT_LIMITS.search }}
           />
         </View>
@@ -341,6 +478,30 @@ export default function AdminUsersScreen() {
           }
         />
       </View>
+
+      <MultiSelectModal
+        visible={filters.visible}
+        onClose={filters.close}
+        title={t('common_filter')}
+        items={userFilterOptions}
+        value={filterSelections}
+        searchable={userFilterOptions.length > 8}
+        onChange={(nextSelections) => {
+          const nextValues = { selections: nextSelections };
+          filters.setValue('selections', nextSelections);
+          void filters.apply(nextValues);
+        }}
+      />
+
+      <SortSelectModal
+        visible={sortVisible}
+        onClose={() => setSortVisible(false)}
+        options={sortOptions}
+        value={sortKey}
+        onChange={(nextSort) => {
+          if (nextSort) setSortKey(nextSort);
+        }}
+      />
     </Screen>
   );
 }

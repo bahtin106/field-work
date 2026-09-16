@@ -6,12 +6,29 @@ import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import Feather from '@expo/vector-icons/Feather';
 import { useTheme } from '../../theme';
-import { getCachedSupabaseAccessToken } from '../../lib/supabaseSessionCache';
+import { getCachedSupabaseAuthContext } from '../../lib/supabaseSessionCache';
+import { isProtectedProfileMediaRenderUrl } from '../../src/shared/media/profileMediaUrl';
 import { isProtectedMediaThumbnailUrl } from '../../src/shared/media/thumbnailUrl';
 
 const BLURHASH_PLACEHOLDER = 'L6PZfSi_.AyE_3t7t7R**0o#DgR4';
 const MAX_IMAGE_RETRY_ATTEMPTS = 2;
 const IMAGE_LOAD_TIMEOUT_MS = 15_000;
+
+function hashImageCacheKey(value) {
+  let hash = 2166136261;
+  const input = String(value || '');
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+export function buildProtectedMemoryCacheKey(uri, userId) {
+  const owner = String(userId || '').trim().toLowerCase();
+  if (!owner || !uri) return '';
+  return `protected-image:${owner}:${hashImageCacheKey(uri)}`;
+}
 
 /**
  * @param {object} props
@@ -28,6 +45,7 @@ const IMAGE_LOAD_TIMEOUT_MS = 15_000;
  * @param {string} [props.placeholder]    – blurhash or thumbhash placeholder
  * @param {string} [props.accessibilityLabel]
  * @param {object} [props.headers]         - explicit headers for the image origin
+ * @param {string} [props.cacheKey]        - stable native cache identity
  */
 export default function CachedImage({
   uri,
@@ -47,6 +65,7 @@ export default function CachedImage({
   loadTimeoutMs = IMAGE_LOAD_TIMEOUT_MS,
   accessibilityLabel,
   headers,
+  cacheKey,
   ...rest
 }) {
   const { theme } = useTheme();
@@ -55,6 +74,7 @@ export default function CachedImage({
   const [isLoading, setIsLoading] = useState(!!uri);
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [protectedAccessToken, setProtectedAccessToken] = useState('');
+  const [protectedUserId, setProtectedUserId] = useState('');
   const [protectedAuthReady, setProtectedAuthReady] = useState(false);
   const retryTimerRef = useRef(null);
   const loadTimeoutRef = useRef(null);
@@ -169,12 +189,14 @@ export default function CachedImage({
   }, []);
 
   const sourceUri = activeUri || uri || '';
-  const requiresProtectedAuth = isProtectedMediaThumbnailUrl(sourceUri);
+  const requiresProtectedAuth =
+    isProtectedMediaThumbnailUrl(sourceUri) || isProtectedProfileMediaRenderUrl(sourceUri);
 
   useEffect(() => {
     let cancelled = false;
     if (!requiresProtectedAuth) {
       setProtectedAccessToken('');
+      setProtectedUserId('');
       setProtectedAuthReady(true);
       return () => {
         cancelled = true;
@@ -182,15 +204,17 @@ export default function CachedImage({
     }
 
     setProtectedAuthReady(false);
-    getCachedSupabaseAccessToken()
-      .then((token) => {
+    getCachedSupabaseAuthContext()
+      .then(({ accessToken, userId }) => {
         if (cancelled) return;
-        setProtectedAccessToken(String(token || '').trim());
+        setProtectedAccessToken(String(accessToken || '').trim());
+        setProtectedUserId(String(userId || '').trim().toLowerCase());
         setProtectedAuthReady(true);
       })
       .catch(() => {
         if (cancelled) return;
         setProtectedAccessToken('');
+        setProtectedUserId('');
         setProtectedAuthReady(true);
       });
     return () => {
@@ -201,7 +225,12 @@ export default function CachedImage({
   useEffect(() => {
     if (!requiresProtectedAuth || !protectedAuthReady || protectedAccessToken) return;
     const fallback = String(fallbackUri || '').trim();
-    if (fallback && fallback !== sourceUri && !isProtectedMediaThumbnailUrl(fallback)) {
+    if (
+      fallback &&
+      fallback !== sourceUri &&
+      !isProtectedMediaThumbnailUrl(fallback) &&
+      !isProtectedProfileMediaRenderUrl(fallback)
+    ) {
       setActiveUri(fallback);
       setHasError(false);
       setIsLoading(true);
@@ -213,7 +242,9 @@ export default function CachedImage({
     setHasError(true);
   }, [fallbackUri, protectedAccessToken, protectedAuthReady, requiresProtectedAuth, sourceUri]);
 
-  const canLoadSource = !requiresProtectedAuth || (protectedAuthReady && Boolean(protectedAccessToken));
+  const canLoadSource =
+    !requiresProtectedAuth ||
+    (protectedAuthReady && Boolean(protectedAccessToken) && Boolean(protectedUserId));
 
   const restartLoadTimeout = useCallback(() => {
     if (loadTimeoutRef.current) {
@@ -252,6 +283,15 @@ export default function CachedImage({
     };
   }, [restartLoadTimeout, retryAttempt]);
 
+  const protectedMemoryCacheKey = useMemo(
+    () => (
+      requiresProtectedAuth
+        ? buildProtectedMemoryCacheKey(sourceUri, protectedUserId)
+        : ''
+    ),
+    [protectedUserId, requiresProtectedAuth, sourceUri],
+  );
+  const effectiveCacheKey = requiresProtectedAuth ? protectedMemoryCacheKey : cacheKey;
   const imageSource = useMemo(() => {
     const sourceHeaders = {
       ...(headers && typeof headers === 'object' ? headers : {}),
@@ -261,13 +301,14 @@ export default function CachedImage({
     };
     return {
       uri: sourceUri,
+      ...(effectiveCacheKey ? { cacheKey: effectiveCacheKey } : {}),
       ...(Object.keys(sourceHeaders).length ? { headers: sourceHeaders } : {}),
     };
-  }, [headers, protectedAccessToken, requiresProtectedAuth, sourceUri]);
-  // Expo's native cache key is URL-based and does not isolate entries by the
-  // Authorization header. Do not persist or reuse protected bytes across an
-  // in-process account switch.
-  const effectiveCachePolicy = requiresProtectedAuth ? 'none' : cachePolicy;
+  }, [effectiveCacheKey, headers, protectedAccessToken, requiresProtectedAuth, sourceUri]);
+  // Expo's native URL cache does not vary by Authorization. Protected bytes
+  // therefore use an account-scoped key and memory-only storage: the modal can
+  // reuse an already rendered avatar without persisting it or crossing users.
+  const effectiveCachePolicy = requiresProtectedAuth ? 'memory' : cachePolicy;
   const sizeStyle = useMemo(
     () => ({
       ...(width != null ? { width } : {}),

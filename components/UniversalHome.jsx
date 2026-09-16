@@ -1,6 +1,6 @@
 // components/universalhome.jsx
 import FeatherIcon from '@expo/vector-icons/Feather';
-import { useIsFocused } from '@react-navigation/native';
+import { useIsFocused } from 'expo-router/react-navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -12,6 +12,7 @@ import { fetchCompanyOrderStatuses, getOrderStatusesQueryKey } from '../lib/orde
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
+import { getCachedSupabaseAuthContext } from '../lib/supabaseSessionCache';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../lib/companySettingsQuery';
 import {
   getCachedProfileMediaResolution,
@@ -29,6 +30,7 @@ import { preloadRouteScreen } from '../src/shared/navigation/routePreload';
 import { queryKeys } from '../src/shared/query/queryKeys';
 import { queryClient as appQueryClient } from '../src/shared/query/queryClient';
 import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
+import { isProtectedProfileMediaRenderUrl } from '../src/shared/media/profileMediaUrl';
 import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
 import { useSubscriptionGuard } from '../hooks/useSubscriptionGuard';
@@ -39,6 +41,7 @@ import {
   SUPPORT_UNREAD_QUERY_KEY,
 } from '../src/features/supportRequests/api';
 import Button from './ui/Button';
+import { buildProtectedMemoryCacheKey } from './ui/CachedImage';
 import Card from './ui/Card';
 import {
   ThemedRefreshControl,
@@ -442,15 +445,19 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         ? rawAvatarUrl
         : null;
   const avatarCacheKey = buildAvatarCacheKey(uid, rawAvatarUrl || avatarUrl);
-  const [avatarLoaded, setAvatarLoaded] = useState(false);
-  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
-  const hasLoadedAvatarRef = useRef(false);
-  useEffect(() => {
-    setAvatarLoadFailed(false);
-    // Keep the already rendered image visible while a refreshed display URL loads.
-    // Otherwise the initials fallback briefly appears over the photo on navigation.
-    if (!avatarUrl || !hasLoadedAvatarRef.current) setAvatarLoaded(false);
-  }, [avatarUrl]);
+  const [avatarImageRef, setAvatarImageRef] = useState(null);
+  const avatarImageRefRef = useRef(null);
+  const avatarLoadRequestRef = useRef(0);
+  const replaceAvatarImageRef = useCallback((nextImageRef) => {
+    const previous = avatarImageRefRef.current;
+    avatarImageRefRef.current = nextImageRef || null;
+    setAvatarImageRef(nextImageRef || null);
+    if (previous && previous !== nextImageRef) {
+      try {
+        previous.release?.();
+      } catch {}
+    }
+  }, []);
   const companyId =
     currentProfile?.company_id || profileFallback?.company_id || companyIdFromPerms || null;
   const {
@@ -513,7 +520,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     if (!uid || !rawAvatarUrl) return undefined;
     if (isRenderableAvatarUrl(avatarDisplayUrl)) {
       primeProfileMediaResolution(rawAvatarUrl, avatarDisplayUrl);
-      ExpoImage.prefetch(avatarDisplayUrl, 'memory-disk').catch(() => {});
+      if (!isProtectedProfileMediaRenderUrl(avatarDisplayUrl)) {
+        ExpoImage.prefetch(avatarDisplayUrl, 'memory-disk').catch(() => {});
+      }
       if (storedAvatarDisplayUrl !== avatarDisplayUrl) {
         applyAvatarSnapshot({ avatar_url: rawAvatarUrl, avatar_display_url: avatarDisplayUrl });
       }
@@ -521,7 +530,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     }
     if (isRenderableAvatarUrl(rawAvatarUrl)) {
       primeProfileMediaResolution(rawAvatarUrl, rawAvatarUrl);
-      ExpoImage.prefetch(rawAvatarUrl, 'memory-disk').catch(() => {});
+      if (!isProtectedProfileMediaRenderUrl(rawAvatarUrl)) {
+        ExpoImage.prefetch(rawAvatarUrl, 'memory-disk').catch(() => {});
+      }
       if (storedAvatarDisplayUrl !== rawAvatarUrl) {
         applyAvatarSnapshot({ avatar_url: rawAvatarUrl, avatar_display_url: rawAvatarUrl });
       }
@@ -536,7 +547,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         if (!snapshot) return;
         applyAvatarSnapshot(snapshot);
         if (snapshot.avatar_display_url) {
-          ExpoImage.prefetch(snapshot.avatar_display_url, 'memory-disk').catch(() => {});
+          if (!isProtectedProfileMediaRenderUrl(snapshot.avatar_display_url)) {
+            ExpoImage.prefetch(snapshot.avatar_display_url, 'memory-disk').catch(() => {});
+          }
         }
       })
       .catch(() => {});
@@ -545,24 +558,69 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     };
   }, [applyAvatarSnapshot, avatarDisplayUrl, rawAvatarUrl, storedAvatarDisplayUrl, uid]);
 
-  const handleAvatarLoad = useCallback(() => {
-    hasLoadedAvatarRef.current = true;
-    setAvatarLoaded(true);
-    setAvatarLoadFailed(false);
-  }, []);
+  useEffect(() => {
+    const requestId = avatarLoadRequestRef.current + 1;
+    avatarLoadRequestRef.current = requestId;
+    replaceAvatarImageRef(null);
+    if (!avatarUrl) return undefined;
 
-  const handleAvatarLoadError = useCallback(() => {
-    hasLoadedAvatarRef.current = false;
-    setAvatarLoaded(false);
-    setAvatarLoadFailed(true);
-    if (!uid || !rawAvatarUrl) return;
-    inspectProfileMedia([rawAvatarUrl], { forceRefresh: true })
-      .then((inspection) => {
-        const snapshot = buildResolvedAvatarSnapshot(rawAvatarUrl, inspection);
-        if (snapshot) applyAvatarSnapshot(snapshot);
-      })
-      .catch(() => {});
-  }, [applyAvatarSnapshot, rawAvatarUrl, uid]);
+    let cancelled = false;
+    const loadAvatar = async () => {
+      try {
+        let source = {
+          uri: avatarUrl,
+          ...(avatarCacheKey ? { cacheKey: avatarCacheKey } : {}),
+        };
+        if (isProtectedProfileMediaRenderUrl(avatarUrl)) {
+          const { accessToken, userId } = await getCachedSupabaseAuthContext(uid);
+          if (!accessToken || !userId) throw new Error('Protected avatar session is unavailable');
+          source = {
+            uri: avatarUrl,
+            cacheKey: buildProtectedMemoryCacheKey(avatarUrl, userId),
+            headers: { Authorization: `Bearer ${accessToken}` },
+          };
+        }
+
+        const imageRef = await ExpoImage.loadAsync(source, {
+          maxWidth: 512,
+          maxHeight: 512,
+        });
+        if (cancelled || avatarLoadRequestRef.current !== requestId) {
+          imageRef?.release?.();
+          return;
+        }
+        replaceAvatarImageRef(imageRef);
+      } catch {
+        if (cancelled || avatarLoadRequestRef.current !== requestId) return;
+        replaceAvatarImageRef(null);
+        if (!uid || !rawAvatarUrl) return;
+        inspectProfileMedia([rawAvatarUrl], { forceRefresh: true })
+          .then((inspection) => {
+            if (cancelled || avatarLoadRequestRef.current !== requestId) return;
+            const snapshot = buildResolvedAvatarSnapshot(rawAvatarUrl, inspection);
+            if (snapshot) applyAvatarSnapshot(snapshot);
+          })
+          .catch(() => {});
+      }
+    };
+
+    loadAvatar();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAvatarSnapshot, avatarCacheKey, avatarUrl, rawAvatarUrl, replaceAvatarImageRef, uid]);
+
+  useEffect(
+    () => () => {
+      avatarLoadRequestRef.current += 1;
+      const current = avatarImageRefRef.current;
+      avatarImageRefRef.current = null;
+      try {
+        current?.release?.();
+      } catch {}
+    },
+    [],
+  );
 
 
   const openAppSettings = useCallback(
@@ -1129,16 +1187,13 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             pressed && styles.rowPressed,
           ]}
         >
-          {avatarUrl && !avatarLoadFailed ? (
+          {avatarImageRef ? (
             <View style={styles.avatarWrap}>
               <ExpoImage
-                source={{ uri: avatarUrl, cacheKey: avatarCacheKey }}
-                style={[styles.avatarImg, !avatarLoaded && styles.avatarImgHidden]}
+                source={avatarImageRef}
+                style={styles.avatarImg}
                 contentFit="cover"
-                cachePolicy="memory-disk"
-                priority="high"
-                onLoad={handleAvatarLoad}
-                onError={handleAvatarLoadError}
+                transition={180}
               />
             </View>
           ) : (
@@ -1371,9 +1426,6 @@ const createStyles = (theme) => {
       width: '100%',
       height: '100%',
       backgroundColor: 'transparent',
-    },
-    avatarImgHidden: {
-      opacity: 0,
     },
     avatarFallback: {
       width: avatarSize,

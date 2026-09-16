@@ -2,7 +2,7 @@
 // commit a lightweight shell before evaluating this module.
 import Feather from '@expo/vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from 'expo-router/react-navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
@@ -11,7 +11,6 @@ import {
   Animated,
   Easing,
   FlatList,
-  InteractionManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -21,6 +20,7 @@ import {
 } from 'react-native';
 
 import DynamicOrderCard from '../../components/DynamicOrderCard';
+import { scheduleUiIdleTaskHandle } from '../../src/shared/perf/uiIdleTask';
 import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
@@ -1267,7 +1267,7 @@ function AllOrdersContent() {
 
     let task = null;
     const timer = setTimeout(() => {
-      task = InteractionManager.runAfterInteractions(() => {
+      task = scheduleUiIdleTaskHandle(() => {
         prefetchFeed().catch(() => {});
       });
     }, ALL_ORDERS_FEED_PREFETCH_DELAY_MS);

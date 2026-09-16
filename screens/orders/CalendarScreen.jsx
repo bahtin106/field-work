@@ -1,6 +1,6 @@
 ﻿// app/orders/calendar.jsx (REFACTORED)
 import Feather from '@expo/vector-icons/Feather';
-import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from 'expo-router/react-navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { addDays, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
 import { enUS as dfnsEnUS, ru as dfnsRu } from 'date-fns/locale';

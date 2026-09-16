@@ -4,10 +4,6 @@ import {
   fetchCompanySettingsByCompanyId,
   getCompanySettingsQueryKey,
 } from '../../../lib/companySettingsQuery';
-import {
-  fetchCompanyOrderStatuses,
-  getOrderStatusesQueryKey,
-} from '../../../lib/orderStatuses';
 import { supabase } from '../../../lib/supabase';
 import { fetchWorkTypes } from '../../../lib/workTypes';
 import { listClients } from '../../features/clients/api';
@@ -285,15 +281,18 @@ async function prefetchCriticalReferences({
           fetchWorkTypes(companyId, { includeDisabled: true, signal: readSignal }),
         ),
       () =>
-        queryClient.prefetchQuery({
-          queryKey: getOrderStatusesQueryKey(companyId),
-          queryFn: ({ signal }) =>
-            scoped(
-              (readSignal) => fetchCompanyOrderStatuses(companyId, readSignal),
-              signal,
-            ),
-          staleTime: SMART_PREFETCH_ORDER_STATUSES_STALE_MS,
-        }),
+        import('../../../lib/orderStatuses').then(
+          ({ fetchCompanyOrderStatuses, getOrderStatusesQueryKey }) =>
+            queryClient.prefetchQuery({
+              queryKey: getOrderStatusesQueryKey(companyId),
+              queryFn: ({ signal }) =>
+                scoped(
+                  (readSignal) => fetchCompanyOrderStatuses(companyId, readSignal),
+                  signal,
+                ),
+              staleTime: SMART_PREFETCH_ORDER_STATUSES_STALE_MS,
+            }),
+        ),
     ],
   });
 }

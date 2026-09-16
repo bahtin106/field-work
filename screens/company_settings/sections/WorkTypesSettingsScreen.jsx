@@ -3,7 +3,6 @@ import React from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
-  InteractionManager,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -34,6 +33,7 @@ import {
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { getLocale } from '../../../src/i18n';
 import { useLastIntentWinsToggle } from '../../../src/shared/hooks/useLastIntentWinsToggle';
+import { scheduleUiIdleTaskHandle } from '../../../src/shared/perf/uiIdleTask';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const MAX_WORK_TYPES = 10;
@@ -197,7 +197,7 @@ export default function WorkTypesSettings() {
     if (!createModalOpen) return undefined;
     let cancelled = false;
     let timer = null;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = scheduleUiIdleTaskHandle(() => {
       timer = setTimeout(() => {
         if (cancelled) return;
         createInputRef.current?.focus?.();
@@ -214,7 +214,7 @@ export default function WorkTypesSettings() {
     if (!editModal.open) return undefined;
     let cancelled = false;
     let timer = null;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = scheduleUiIdleTaskHandle(() => {
       timer = setTimeout(() => {
         if (cancelled) return;
         editInputRef.current?.focus?.();

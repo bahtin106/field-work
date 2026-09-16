@@ -1,10 +1,11 @@
 import { onlineManager, useQueryClient } from '@tanstack/react-query';
 import { usePathname } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { AppState, InteractionManager } from 'react-native';
+import { AppState } from 'react-native';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
 import { financeQueryKeys } from '../../features/finance/queries';
 import { getOfflineSnapshot, useOfflineSnapshot } from '../offline/offlineStatus';
+import { scheduleUiIdleTaskHandle } from '../perf/uiIdleTask';
 import { queryKeys } from './queryKeys';
 import { requestScreenRefresh } from './screenRefreshRegistry';
 
@@ -395,7 +396,7 @@ export function RouteFreshnessBoundary() {
   }, [pathname, plan, queryClient]);
 
   useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = scheduleUiIdleTaskHandle(() => {
       runPlan('route-focus');
     });
     return () => task.cancel();

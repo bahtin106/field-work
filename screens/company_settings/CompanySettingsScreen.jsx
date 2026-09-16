@@ -3,7 +3,6 @@ import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import {
   ActivityIndicator,
-  InteractionManager,
   Keyboard,
   Platform,
   Pressable,
@@ -46,6 +45,7 @@ import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { availableLocales, getLocale, setLocale } from '../../src/i18n';
 import HelpInfoButton from '../../src/features/helpCenter/HelpInfoButton';
 import { withReadDeadline } from '../../src/shared/network/readDeadline';
+import { scheduleUiIdleTaskHandle } from '../../src/shared/perf/uiIdleTask';
 import AppSettings from '../app_settings/AppSettingsScreen';
 
 const SOLO_APP_SETTING_SECTIONS = Object.freeze([
@@ -307,12 +307,12 @@ export default function CompanySettings() {
     const transitionDelayMs =
       Platform.OS === 'ios' ? IOS_MODAL_TRANSITION_MS : Platform.OS === 'android' ? ANDROID_MODAL_TRANSITION_MS : 0;
     if (!transitionDelayMs) {
-      InteractionManager.runAfterInteractions(() => requestAnimationFrame(() => openNext?.()));
+      scheduleUiIdleTaskHandle(() => requestAnimationFrame(() => openNext?.()));
       return;
     }
     modalTransitionTimerRef.current = setTimeout(() => {
       modalTransitionTimerRef.current = null;
-      InteractionManager.runAfterInteractions(() => requestAnimationFrame(() => openNext?.()));
+      scheduleUiIdleTaskHandle(() => requestAnimationFrame(() => openNext?.()));
     }, transitionDelayMs);
   }, []);
 

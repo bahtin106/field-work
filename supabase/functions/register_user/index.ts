@@ -23,6 +23,7 @@ const EMAIL_SERVER_API_TOKEN = String(Deno.env.get('EMAIL_SERVER_API_TOKEN') || 
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX_CHECK_ONLY = 40;
 const RATE_LIMIT_MAX_REGISTER = 10;
+type SupabaseAdminClient = ReturnType<typeof createClient<any>>;
 
 const globalState = globalThis as typeof globalThis & {
   __registerRateLimitStore?: Map<string, { count: number; windowStartMs: number }>;
@@ -45,22 +46,8 @@ function normalizeCompanyName(value: unknown) {
   return text(value).replace(/\s+/g, ' ');
 }
 
-async function isProfileEmailOwnedByAuthUser(
-  supabaseAdmin: ReturnType<typeof createClient>,
-  profile: { id?: string | null } | null,
-  email: string,
-) {
-  const profileId = text(profile?.id);
-  if (!profileId) return false;
-
-  const { data, error } = await supabaseAdmin.auth.admin.getUserById(profileId);
-  if (error || !data?.user) return false;
-
-  return normalizeEmail(data.user.email) === email;
-}
-
 async function listAuthUsersByEmail(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   email: string,
 ) {
   const matches: any[] = [];
@@ -85,7 +72,7 @@ async function listAuthUsersByEmail(
 }
 
 async function getAuthEmailState(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   email: string,
 ) {
   const authUsers = await listAuthUsersByEmail(supabaseAdmin, email);
@@ -221,7 +208,7 @@ function errorResponse(
 }
 
 async function logServerIssue(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   {
     userId = null,
     name = 'RegisterError',
@@ -249,6 +236,44 @@ async function logServerIssue(
   } catch (logError) {
     console.warn('register_user: failed to write error_logs', logError);
   }
+}
+
+async function rollbackFailedRegistration(
+  supabaseAdmin: SupabaseAdminClient,
+  {
+    userId,
+    companyId,
+    email,
+    reason,
+  }: {
+    userId: string;
+    companyId?: string | null;
+    email: string;
+    reason: string;
+  },
+) {
+  const { data, error } = await supabaseAdmin.rpc('service_rollback_failed_registration', {
+    p_user_id: userId,
+    p_company_id: companyId || null,
+    p_email: email,
+  });
+
+  if (!error) return data;
+
+  // Do not delete only the auth row when public cleanup failed. Keeping the
+  // incomplete registration blocked is safer than creating an orphan profile
+  // that a retry could mistake for an available email.
+  await logServerIssue(supabaseAdmin, {
+    userId,
+    name: 'RegisterRollbackError',
+    message: error.message,
+    extra: {
+      code: error.code || null,
+      companyId: companyId || null,
+      reason,
+    },
+  });
+  return null;
 }
 
 export async function handleRegisterUserRequest(req: Request) {
@@ -280,6 +305,7 @@ export async function handleRegisterUserRequest(req: Request) {
 
   let createdUserId: string | null = null;
   let createdCompanyId: string | null = null;
+  let registrationEmail = '';
 
   try {
     const clientIp = getClientIp(req);
@@ -297,6 +323,7 @@ export async function handleRegisterUserRequest(req: Request) {
 
     const accountType = text(body?.account_type);
     const email = normalizeEmail(body?.email);
+    registrationEmail = email;
     const password = String(body?.password ?? '');
     const firstName = normalizeName(body?.first_name);
     const lastName = normalizeName(body?.last_name);
@@ -350,7 +377,7 @@ export async function handleRegisterUserRequest(req: Request) {
       }
     }
 
-    let { data: existingUser, error: existingUserError } = await supabaseAdmin
+    const { data: existingUser, error: existingUserError } = await supabaseAdmin
       .from('profiles')
       .select('id')
       .eq('email', email)
@@ -365,10 +392,6 @@ export async function handleRegisterUserRequest(req: Request) {
       });
       return errorResponse(req, allowedOrigins, 'Email availability check failed', 400, 'EMAIL_CHECK_FAILED');
     }
-    if (existingUser && !(await isProfileEmailOwnedByAuthUser(supabaseAdmin, existingUser, email))) {
-      existingUser = null;
-    }
-
     let authEmailState;
     try {
       authEmailState = await getAuthEmailState(supabaseAdmin, email);
@@ -529,7 +552,12 @@ export async function handleRegisterUserRequest(req: Request) {
         message: companyErr.message,
         extra: { code: companyErr.code || null, companyName, accountType },
       });
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      await rollbackFailedRegistration(supabaseAdmin, {
+        userId,
+        companyId: null,
+        email,
+        reason: 'company_create_failed',
+      });
       return errorResponse(req, allowedOrigins, 'Company creation failed', 400, 'COMPANY_CREATE_FAILED');
     }
 
@@ -566,8 +594,12 @@ export async function handleRegisterUserRequest(req: Request) {
         message: ensureSubErr.message,
         extra: { code: ensureSubErr.code || null, companyId },
       });
-      await supabaseAdmin.from('companies').delete().eq('id', companyId);
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      await rollbackFailedRegistration(supabaseAdmin, {
+        userId,
+        companyId,
+        email,
+        reason: 'subscription_init_failed',
+      });
       return errorResponse(req, allowedOrigins, 'Subscription initialization failed', 400, 'SUBSCRIPTION_INIT_FAILED');
     }
 
@@ -635,10 +667,12 @@ export async function handleRegisterUserRequest(req: Request) {
         message: profileErr.message,
         extra: { code: profileErr.code || null, companyId },
       });
-      if (companyId) {
-        await supabaseAdmin.from('companies').delete().eq('id', companyId);
-      }
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      await rollbackFailedRegistration(supabaseAdmin, {
+        userId,
+        companyId,
+        email,
+        reason: 'profile_write_failed',
+      });
       return errorResponse(req, allowedOrigins, 'Profile save failed', 400, 'PROFILE_WRITE_FAILED');
     }
 
@@ -685,10 +719,12 @@ export async function handleRegisterUserRequest(req: Request) {
         message: consentErr.message,
         extra: { code: consentErr.code || null, companyId, email },
       });
-      if (companyId) {
-        await supabaseAdmin.from('companies').delete().eq('id', companyId);
-      }
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      await rollbackFailedRegistration(supabaseAdmin, {
+        userId,
+        companyId,
+        email,
+        reason: 'consent_write_failed',
+      });
       return errorResponse(req, allowedOrigins, 'Consent save failed', 400, 'CONSENT_WRITE_FAILED');
     }
 
@@ -709,15 +745,14 @@ export async function handleRegisterUserRequest(req: Request) {
       extra: { createdUserId, createdCompanyId },
     });
 
-    if (createdCompanyId) {
-      try {
-        await supabaseAdmin.from('companies').delete().eq('id', createdCompanyId);
-      } catch {}
-    }
-
     if (createdUserId) {
       try {
-        await supabaseAdmin.auth.admin.deleteUser(createdUserId);
+        await rollbackFailedRegistration(supabaseAdmin, {
+          userId: createdUserId,
+          companyId: createdCompanyId,
+          email: registrationEmail,
+          reason: 'unexpected_error',
+        });
       } catch {}
     }
 

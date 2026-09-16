@@ -11,7 +11,7 @@ const styles = StyleSheet.create({
 
 /**
  * Mounts heavy children after the first committed frame.
- * Stack transitions are disabled in this app, so waiting for InteractionManager
+ * Stack transitions are disabled in this app, so waiting for an idle callback
  * only adds visible latency before the target screen becomes useful.
  */
 export default function DeferredScreen({ children, style, placeholder = null }) {

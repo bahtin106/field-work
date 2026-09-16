@@ -1,5 +1,50 @@
 import { preloadLazyRouteScreen } from '../../../components/layout/LazyRouteScreen';
 
+// Metro resolves every dynamic import as a separate graph in development.
+// Keep speculative route warmups sequential so they cannot overwhelm its
+// filesystem cache. Foreground navigation does not use this queue.
+const queuedPreloads = new Map();
+const preloadQueue = [];
+let preloadQueueRunning = false;
+
+function drainPreloadQueue() {
+  if (preloadQueueRunning) return;
+  preloadQueueRunning = true;
+
+  const run = async () => {
+    while (preloadQueue.length) {
+      const item = preloadQueue.shift();
+      let screen = null;
+      try {
+        screen = await preloadLazyRouteScreen(item.cacheKey, item.load);
+      } catch {}
+      queuedPreloads.delete(item.cacheKey);
+      item.resolve(screen);
+    }
+    preloadQueueRunning = false;
+  };
+
+  run().catch(() => {
+    preloadQueueRunning = false;
+    drainPreloadQueue();
+  });
+}
+
+function enqueueRoutePreload(cacheKey, load) {
+  const key = String(cacheKey || '').trim();
+  if (!key || typeof load !== 'function') return Promise.resolve(null);
+
+  const queued = queuedPreloads.get(key);
+  if (queued) return queued;
+
+  const promise = new Promise((resolve) => {
+    preloadQueue.push({ cacheKey: key, load, resolve });
+    drainPreloadQueue();
+  });
+  queuedPreloads.set(key, promise);
+  return promise;
+}
+
 const ROUTE_PRELOAD_CONFIG = Object.freeze({
   '/orders/my-orders': {
     cacheKey: 'routes.orders/my-orders',
@@ -40,7 +85,7 @@ function normalizePath(path) {
 export function preloadRouteScreen(path) {
   const config = ROUTE_PRELOAD_CONFIG[normalizePath(path)];
   if (!config) return Promise.resolve(null);
-  return preloadLazyRouteScreen(config.cacheKey, config.load).catch(() => null);
+  return enqueueRoutePreload(config.cacheKey, config.load);
 }
 
 export function hasRoutePreloader(path) {
@@ -48,8 +93,8 @@ export function hasRoutePreloader(path) {
 }
 
 export function preloadOrderDetailScreen() {
-  return preloadLazyRouteScreen(
+  return enqueueRoutePreload(
     'routes.orders/[id]',
     () => import('../../../screens/orders/OrderDetailsScreen'),
-  ).catch(() => null);
+  );
 }

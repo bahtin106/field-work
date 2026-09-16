@@ -1,5 +1,5 @@
 // components/layout/Screen.jsx
-import { useIsFocused, useRoute } from '@react-navigation/native';
+import { useIsFocused, useRoute } from 'expo-router/react-navigation';
 import { useNavigation, usePathname, useSegments } from 'expo-router';
 import React from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';

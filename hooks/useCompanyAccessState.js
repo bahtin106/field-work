@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { AppState } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { useIsFocused } from '@react-navigation/native';
+import { useIsFocused } from 'expo-router/react-navigation';
 import { supabase } from '../lib/supabase';
 import { useOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 import { withReadDeadline } from '../src/shared/network/readDeadline';
