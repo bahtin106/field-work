@@ -371,6 +371,15 @@ check(packageJson.dependencies?.['expo-file-system'] === '~57.0.7', 'expo-file-s
 check(packageJson.dependencies?.['expo-updates'] === '~57.0.22', 'expo-updates must match the validated SDK 57 patch');
 check(packageJson.dependencies?.['@react-native-community/netinfo'] === '12.0.1', 'NetInfo must match Expo SDK 57');
 check(packageJson.dependencies?.['react-native-keyboard-controller'] === '1.21.9', 'Keyboard controller must match Expo SDK 57');
+check(
+  packageJson.devDependencies?.['@react-native/metro-config'] === '0.86.3',
+  'React Native Metro config must stay pinned to the React Native 0.86.3 peer version',
+);
+check(
+  packageJson.scripts?.['lockfile:check'] === 'npm ci --dry-run --ignore-scripts' &&
+    packageJson.scripts?.['release:check']?.startsWith('npm run lockfile:check &&'),
+  'Release checks must reject package-lock drift before CI',
+);
 check(packageJson.devDependencies?.pngjs === '3.4.0', 'Icon tooling must declare its direct pngjs dependency');
 check(
   packageJson.devDependencies?.['expo-doctor'] === '1.20.4' &&
